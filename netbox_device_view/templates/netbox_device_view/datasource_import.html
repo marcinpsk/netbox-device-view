@@ -1,0 +1,70 @@
+{% extends 'generic/_base.html' %}
+{% load form_helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Import Device Views from a Data Source" %}{% endblock %}
+
+{% block content %}
+  <div class="row">
+    <div class="col">
+      <p class="text-muted">
+        {% trans "Configure and synchronize a Data Source in NetBox first. The import reads the synchronized files; it does not fetch them." %}
+        <a href="{% url 'core:datasource_list' %}">{% trans "Manage Data Sources" %}</a>
+      </p>
+      <form method="get" class="card mb-3">
+        <h2 class="card-header">{% trans "Source" %}</h2>
+        <div class="card-body">
+          {% render_field form.source %}
+          {% render_field form.prefix %}
+          <div class="text-end">
+            <button type="submit" class="btn btn-primary">{% trans "Show layout files" %}</button>
+          </div>
+        </div>
+      </form>
+
+      {% if page %}
+        <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
+          {% csrf_token %}
+          <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
+          <input type="hidden" name="prefix" value="{{ form.cleaned_data.prefix }}">
+          <input type="hidden" name="step" value="match">
+          <div class="card">
+            <h2 class="card-header">{% trans "Layout files" %}</h2>
+            <div class="table-responsive">
+              <table class="table table-hover align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col" style="width: 1%"><span class="visually-hidden">{% trans "Select" %}</span></th>
+                    <th scope="col">{% trans "Path" %}</th>
+                    <th scope="col">{% trans "Size" %}</th>
+                    <th scope="col">{% trans "Last updated" %}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for datafile in page %}
+                    <tr>
+                      <td>
+                        <input type="checkbox" class="form-check-input" name="file" value="{{ datafile.pk }}" id="file-{{ datafile.pk }}" aria-label="{% trans "Select" %} {{ datafile.path }}">
+                      </td>
+                      <td><label for="file-{{ datafile.pk }}" class="font-monospace">{{ datafile.path }}</label></td>
+                      <td>{{ datafile.size|filesizeformat }}</td>
+                      <td>{{ datafile.last_updated|date:"SHORT_DATETIME_FORMAT" }}</td>
+                    </tr>
+                  {% empty %}
+                    <tr>
+                      <td colspan="4" class="text-muted">{% trans "No YAML layout files below this directory." %}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% include 'inc/paginator.html' with placement='bottom' %}
+            <div class="card-footer text-end">
+              <button type="submit" class="btn btn-primary">{% trans "Assign device types" %}</button>
+            </div>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+{% endblock content %}

@@ -1,0 +1,25 @@
+{% extends 'generic/_base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Data Source Import" %}{% endblock %}
+
+{% block content %}
+  {% if error %}
+    <div class="alert alert-danger">
+      {% trans "The import was rejected. No records were changed." %} {{ error }}
+    </div>
+  {% else %}
+    <div class="card">
+      <h2 class="card-header">{% trans "Created" %}</h2>
+      <ul class="list-group list-group-flush">
+        {% for device_view in created %}
+          <li class="list-group-item"><a href="{{ device_view.get_absolute_url }}">{{ device_view }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+  <div class="btn-list mt-3">
+    <a href="{% url 'plugins:netbox_device_view:deviceview_datasource_import' %}" class="btn btn-outline-secondary">{% trans "Start a new import" %}</a>
+    <a href="{% url 'plugins:netbox_device_view:deviceview_list' %}" class="btn btn-outline-secondary">{% trans "Device Views" %}</a>
+  </div>
+{% endblock content %}

@@ -1,10 +1,12 @@
 import unicodedata
 
 from dcim.models import DeviceType
+from django import forms
 from django.utils.translation import gettext_lazy as _
 from netbox.forms import NetBoxModelForm, NetBoxModelImportForm
-from utilities.forms.fields import CSVModelChoiceField
+from utilities.forms.fields import CSVModelChoiceField, DynamicModelChoiceField
 
+from . import datasource_import
 from .models import DeviceView
 
 
@@ -49,3 +51,56 @@ class DeviceViewImportForm(SanitizeGridTemplateAreaMixin, NetBoxModelImportForm)
     class Meta:
         model = DeviceView
         fields = ("device_type", "grid_template_area", "yaml_layout", "render_mode")
+
+
+class DataSourceImportSourceForm(forms.Form):
+    source = forms.ModelChoiceField(
+        queryset=None,
+        label=_("Data Source"),
+        help_text=_("Only synchronized Data Sources are listed."),
+    )
+    prefix = forms.CharField(
+        required=False,
+        initial="examples/",
+        label=_("Directory prefix"),
+        help_text=_("Path relative to the source root. Leave empty for the root."),
+    )
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["source"].queryset = datasource_import.importable_sources(user)
+
+    def clean_prefix(self):
+        return datasource_import.normalize_prefix(self.cleaned_data["prefix"])
+
+
+class DataSourceImportTargetForm(forms.Form):
+    """One device type selector for each selected DataFile."""
+
+    def __init__(self, *args, user, datafiles, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.datafiles = list(datafiles)
+        for datafile in self.datafiles:
+            self.fields[self.field_name(datafile.pk)] = DynamicModelChoiceField(
+                queryset=DeviceType.objects.restrict(user, "view"),
+                label=_("Device type"),
+            )
+
+    @staticmethod
+    def field_name(datafile_id):
+        return f"device_type_{datafile_id}"
+
+    def rows(self):
+        return [
+            (datafile, self[self.field_name(datafile.pk)])
+            for datafile in self.datafiles
+        ]
+
+    def selections(self):
+        return [
+            datasource_import.Selection(
+                datafile_id=datafile.pk,
+                device_type_id=self.cleaned_data[self.field_name(datafile.pk)].pk,
+            )
+            for datafile in self.datafiles
+        ]

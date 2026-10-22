@@ -1,0 +1,109 @@
+{% extends 'generic/_base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Review Data Source Import" %}{% endblock %}
+
+{% block content %}
+  <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}" class="card mb-3">
+    {% csrf_token %}
+    <input type="hidden" name="source" value="{{ source_form.cleaned_data.source.pk }}">
+    <input type="hidden" name="prefix" value="{{ source_form.cleaned_data.prefix }}">
+    <input type="hidden" name="step" value="review">
+    <h2 class="card-header">
+      {% blocktrans with source=source_form.cleaned_data.source %}Selected files from {{ source }}{% endblocktrans %}
+    </h2>
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr>
+            <th scope="col">{% trans "Path" %}</th>
+            <th scope="col" class="w-50">{% trans "Device type" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for datafile, field in target_form.rows %}
+            <tr>
+              <td class="font-monospace">
+                <input type="hidden" name="file" value="{{ datafile.pk }}">
+                {{ datafile.path }}
+              </td>
+              <td>
+                {{ field }}
+                {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex justify-content-between">
+      <a href="{{ catalog_url }}" class="btn btn-outline-secondary">{% trans "Back to files" %}</a>
+      <button type="submit" class="btn btn-primary">{% trans "Review" %}</button>
+    </div>
+  </form>
+
+  {% if review %}
+    <div class="card">
+      <h2 class="card-header">{% trans "Review" %}</h2>
+      <div class="card-body">
+        <div class="alert alert-info mb-0">
+          {% trans "A Device View applies to every device of its device type." %}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead>
+            <tr>
+              <th scope="col">{% trans "Path" %}</th>
+              <th scope="col">{% trans "Target" %}</th>
+              <th scope="col">{% trans "Action" %}</th>
+              <th scope="col">{% trans "Render mode" %}</th>
+              <th scope="col">{% trans "Result" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in review.rows %}
+              <tr>
+                <td class="font-monospace">{{ row.path|default:row.datafile_id }}</td>
+                <td>{% if row.device_type %}{{ row.device_type.manufacturer }} {{ row.device_type.model }}{% else %}&mdash;{% endif %}</td>
+                <td>{{ row.action.label }}</td>
+                <td>{{ row.render_mode_label|default:"&mdash;" }}</td>
+                <td>
+                  {% if row.error %}
+                    <span class="text-danger">{{ row.error }}</span>
+                  {% else %}
+                    <span class="text-success">{% trans "Ready" %}</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% if row.fields and not row.error %}
+                <tr>
+                  <td colspan="5">
+                    <details>
+                      <summary>{% trans "Proposed fields" %}</summary>
+                      {% for name, value in row.fields.items %}
+                        <h3 class="h6 mt-2">{{ name }}</h3>
+                        <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{{ value }}</pre>
+                      {% endfor %}
+                    </details>
+                  </td>
+                </tr>
+              {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-end">
+        {% if review.token %}
+          <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_apply' %}">
+            {% csrf_token %}
+            <input type="hidden" name="token" value="{{ review.token }}">
+            <button type="submit" class="btn btn-success">{% trans "Apply import" %}</button>
+          </form>
+        {% else %}
+          <span class="text-danger">{% trans "Correct the errors above and review again." %}</span>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{% endblock content %}

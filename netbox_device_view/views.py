@@ -1,16 +1,36 @@
+from typing import ClassVar
+
 from dcim.models import Device
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count
 from django.http import JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils.decorators import method_decorator
+from django.utils.http import urlencode
 from django.views import View
+from netbox.object_actions import (
+    AddObject,
+    BulkDelete,
+    BulkEdit,
+    BulkExport,
+    BulkImport,
+    BulkRename,
+    ObjectAction,
+)
 from netbox.views import generic
 from netbox.views.generic import BulkImportView
-from utilities.views import ViewTab, register_model_view
+from utilities.paginator import EnhancedPaginator, get_paginate_count
+from utilities.views import (
+    ContentTypePermissionRequiredMixin,
+    ViewTab,
+    register_model_view,
+)
 
 from netbox_device_view.forms import DeviceViewImportForm
 
-from . import forms, models, tables
+from . import datasource_import, forms, models, tables
 from .utils import (
     active_panel_key,
     device_height_px,
@@ -24,11 +44,27 @@ class DeviceViewView(generic.ObjectView):
     queryset = models.DeviceView.objects
 
 
+class DataSourceImport(ObjectAction):
+    name = "datasource_import"
+    label = "Import from Data Source"
+    permissions_required: ClassVar[set[str]] = {"add"}
+    template_name = "netbox_device_view/buttons/datasource_import.html"
+
+
 class DeviceViewListView(generic.ObjectListView):
     queryset = models.DeviceView.objects.annotate(
         device_count=Count("device_type__instances")
     )
     table = tables.DeviceViewTable
+    actions = (
+        AddObject,
+        BulkImport,
+        DataSourceImport,
+        BulkExport,
+        BulkEdit,
+        BulkRename,
+        BulkDelete,
+    )
 
 
 class DeviceViewEditView(generic.ObjectEditView):
@@ -55,6 +91,100 @@ class DeviceTypeInterfacesView(View):
 class DeviceViewBulkImportView(BulkImportView):
     queryset = models.DeviceView.objects.all()
     model_form = DeviceViewImportForm
+
+
+class DataSourceImportPermissionMixin(ContentTypePermissionRequiredMixin):
+    def get_required_permission(self):
+        return "netbox_device_view.add_deviceview"
+
+
+class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
+    """Select a Data Source and directory, then list the importable layout files."""
+
+    def get(self, request):
+        form = forms.DataSourceImportSourceForm(
+            request.GET if "source" in request.GET else None, user=request.user
+        )
+        context = {"form": form}
+        if form.is_bound and form.is_valid():
+            paginator = EnhancedPaginator(
+                datasource_import.catalog(
+                    form.cleaned_data["source"], form.cleaned_data["prefix"]
+                ),
+                get_paginate_count(request),
+            )
+            context["paginator"] = paginator
+            context["page"] = paginator.get_page(request.GET.get("page"))
+        return render(request, "netbox_device_view/datasource_import.html", context)
+
+
+class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View):
+    """Assign device types to the selected files and review the proposed records."""
+
+    def post(self, request):
+        source_form = forms.DataSourceImportSourceForm(request.POST, user=request.user)
+        if not source_form.is_valid():
+            return render(
+                request,
+                "netbox_device_view/datasource_import.html",
+                {"form": source_form},
+                status=400,
+            )
+        source = source_form.cleaned_data["source"]
+        prefix = source_form.cleaned_data["prefix"]
+        catalog_url = (
+            reverse("plugins:netbox_device_view:deviceview_datasource_import")
+            + "?"
+            + urlencode({"source": source.pk, "prefix": prefix})
+        )
+        file_ids = {int(v) for v in request.POST.getlist("file") if v.isdigit()}
+        datafiles = datasource_import.catalog(source, prefix).filter(pk__in=file_ids)
+        if not file_ids or len(datafiles) != len(file_ids):
+            messages.error(request, "Select at least one file from the catalog.")
+            return redirect(catalog_url)
+
+        target_form = forms.DataSourceImportTargetForm(
+            request.POST if request.POST.get("step") == "review" else None,
+            user=request.user,
+            datafiles=datafiles,
+        )
+        review = None
+        if target_form.is_bound and target_form.is_valid():
+            review = datasource_import.review(
+                request.user, source, target_form.selections()
+            )
+        return render(
+            request,
+            "netbox_device_view/datasource_import_review.html",
+            {
+                "source_form": source_form,
+                "target_form": target_form,
+                "review": review,
+                "catalog_url": catalog_url,
+            },
+        )
+
+
+class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View):
+    """Apply a reviewed import."""
+
+    def post(self, request):
+        try:
+            created = datasource_import.apply(
+                request.user, request.POST.get("token", "")
+            )
+        except datasource_import.ImportRejected as exc:
+            return render(
+                request,
+                "netbox_device_view/datasource_import_result.html",
+                {"error": str(exc)},
+                status=400,
+            )
+        return render(
+            request,
+            "netbox_device_view/datasource_import_result.html",
+            {"created": created},
+        )
 
 
 class DeviceViewDeleteView(generic.ObjectDeleteView):
