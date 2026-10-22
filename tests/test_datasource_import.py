@@ -13,11 +13,12 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from core.models import DataSource, ObjectChange, ObjectType
+from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
+from django.db.models.signals import pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -66,6 +67,7 @@ class DataSourceImportTestBase(TestCase):
         self.user = User.objects.create_user(username="importer")
         self.client.force_login(self.user)
         self.grant(DataSource, "view")
+        self.grant(DataFile, "view")
         self.grant(DeviceType, "view")
         self.grant(Device, "view")
         self.grant(DeviceView, "view")
@@ -233,6 +235,45 @@ class CatalogTests(DataSourceImportTestBase):
             with self.subTest(prefix=prefix):
                 self.assertIsNone(self.catalog_paths(prefix))
 
+    def test_empty_catalog_says_so(self):
+        response = self.client.get(
+            reverse(START_URL), {"source": self.source.pk, "prefix": "nothing/"}
+        )
+        self.assertContains(response, "No YAML layout files below this directory.")
+        self.assertNotContains(response, "Assign device types")
+
+    def test_datafile_hidden_by_permission_constraint_is_not_readable(self):
+        other_path = "examples/yaml/Cisco/Other.yaml"
+        self.write_file(other_path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        hidden = self.datafile()
+        token = self.review_token([(hidden, self.device_type)])
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DataFile)
+        ).update(constraints={"path": other_path})
+
+        self.assertEqual(self.catalog_paths("examples/"), [other_path])
+        match = self.client.post(
+            reverse(REVIEW_URL),
+            {
+                "source": self.source.pk,
+                "prefix": "examples/",
+                "step": "match",
+                "file": [hidden.pk],
+            },
+        )
+        self.assertEqual(match.status_code, 302)
+        selection = datasource_import.Selection(
+            datafile_id=hidden.pk, device_type_id=self.device_type.pk
+        )
+        review = datasource_import.review(self.user, self.source, [selection])
+        self.assertEqual(
+            review.rows[0].error, "The file is not available in this Data Source."
+        )
+        self.assertEqual(review.rows[0].proposed_fields, {})
+        self.assertEqual(self.apply(token).status_code, 400)
+        self.assertFalse(DeviceView.objects.exists())
+
     def test_catalog_does_not_load_file_content(self):
         with CaptureQueriesContext(connection) as queries:
             self.catalog_paths("examples/")
@@ -330,6 +371,39 @@ class ReviewTests(DataSourceImportTestBase):
         )
         self.assertEqual(response.status_code, 302)
 
+    def test_non_ascii_or_oversized_file_selection_is_rejected(self):
+        for value in ("\u00b2", "\u0661", "9" * 5000):
+            with self.subTest(value=value[:8]):
+                response = self.client.post(
+                    reverse(REVIEW_URL),
+                    {
+                        "source": self.source.pk,
+                        "prefix": "examples/",
+                        "step": "match",
+                        "file": [value],
+                    },
+                )
+                self.assertEqual(response.status_code, 302)
+
+    def test_two_files_for_one_device_type_are_rejected(self):
+        other_path = "examples/yaml/Cisco/Other.yaml"
+        self.write_file(other_path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        response = self.review(
+            [
+                (self.datafile(), self.device_type),
+                (self.datafile(other_path), self.device_type),
+            ]
+        )
+        review = response.context["review"]
+        self.assertEqual(review.rows[0].error, "")
+        self.assertEqual(
+            review.rows[1].error,
+            "Another selected file already targets this device type.",
+        )
+        self.assertEqual(review.token, "")
+        self.assertNotContains(response, "Apply import")
+
     def test_review_rejects_a_source_the_user_cannot_view(self):
         ObjectPermission.objects.filter(
             object_types=ObjectType.objects.get_for_model(DataSource)
@@ -404,6 +478,25 @@ class ApplyTests(DataSourceImportTestBase):
         self.assertEqual(self.apply(token).status_code, 200)
         self.assertEqual(
             [event["object_type"].model for event in RECORDED_EVENTS], ["deviceview"]
+        )
+
+    def test_concurrent_device_view_for_the_target_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+
+        def create_competing_view(sender, instance, **kwargs):
+            # bulk_create sends no signals, so this receiver runs once.
+            DeviceView.objects.bulk_create(
+                [DeviceView(device_type=instance.device_type, grid_template_area="x")]
+            )
+
+        pre_save.connect(create_competing_view, sender=DeviceView)
+        self.addCleanup(pre_save.disconnect, create_competing_view, sender=DeviceView)
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertContains(
+            response,
+            "a device view already exists for this device type",
+            status_code=400,
         )
 
     def test_file_changed_after_review_is_rejected(self):

@@ -18,7 +18,7 @@ from core.signals import clear_events
 from dcim.models import DeviceType
 from django.core import signing
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import IntegrityError, models, transaction
 from django.db.models import Q
 
 from .layout import LayoutParseError, parse_yaml, render_css
@@ -128,13 +128,14 @@ def normalize_prefix(raw: str) -> str:
     return "/".join(parts) + "/" if parts else ""
 
 
-def catalog(source: DataSource, prefix: str):
-    """Return the importable DataFiles below the prefix, without their content."""
+def catalog(user, source: DataSource, prefix: str):
+    """Return the viewable importable DataFiles below the prefix, without their content."""
     suffixes = Q()
     for suffix in YAML_SUFFIXES:
         suffixes |= Q(path__endswith=suffix)
     return (
-        DataFile.objects.filter(source=source, path__startswith=prefix)
+        DataFile.objects.restrict(user, "view")
+        .filter(source=source, path__startswith=prefix)
         .filter(suffixes)
         .only("pk", "path", "size", "last_updated")
         .order_by("path")
@@ -146,10 +147,11 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
     source = _importable_source(user, source.pk)
     rows = []
     reviewed = []
+    claimed_device_types = set()
     for selection in selections:
         row = ReviewRow(datafile_id=selection.datafile_id, action=selection.action)
         rows.append(row)
-        source_file = _read_source_file(source, selection.datafile_id)
+        source_file = _read_source_file(user, source, selection.datafile_id)
         if source_file is None:
             row.error = "The file is not available in this Data Source."
             continue
@@ -160,6 +162,10 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             row.error = " ".join(exc.messages)
             continue
         row.device_type = proposal.device_type
+        if proposal.device_type.pk in claimed_device_types:
+            row.error = "Another selected file already targets this device type."
+            continue
+        claimed_device_types.add(proposal.device_type.pk)
         row.proposed_fields = proposal.fields
         reviewed.append(
             ReviewedRow(
@@ -214,7 +220,7 @@ def apply(user, token: str) -> list[DeviceView]:
 
 
 def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
-    source_file = _read_source_file(source, reviewed.datafile_id)
+    source_file = _read_source_file(user, source, reviewed.datafile_id)
     if source_file is None or source_file.path != reviewed.path:
         raise ImportRejected(f"{reviewed.path}: the file is no longer available.")
     if source_file.sha256 != reviewed.sha256:
@@ -228,7 +234,12 @@ def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
             f"{reviewed.path}: the render mode differs from the review."
         )
     device_view = DeviceView(device_type=proposal.device_type, **proposal.fields)
-    device_view.save()
+    try:
+        device_view.save()
+    except IntegrityError as exc:
+        raise ImportRejected(
+            f"{reviewed.path}: a device view already exists for this device type."
+        ) from exc
     if not DeviceView.objects.restrict(user, "add").filter(pk=device_view.pk).exists():
         raise ImportRejected(
             f"{reviewed.path}: the new device view violates your permissions."
@@ -243,9 +254,10 @@ def _importable_source(user, source_id) -> DataSource:
     return source
 
 
-def _read_source_file(source, datafile_id) -> _SourceFile | None:
+def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
     datafile = (
-        DataFile.objects.filter(source=source, pk=datafile_id)
+        DataFile.objects.restrict(user, "view")
+        .filter(source=source, pk=datafile_id)
         .only("path", "data")
         .first()
     )

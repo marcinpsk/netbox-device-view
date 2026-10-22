@@ -74,6 +74,13 @@ class DeviceViewEditView(generic.ObjectEditView):
     template_name = "netbox_device_view/deviceview_edit.html"
 
 
+def _parse_pk(value):
+    """Return value as a primary key, or None; isdigit() alone also accepts "²"."""
+    if value.isascii() and value.isdigit() and len(value) <= 19:
+        return int(value)
+    return None
+
+
 @method_decorator(login_required, name="dispatch")
 class DeviceTypeInterfacesView(View):
     """Return JSON list of component templates with their CSS stylenames for
@@ -82,11 +89,10 @@ class DeviceTypeInterfacesView(View):
 
     def get(self, request):
         device_type_id = request.GET.get("device_type_id", "").strip()
-        if not device_type_id or not device_type_id.isdigit():
+        device_type_pk = _parse_pk(device_type_id)
+        if device_type_pk is None:
             return JsonResponse([], safe=False)
-        return JsonResponse(
-            get_stylenames_for_device_type(int(device_type_id)), safe=False
-        )
+        return JsonResponse(get_stylenames_for_device_type(device_type_pk), safe=False)
 
 
 class DeviceViewBulkImportView(BulkImportView):
@@ -110,7 +116,9 @@ class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
         if form.is_bound and form.is_valid():
             paginator = EnhancedPaginator(
                 datasource_import.catalog(
-                    form.cleaned_data["source"], form.cleaned_data["prefix"]
+                    request.user,
+                    form.cleaned_data["source"],
+                    form.cleaned_data["prefix"],
                 ),
                 get_paginate_count(request),
             )
@@ -139,8 +147,10 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
             + urlencode({"source": source.pk, "prefix": prefix})
         )
         values = request.POST.getlist("file")
-        file_ids = {int(v) for v in values if v.isdigit()}
-        datafiles = datasource_import.catalog(source, prefix).filter(pk__in=file_ids)
+        file_ids = {pk for pk in map(_parse_pk, values) if pk is not None}
+        datafiles = datasource_import.catalog(request.user, source, prefix).filter(
+            pk__in=file_ids
+        )
         if not values or len(file_ids) != len(values) or len(datafiles) != len(values):
             messages.error(request, _("Select one or more files from the catalog."))
             return redirect(catalog_url)

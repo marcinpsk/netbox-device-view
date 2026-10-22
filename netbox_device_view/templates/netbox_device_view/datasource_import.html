@@ -22,7 +22,7 @@
         </div>
       </form>
 
-      {% if page %}
+      {% if page is not None %}
         <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
           {% csrf_token %}
           <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
@@ -59,9 +59,11 @@
               </table>
             </div>
             {% include 'inc/paginator.html' with placement='bottom' %}
-            <div class="card-footer text-end">
-              <button type="submit" class="btn btn-primary">{% trans "Assign device types" %}</button>
-            </div>
+            {% if page.object_list %}
+              <div class="card-footer text-end">
+                <button type="submit" class="btn btn-primary">{% trans "Assign device types" %}</button>
+              </div>
+            {% endif %}
           </div>
         </form>
       {% endif %}
