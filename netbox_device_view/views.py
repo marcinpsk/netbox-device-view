@@ -9,6 +9,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
+from django.utils.translation import gettext_lazy as _
 from django.views import View
 from netbox.object_actions import (
     AddObject,
@@ -46,7 +47,7 @@ class DeviceViewView(generic.ObjectView):
 
 class DataSourceImport(ObjectAction):
     name = "datasource_import"
-    label = "Import from Data Source"
+    label = _("Import from Data Source")
     permissions_required: ClassVar[set[str]] = {"add"}
     template_name = "netbox_device_view/buttons/datasource_import.html"
 
@@ -137,10 +138,11 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
             + "?"
             + urlencode({"source": source.pk, "prefix": prefix})
         )
-        file_ids = {int(v) for v in request.POST.getlist("file") if v.isdigit()}
+        values = request.POST.getlist("file")
+        file_ids = {int(v) for v in values if v.isdigit()}
         datafiles = datasource_import.catalog(source, prefix).filter(pk__in=file_ids)
-        if not file_ids or len(datafiles) != len(file_ids):
-            messages.error(request, "Select at least one file from the catalog.")
+        if not values or len(file_ids) != len(values) or len(datafiles) != len(values):
+            messages.error(request, _("Select one or more files from the catalog."))
             return redirect(catalog_url)
 
         target_form = forms.DataSourceImportTargetForm(

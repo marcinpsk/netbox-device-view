@@ -18,7 +18,7 @@ from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from users.models import ObjectPermission, User
@@ -33,6 +33,12 @@ EXAMPLE_PATH = "examples/yaml/Cisco/C9300-24T.yaml"
 START_URL = "plugins:netbox_device_view:deviceview_datasource_import"
 REVIEW_URL = "plugins:netbox_device_view:deviceview_datasource_import_review"
 APPLY_URL = "plugins:netbox_device_view:deviceview_datasource_import_apply"
+
+RECORDED_EVENTS = []
+
+
+def record_events(events):
+    RECORDED_EVENTS.extend(events)
 
 
 class DataSourceImportTestBase(TestCase):
@@ -121,6 +127,18 @@ class ImportWorkflowTests(DataSourceImportTestBase):
         self.assertContains(catalog, EXAMPLE_PATH)
         datafile = self.datafile()
         self.assertContains(catalog, f'value="{datafile.pk}"')
+
+        assign = self.client.post(
+            reverse(REVIEW_URL),
+            {
+                "source": self.source.pk,
+                "prefix": "examples/",
+                "step": "match",
+                "file": [datafile.pk],
+            },
+        )
+        self.assertContains(assign, f'name="device_type_{datafile.pk}"')
+        self.assertIsNone(assign.context["review"])
 
         review = self.review([(datafile, self.device_type)])
         self.assertContains(review, "C9300-24T")
@@ -237,10 +255,10 @@ class ReviewTests(DataSourceImportTestBase):
             payload["rows"],
             [
                 {
-                    "file": datafile.pk,
+                    "datafile_id": datafile.pk,
                     "path": EXAMPLE_PATH,
                     "sha256": hashlib.sha256(EXAMPLE_YAML.read_bytes()).hexdigest(),
-                    "device_type": self.device_type.pk,
+                    "device_type_id": self.device_type.pk,
                     "action": "create",
                     "render_mode": "css",
                 }
@@ -300,6 +318,28 @@ class ReviewTests(DataSourceImportTestBase):
         self.source.sync()
         self.review_token([(self.datafile("examples/bom.yaml"), self.device_type)])
 
+    def test_non_numeric_file_selection_is_rejected(self):
+        response = self.client.post(
+            reverse(REVIEW_URL),
+            {
+                "source": self.source.pk,
+                "prefix": "examples/",
+                "step": "match",
+                "file": [self.datafile().pk, "x"],
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_review_rejects_a_source_the_user_cannot_view(self):
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DataSource)
+        ).update(constraints={"name": "Other"})
+        selection = datasource_import.Selection(
+            datafile_id=self.datafile().pk, device_type_id=self.device_type.pk
+        )
+        with self.assertRaises(datasource_import.ImportRejected):
+            datasource_import.review(self.user, self.source, [selection])
+
     def test_review_and_apply_require_csrf(self):
         client = Client(enforce_csrf_checks=True)
         client.force_login(self.user)
@@ -333,7 +373,7 @@ class ApplyTests(DataSourceImportTestBase):
 
     def test_expired_token_is_rejected(self):
         token = self.review_token([(self.datafile(), self.device_type)])
-        later = time.time() + 15 * 60 + 1
+        later = time.time() + datasource_import.REVIEW_MAX_AGE_SECONDS + 1
         with mock.patch("django.core.signing.time.time", return_value=later):
             self.assert_rejected(self.apply(token))
 
@@ -349,6 +389,22 @@ class ApplyTests(DataSourceImportTestBase):
             object_types=ObjectType.objects.get_for_model(DeviceView), actions=["add"]
         ).update(constraints={"device_type__model": "Other"})
         self.assert_rejected(self.apply(token))
+
+    @override_settings(EVENTS_PIPELINE=["tests.test_datasource_import.record_events"])
+    def test_rejected_apply_sends_no_events(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DeviceView), actions=["add"]
+        ).update(constraints={"device_type__model": "Other"})
+        RECORDED_EVENTS.clear()
+        self.assert_rejected(self.apply(token))
+        self.assertEqual(RECORDED_EVENTS, [])
+
+        ObjectPermission.objects.filter(actions=["add"]).update(constraints=None)
+        self.assertEqual(self.apply(token).status_code, 200)
+        self.assertEqual(
+            [event["object_type"].model for event in RECORDED_EVENTS], ["deviceview"]
+        )
 
     def test_file_changed_after_review_is_rejected(self):
         token = self.review_token([(self.datafile(), self.device_type)])

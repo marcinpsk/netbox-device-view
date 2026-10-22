@@ -1,4 +1,5 @@
 {% extends 'generic/_base.html' %}
+{% load helpers %}
 {% load i18n %}
 
 {% block title %}{% trans "Review Data Source Import" %}{% endblock %}
@@ -65,9 +66,9 @@
             {% for row in review.rows %}
               <tr>
                 <td class="font-monospace">{{ row.path|default:row.datafile_id }}</td>
-                <td>{% if row.device_type %}{{ row.device_type.manufacturer }} {{ row.device_type.model }}{% else %}&mdash;{% endif %}</td>
+                <td>{% if row.device_type %}{{ row.device_type.manufacturer }} {{ row.device_type.model }}{% else %}{{ ''|placeholder }}{% endif %}</td>
                 <td>{{ row.action.label }}</td>
-                <td>{{ row.render_mode_label|default:"&mdash;" }}</td>
+                <td>{{ row.render_mode_label|placeholder }}</td>
                 <td>
                   {% if row.error %}
                     <span class="text-danger">{{ row.error }}</span>
@@ -76,12 +77,12 @@
                   {% endif %}
                 </td>
               </tr>
-              {% if row.fields and not row.error %}
+              {% if row.proposed_fields and not row.error %}
                 <tr>
                   <td colspan="5">
                     <details>
                       <summary>{% trans "Proposed fields" %}</summary>
-                      {% for name, value in row.fields.items %}
+                      {% for name, value in row.proposed_fields.items %}
                         <h3 class="h6 mt-2">{{ name }}</h3>
                         <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{{ value }}</pre>
                       {% endfor %}

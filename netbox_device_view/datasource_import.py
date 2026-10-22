@@ -7,12 +7,14 @@ transactional apply. Views call it and only handle forms and display.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
+from core.signals import clear_events
 from dcim.models import DeviceType
 from django.core import signing
 from django.core.exceptions import ValidationError
@@ -42,19 +44,41 @@ class Selection:
     action: Action = Action.CREATE
 
 
-@dataclass
-class ReviewRow:
+@dataclass(frozen=True)
+class ReviewedRow:
+    """One reviewed row, as the signed review token stores it."""
+
     datafile_id: int
     path: str
-    device_type: DeviceType | None
+    sha256: str
+    device_type_id: int
     action: Action
-    fields: dict[str, str] = field(default_factory=dict)
-    sha256: str = ""
+    render_mode: str
+
+    def to_payload(self) -> dict:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> ReviewedRow:
+        return cls(**{**payload, "action": Action(payload["action"])})
+
+
+@dataclass
+class ReviewRow:
+    """One row of the review page."""
+
+    datafile_id: int
+    action: Action
+    path: str = ""
+    device_type: DeviceType | None = None
+    proposed_fields: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
     @property
     def render_mode_label(self):
-        return RenderMode(self.fields["render_mode"]).label if self.fields else ""
+        if not self.proposed_fields:
+            return ""
+        return RenderMode(self.proposed_fields["render_mode"]).label
 
 
 @dataclass
@@ -66,6 +90,22 @@ class Review:
     @property
     def is_valid(self):
         return bool(self.rows) and not any(row.error for row in self.rows)
+
+
+@dataclass(frozen=True)
+class _SourceFile:
+    path: str
+    content: bytes
+
+    @property
+    def sha256(self):
+        return hashlib.sha256(self.content).hexdigest()
+
+
+@dataclass(frozen=True)
+class _Proposal:
+    device_type: DeviceType
+    fields: dict[str, str]
 
 
 def importable_sources(user):
@@ -103,32 +143,34 @@ def catalog(source: DataSource, prefix: str):
 
 def review(user, source: DataSource, selections: list[Selection]) -> Review:
     """Validate the selection and return a read-only review with a signed token."""
+    source = _importable_source(user, source.pk)
     rows = []
+    reviewed = []
     for selection in selections:
-        row = ReviewRow(
-            datafile_id=selection.datafile_id,
-            path="",
-            device_type=None,
-            action=selection.action,
-        )
+        row = ReviewRow(datafile_id=selection.datafile_id, action=selection.action)
         rows.append(row)
-        datafile = _read_datafile(source, selection.datafile_id)
-        if datafile is None:
+        source_file = _read_source_file(source, selection.datafile_id)
+        if source_file is None:
             row.error = "The file is not available in this Data Source."
             continue
-        row.path, raw = datafile
-        row.sha256 = hashlib.sha256(raw).hexdigest()
-        row.device_type = _available_target(user, selection.device_type_id)
-        if row.device_type is None:
-            row.error = "The device type is not available as an import target."
-            continue
+        row.path = source_file.path
         try:
-            row.fields = _proposed_fields(raw)
-            DeviceView(device_type=row.device_type, **row.fields).full_clean(
-                validate_unique=False
-            )
+            proposal = _propose(user, source_file, selection.device_type_id)
         except ValidationError as exc:
             row.error = " ".join(exc.messages)
+            continue
+        row.device_type = proposal.device_type
+        row.proposed_fields = proposal.fields
+        reviewed.append(
+            ReviewedRow(
+                datafile_id=selection.datafile_id,
+                path=source_file.path,
+                sha256=source_file.sha256,
+                device_type_id=proposal.device_type.pk,
+                action=selection.action,
+                render_mode=proposal.fields["render_mode"],
+            )
+        )
 
     result = Review(source=source, rows=rows)
     if result.is_valid:
@@ -136,17 +178,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             {
                 "user": user.pk,
                 "source": source.pk,
-                "rows": [
-                    {
-                        "file": row.datafile_id,
-                        "path": row.path,
-                        "sha256": row.sha256,
-                        "device_type": row.device_type.pk,
-                        "action": row.action.value,
-                        "render_mode": row.fields["render_mode"],
-                    }
-                    for row in rows
-                ],
+                "rows": [row.to_payload() for row in reviewed],
             },
             salt=SIGNING_SALT,
         )
@@ -169,50 +201,67 @@ def apply(user, token: str) -> list[DeviceView]:
         raise ImportRejected("The review token belongs to a different user.")
     if not user.has_perm("netbox_device_view.add_deviceview"):
         raise ImportRejected("You do not have permission to add device views.")
-    source = importable_sources(user).filter(pk=payload["source"]).first()
-    if source is None:
-        raise ImportRejected("The Data Source is not available for import.")
+    source = _importable_source(user, payload["source"])
+    rows = [ReviewedRow.from_payload(row) for row in payload["rows"]]
 
-    created = []
-    with transaction.atomic():
-        for reviewed in payload["rows"]:
-            created.append(_apply_row(user, source, reviewed))
-    return created
-
-
-def _apply_row(user, source, reviewed) -> DeviceView:
-    datafile = _read_datafile(source, reviewed["file"])
-    if datafile is None or datafile[0] != reviewed["path"]:
-        raise ImportRejected(f"{reviewed['path']}: the file is no longer available.")
-    path, raw = datafile
-    if hashlib.sha256(raw).hexdigest() != reviewed["sha256"]:
-        raise ImportRejected(f"{path}: the file changed after review.")
-    device_type = _available_target(user, reviewed["device_type"])
-    if device_type is None:
-        raise ImportRejected(f"{path}: the device type is not available.")
     try:
-        fields = _proposed_fields(raw)
-        if fields["render_mode"] != reviewed["render_mode"]:
-            raise ImportRejected(f"{path}: the render mode differs from the review.")
-        device_view = DeviceView(device_type=device_type, **fields)
-        device_view.full_clean()
+        with transaction.atomic():
+            return [_apply_row(user, source, row) for row in rows]
+    except ImportRejected:
+        # Drop events queued for the rolled-back records.
+        clear_events.send(sender=DeviceView)
+        raise
+
+
+def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
+    source_file = _read_source_file(source, reviewed.datafile_id)
+    if source_file is None or source_file.path != reviewed.path:
+        raise ImportRejected(f"{reviewed.path}: the file is no longer available.")
+    if source_file.sha256 != reviewed.sha256:
+        raise ImportRejected(f"{reviewed.path}: the file changed after review.")
+    try:
+        proposal = _propose(user, source_file, reviewed.device_type_id)
     except ValidationError as exc:
-        raise ImportRejected(f"{path}: {' '.join(exc.messages)}") from exc
+        raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
+    if proposal.fields["render_mode"] != reviewed.render_mode:
+        raise ImportRejected(
+            f"{reviewed.path}: the render mode differs from the review."
+        )
+    device_view = DeviceView(device_type=proposal.device_type, **proposal.fields)
     device_view.save()
     if not DeviceView.objects.restrict(user, "add").filter(pk=device_view.pk).exists():
-        raise ImportRejected(f"{path}: the new device view violates your permissions.")
+        raise ImportRejected(
+            f"{reviewed.path}: the new device view violates your permissions."
+        )
     return device_view
 
 
-def _read_datafile(source, datafile_id) -> tuple[str, bytes] | None:
-    row = (
+def _importable_source(user, source_id) -> DataSource:
+    source = importable_sources(user).filter(pk=source_id).first()
+    if source is None:
+        raise ImportRejected("The Data Source is not available for import.")
+    return source
+
+
+def _read_source_file(source, datafile_id) -> _SourceFile | None:
+    datafile = (
         DataFile.objects.filter(source=source, pk=datafile_id)
-        .values_list("path", "data")
+        .only("path", "data")
         .first()
     )
-    if row is None or not row[0].endswith(YAML_SUFFIXES):
+    if datafile is None or not datafile.path.endswith(YAML_SUFFIXES):
         return None
-    return row[0], bytes(row[1])
+    return _SourceFile(path=datafile.path, content=bytes(datafile.data))
+
+
+def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
+    """Validate one file for one target; raise ValidationError when it cannot be imported."""
+    device_type = _available_target(user, device_type_id)
+    if device_type is None:
+        raise ValidationError("The device type is not available as an import target.")
+    fields = _proposed_fields(source_file.content)
+    DeviceView(device_type=device_type, **fields).full_clean(validate_unique=False)
+    return _Proposal(device_type=device_type, fields=fields)
 
 
 def _available_target(user, device_type_id) -> DeviceType | None:
