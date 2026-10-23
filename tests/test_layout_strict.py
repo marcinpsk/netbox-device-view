@@ -422,6 +422,7 @@ class TestReviewFindings:
             "views:\n  front: {elements: [p1], rows: [{bogus: 1}]}\n",
             "views: {front: {elements: [p1]}}\nvariants: {V: {elements: [p1], rows: [{x: 1}]}}\n",
             "version: 1\nviews: [front]\n",
+            *(f"{{{tag} bogus: 1}}\n" for tag in ("!!seq", "!!map", "!!set", "!!omap")),
         ],
     )
     def test_malformed_input_raises_a_parse_error(self, text):

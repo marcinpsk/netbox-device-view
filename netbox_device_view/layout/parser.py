@@ -187,7 +187,8 @@ class _DepthLimitedLoader(yaml.SafeLoader):
                 isinstance(key_node, yaml.ScalarNode)
                 and key_node.tag != "tag:yaml.org,2002:merge"
             ):
-                key = self.construct_object(key_node)
+                # deep=True makes a container tag on a scalar key fail here.
+                key = self.construct_object(key_node, deep=True)
                 if key in seen:
                     raise LayoutParseError(f"Invalid YAML: duplicate key {key!r:.80}.")
                 seen.add(key)
