@@ -20,7 +20,8 @@ from dcim.models import DeviceType, Manufacturer
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
+from django.db.models.functions import Length
 
 from .layout import LayoutParseError, parse_yaml, render_css
 from .models import DeviceView, RenderMode
@@ -31,6 +32,18 @@ REVIEW_MAX_AGE_SECONDS = 15 * 60
 TARGET_UNAVAILABLE = "The device type is not available as an import target."
 NO_MATCH = "No device type matches this path."
 AMBIGUOUS_MATCH = "Several files below this directory match this device type."
+DUPLICATE_TARGET = "Several selected files target this device type. Keep one of them."
+MAX_FILE_BYTES = 256 * 1024
+MAX_BATCH_BYTES = 2 * 1024 * 1024
+MAX_BATCH_ROWS = 100
+FILE_TOO_LARGE = f"The file is larger than {MAX_FILE_BYTES // 1024} KiB."
+BATCH_TOO_LARGE = (
+    f"The selected files are larger than {MAX_BATCH_BYTES // 1024 // 1024} MiB"
+    " in total."
+)
+TOO_MANY_ROWS = f"Select at most {MAX_BATCH_ROWS} files in one import."
+FILE_UNAVAILABLE = "The file is not available in this Data Source."
+REPEATED_FILE = "Each file can be selected only once."
 
 
 class Format(models.TextChoices):
@@ -123,11 +136,16 @@ class ReviewRow:
 class Review:
     source: DataSource
     rows: list[ReviewRow]
+    errors: list[str] = field(default_factory=list)
     token: str = ""
 
     @property
     def is_valid(self):
-        return bool(self.rows) and not any(row.error for row in self.rows)
+        return (
+            bool(self.rows)
+            and not self.errors
+            and not any(row.error for row in self.rows)
+        )
 
 
 @dataclass(frozen=True)
@@ -231,15 +249,18 @@ def catalog_rows(user, source: DataSource, prefix: str, datafiles) -> list[Catal
 def review(user, source: DataSource, selections: list[Selection]) -> Review:
     """Validate the selection and return a read-only review with a signed token."""
     source = _importable_source(user, source.pk)
+    errors = _batch_errors(user, source, selections)
+    if errors:
+        return Review(source=source, rows=[], errors=errors)
     rows = []
     reviewed = []
-    claimed_device_types = set()
     for selection in selections:
         row = ReviewRow(datafile_id=selection.datafile_id, action=selection.action)
         rows.append(row)
-        source_file = _read_source_file(user, source, selection.datafile_id)
-        if source_file is None:
-            row.error = "The file is not available in this Data Source."
+        try:
+            source_file = _read_source_file(user, source, selection.datafile_id)
+        except ValidationError as exc:
+            row.error = " ".join(exc.messages)
             continue
         row.path = source_file.path
         row.format = source_file.format
@@ -249,10 +270,6 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             row.error = " ".join(exc.messages)
             continue
         row.device_type = proposal.device_type
-        if proposal.device_type.pk in claimed_device_types:
-            row.error = "Another selected file already targets this device type."
-            continue
-        claimed_device_types.add(proposal.device_type.pk)
         row.proposed_fields = proposal.fields
         reviewed.append(
             ReviewedRow(
@@ -264,6 +281,12 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
                 render_mode=proposal.fields["render_mode"],
             )
         )
+    files_per_device_type = Counter(
+        row.device_type.pk for row in rows if row.device_type
+    )
+    for row in rows:
+        if row.device_type and files_per_device_type[row.device_type.pk] > 1:
+            row.error = DUPLICATE_TARGET
 
     result = Review(source=source, rows=rows)
     if result.is_valid:
@@ -307,9 +330,12 @@ def apply(user, token: str) -> list[DeviceView]:
 
 
 def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
-    source_file = _read_source_file(user, source, reviewed.datafile_id)
-    if source_file is None or source_file.path != reviewed.path:
-        raise ImportRejected(f"{reviewed.path}: the file is no longer available.")
+    try:
+        source_file = _read_source_file(user, source, reviewed.datafile_id)
+    except ValidationError as exc:
+        raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
+    if source_file.path != reviewed.path:
+        raise ImportRejected(f"{reviewed.path}: {FILE_UNAVAILABLE}")
     if source_file.sha256 != reviewed.sha256:
         raise ImportRejected(f"{reviewed.path}: the file changed after review.")
     try:
@@ -341,19 +367,41 @@ def _importable_source(user, source_id) -> DataSource:
     return source
 
 
-def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
+def _batch_errors(user, source, selections: list[Selection]) -> list[str]:
+    """Check the batch limits in the database, before any file content is read."""
+    if len(selections) > MAX_BATCH_ROWS:
+        return [TOO_MANY_ROWS]
+    datafile_ids = [selection.datafile_id for selection in selections]
+    if len(set(datafile_ids)) != len(datafile_ids):
+        return [REPEATED_FILE]
+    total = (
+        DataFile.objects.restrict(user, "view")
+        .filter(source=source, pk__in=datafile_ids)
+        .aggregate(total=Sum(Length("data")))["total"]
+    )
+    if total and total > MAX_BATCH_BYTES:
+        return [BATCH_TOO_LARGE]
+    return []
+
+
+def _read_source_file(user, source, datafile_id) -> _SourceFile:
     datafile = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, pk=datafile_id)
-        .only("path", "data")
+        .annotate(stored_bytes=Length("data"))
+        .only("path")
         .first()
     )
     file_format = None if datafile is None else _file_format(datafile.path)
     if file_format is None:
-        return None
-    return _SourceFile(
-        path=datafile.path, format=file_format, content=bytes(datafile.data)
-    )
+        raise ValidationError(FILE_UNAVAILABLE)
+    if datafile.stored_bytes > MAX_FILE_BYTES:
+        raise ValidationError(FILE_TOO_LARGE)
+    # The deferred content loads in a second query, and a sync can replace it first.
+    content = bytes(datafile.data)
+    if len(content) > MAX_FILE_BYTES:
+        raise ValidationError(FILE_TOO_LARGE)
+    return _SourceFile(path=datafile.path, format=file_format, content=content)
 
 
 def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
@@ -430,11 +478,9 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
             "render_mode": RenderMode.CSS.value,
         }
     try:
-        css = render_css(parse_yaml(text))
+        css = render_css(parse_yaml(text, strict=True))
     except LayoutParseError as exc:
         raise ValidationError(f"Invalid YAML layout: {exc}") from exc
-    if not css.strip():
-        raise ValidationError("The layout defines no grid areas.")
     return {
         "yaml_layout": text,
         "grid_template_area": css,
