@@ -561,6 +561,126 @@ class SuggestionTests(DataSourceImportTestBase):
         self.assertNotContains(empty, "Assign device types")
 
 
+class StrictYamlImportTests(DataSourceImportTestBase):
+    INJECTION = 'x" onmouseover="alert(1)'
+
+    def review_yaml(self, path, content):
+        self.write_file(path, content.encode())
+        self.source.sync()
+        return self.review([(self.datafile(path), self.device_type)])
+
+    def test_bundled_yaml_examples_pass_review_unchanged(self):
+        selections = []
+        for example in sorted(EXAMPLES.glob("yaml/*/*.yaml")):
+            path = f"examples/{example.relative_to(EXAMPLES)}"
+            self.write_file(path, example.read_bytes())
+            manufacturer, _ = Manufacturer.objects.get_or_create(
+                name=example.parent.name,
+                defaults={"slug": slugify(example.parent.name)},
+            )
+            device_type, _ = DeviceType.objects.get_or_create(
+                manufacturer=manufacturer,
+                model=example.stem,
+                defaults={"slug": slugify(example.stem)},
+            )
+            selections.append((path, device_type))
+        self.source.sync()
+        self.assertGreater(len(selections), 10)
+        review = self.review(
+            [(self.datafile(path), device_type) for path, device_type in selections]
+        ).context["review"]
+        self.assertEqual([row.error for row in review.rows], [""] * len(selections))
+        self.assertTrue(review.token)
+
+    def test_quoted_attribute_injection_is_rejected_before_any_write(self):
+        base = EXAMPLE_YAML.read_text().replace(
+            "views:\n  front:\n    rows:\n",
+            "views:\n  front:\n    rows:\n"
+            "      - elements:\n"
+            f"          - {{key: mgmt0, css_classes: ['{self.INJECTION}']}}\n",
+        )
+        variant = EXAMPLE_YAML.read_text().replace(
+            "    match: module\n    rows:\n",
+            "    match: module\n    rows:\n"
+            "      - elements:\n"
+            f"          - {{key: mgmt0, css_classes: ['{self.INJECTION}']}}\n",
+        )
+        self.assertNotEqual(base, EXAMPLE_YAML.read_text())
+        self.assertNotEqual(variant, EXAMPLE_YAML.read_text())
+        for name, content in (("base", base), ("variant", variant)):
+            with self.subTest(name):
+                response = self.review_yaml(f"examples/{name}.yaml", content)
+                review = response.context["review"]
+                self.assertIn("css_classes", review.rows[0].error)
+                self.assertEqual(review.token, "")
+                self.assertNotContains(response, self.INJECTION)
+                self.assertNotContains(response, "Apply import")
+        self.assertFalse(DeviceView.objects.exists())
+        self.assertFalse(
+            ObjectChange.objects.filter(
+                changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+            ).exists()
+        )
+
+    def test_malformed_yaml_error_is_escaped(self):
+        response = self.review_yaml(
+            "examples/malformed.yaml", "views: [<script>alert(1)</script>"
+        )
+        error = response.context["review"].rows[0].error
+        self.assertIn("<script>", error)
+        self.assertContains(response, "&lt;script&gt;")
+        self.assertNotContains(response, "<script>alert(1)")
+
+    def test_unbounded_sequence_is_rejected(self):
+        content = EXAMPLE_YAML.read_text().replace("count: 12", "count: 1000000000", 1)
+        started = time.monotonic()
+        review = self.review_yaml("examples/huge.yaml", content).context["review"]
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIn("10000 elements", review.rows[0].error)
+
+    def test_review_rejects_shapes_the_lenient_parser_cannot_read(self):
+        huge = "1" + "0" * 3000
+        contents = {
+            "views-list": ("version: 1\nviews: [front]\n", "views"),
+            "duplicate-key": (
+                "views:\n  front: {elements: [{key: p1}]}\n  front: {elements: [{key: p2}]}\n",
+                "duplicate key",
+            ),
+            "huge-key-number": (
+                (
+                    "views:\n  front:\n    rows:\n      - sequence: "
+                    f"{{prefix: p, count: {huge}, step: {huge}}}\n"
+                ),
+                "prefix",
+            ),
+        }
+        wide = ", ".join(
+            f"{{key: p{i}, span: {{cols: {'9' * 4299}}}}}" for i in range(12)
+        )
+        contents["huge-span"] = (
+            f"views:\n  front:\n    rows:\n      - elements: [{wide}]\n      - blank: 1\n",
+            "span.cols",
+        )
+        for name, (content, message) in contents.items():
+            with self.subTest(name):
+                response = self.review_yaml(f"examples/{name}.yaml", content)
+                self.assertEqual(response.status_code, 200)
+                review = response.context["review"]
+                self.assertIn(message, review.rows[0].error)
+                self.assertEqual(review.token, "")
+
+    def test_local_definitions_keep_the_lenient_parser(self):
+        # Rendering reads stored YAML with the lenient parser; only imports are strict.
+        DeviceView.objects.create(
+            device_type=self.device_type,
+            yaml_layout="views:\n  front:\n    elements:\n      - {key: p1, extra: 1}\n",
+        )
+        tab = self.client.get(
+            reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
+        )
+        self.assertEqual(tab.status_code, 200)
+
+
 class CssImportTests(DataSourceImportTestBase):
     def setUp(self):
         super().setUp()

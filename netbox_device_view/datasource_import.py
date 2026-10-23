@@ -478,11 +478,9 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
             "render_mode": RenderMode.CSS.value,
         }
     try:
-        css = render_css(parse_yaml(text))
+        css = render_css(parse_yaml(text, strict=True))
     except LayoutParseError as exc:
         raise ValidationError(f"Invalid YAML layout: {exc}") from exc
-    if not css.strip():
-        raise ValidationError("The layout defines no grid areas.")
     return {
         "yaml_layout": text,
         "grid_template_area": css,
