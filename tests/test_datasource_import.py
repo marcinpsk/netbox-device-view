@@ -15,6 +15,7 @@ from unittest import mock
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
@@ -560,6 +561,41 @@ class CssImportTests(DataSourceImportTestBase):
             DeviceView.objects.get().grid_template_area,
             '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
         )
+
+    def test_imported_css_cannot_close_the_style_element(self):
+        raw = (
+            '.deviceview.area { grid-template-areas: "a<b"; }\n'
+            "</style><script>alert(1)</script>\n"
+        )
+        self.write_file("examples/Cisco/inject.css", raw.encode())
+        self.source.sync()
+        self.apply(
+            self.review_token(
+                [(self.datafile("examples/Cisco/inject.css"), self.device_type)]
+            )
+        )
+        plugin_config = {
+            **settings.PLUGINS_CONFIG["netbox_device_view"],
+            "show_on_device_tab": True,
+        }
+        with override_settings(
+            PLUGINS_CONFIG={
+                **settings.PLUGINS_CONFIG,
+                "netbox_device_view": plugin_config,
+            }
+        ):
+            pages = [
+                self.client.get(
+                    reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
+                ),
+                self.client.get(self.device.get_absolute_url()),
+            ]
+        for page in pages:
+            with self.subTest(url=page.request["PATH_INFO"]):
+                self.assertEqual(page.status_code, 200)
+                self.assertNotContains(page, "<script>alert(1)")
+                self.assertContains(page, '"a\\3c b"')
+                self.assertContains(page, "\\3c /style>\\3c script>")
 
     def test_empty_or_non_utf8_css_is_rejected(self):
         self.write_file("examples/empty.css", b" \n\t\n")
