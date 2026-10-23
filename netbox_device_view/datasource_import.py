@@ -107,13 +107,10 @@ class ReviewRow:
     datafile_id: int
     action: Action
     path: str = ""
+    format: Format | None = None
     device_type: DeviceType | None = None
     proposed_fields: dict[str, str] = field(default_factory=dict)
     error: str = ""
-
-    @property
-    def format(self) -> Format | None:
-        return _file_format(self.path) if self.path else None
 
     @property
     def render_mode_label(self):
@@ -136,6 +133,7 @@ class Review:
 @dataclass(frozen=True)
 class _SourceFile:
     path: str
+    format: Format
     content: bytes
 
     @property
@@ -244,6 +242,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             row.error = "The file is not available in this Data Source."
             continue
         row.path = source_file.path
+        row.format = source_file.format
         try:
             proposal = _propose(user, source_file, selection.device_type_id)
         except ValidationError as exc:
@@ -349,9 +348,12 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
         .only("path", "data")
         .first()
     )
-    if datafile is None or _file_format(datafile.path) is None:
+    file_format = None if datafile is None else _file_format(datafile.path)
+    if file_format is None:
         return None
-    return _SourceFile(path=datafile.path, content=bytes(datafile.data))
+    return _SourceFile(
+        path=datafile.path, format=file_format, content=bytes(datafile.data)
+    )
 
 
 def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
@@ -420,7 +422,7 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
         raise ValidationError("The file is not valid UTF-8 text.") from exc
     if not text.strip():
         raise ValidationError("The file is empty.")
-    if _file_format(source_file.path) == Format.CSS:
+    if source_file.format == Format.CSS:
         # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
         return {
             "yaml_layout": "",

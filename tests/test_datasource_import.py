@@ -27,7 +27,6 @@ from users.models import ObjectPermission, User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.models import DeviceView, RenderMode
-from netbox_device_view.utils import normalize_grid_template_area
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXAMPLE_YAML = EXAMPLES / "yaml" / "Cisco" / "C9300-24T.yaml"
@@ -519,6 +518,7 @@ class CssImportTests(DataSourceImportTestBase):
         self.source.sync()
 
     def test_import_one_css_layout_end_to_end(self):
+        css = EXAMPLE_CSS.read_text()
         catalog = self.client.get(
             reverse(START_URL),
             {"source": self.source.pk, "prefix": "examples/", "q": ".css"},
@@ -538,19 +538,17 @@ class CssImportTests(DataSourceImportTestBase):
         self.assertEqual(self.apply(review.context["review"].token).status_code, 200)
 
         device_view = DeviceView.objects.get(device_type=self.device_type)
-        self.assertEqual(device_view.grid_template_area, EXAMPLE_CSS.read_text())
+        self.assertEqual(device_view.grid_template_area, css)
         self.assertEqual(device_view.yaml_layout, "")
         self.assertEqual(device_view.render_mode, RenderMode.CSS)
         tab = self.client.get(
             reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
         )
         self.assertEqual(tab.status_code, 200)
-        first_row = re.search(
-            r'grid-template-areas:\s*"([^"]+)"', EXAMPLE_CSS.read_text()
-        )
+        first_row = re.search(r'grid-template-areas:\s*"([^"]+)"', css)
         self.assertContains(tab, first_row.group(1))
 
-    def test_css_whitespace_is_normalized_like_the_form(self):
+    def test_css_whitespace_is_normalized(self):
         raw = '.deviceview.area {\n  grid-template-areas: "a\u00a0b\u2009c";\n}\n'
         self.write_file("examples/Cisco/spaces.css", raw.encode())
         self.source.sync()
@@ -560,9 +558,8 @@ class CssImportTests(DataSourceImportTestBase):
         self.apply(token)
         self.assertEqual(
             DeviceView.objects.get().grid_template_area,
-            normalize_grid_template_area(raw),
+            '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
         )
-        self.assertIn('"a b c"', DeviceView.objects.get().grid_template_area)
 
     def test_empty_or_non_utf8_css_is_rejected(self):
         self.write_file("examples/empty.css", b" \n\t\n")
@@ -598,6 +595,23 @@ class CssImportTests(DataSourceImportTestBase):
         ).context["review"]
         self.assertEqual([row.error for row in review.rows], [""] * len(selections))
         self.assertTrue(review.token)
+
+    def test_mixed_yaml_and_css_selection(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        token = self.review_token(
+            [
+                (self.datafile(), self.device_type),
+                (self.datafile(EXAMPLE_CSS_PATH), other),
+            ]
+        )
+        self.assertEqual(self.apply(token).status_code, 200)
+        from_yaml = DeviceView.objects.get(device_type=self.device_type)
+        from_css = DeviceView.objects.get(device_type=other)
+        self.assertEqual(from_yaml.yaml_layout, EXAMPLE_YAML.read_text())
+        self.assertEqual(from_css.yaml_layout, "")
+        self.assertEqual(from_css.grid_template_area, EXAMPLE_CSS.read_text())
 
     def test_yaml_and_css_for_one_model_are_ambiguous(self):
         response = self.client.get(
