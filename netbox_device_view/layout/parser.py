@@ -85,6 +85,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import tinycss2
+import tinycss2.color4
 import yaml
 
 from .model import (
@@ -137,9 +139,6 @@ _MAX_YAML_DEPTH = 32
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 # Appended to "module" in a CSS class, so a leading digit is valid.
 _VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
-_BACKGROUND = re.compile(
-    r"#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[A-Za-z]+"
-)
 _VIEW_NAMES = ("front", "rear")
 _FACES = {face.value: face for face in Face}
 _ROW_ENTRY_KEYS = ("elements", "sequence", "group", "spacer", "blank")
@@ -253,15 +252,19 @@ class _Rules:
         return raw
 
     def background(self, raw: Any, where: str) -> Any:
-        if (
-            self.strict
-            and raw is not None
-            and not (isinstance(raw, str) and _BACKGROUND.fullmatch(raw))
-        ):
-            raise LayoutParseError(
-                f"{where}: background must be a hex color or a color name."
-            )
-        return raw
+        """Return a strict background as tinycss2 serializes its one color value."""
+        if not self.strict or raw is None:
+            return raw
+        tokens = []
+        if isinstance(raw, str):
+            tokens = [
+                token
+                for token in tinycss2.parse_component_value_list(raw)
+                if token.type != "whitespace"
+            ]
+        if len(tokens) != 1 or tinycss2.color4.parse_color(tokens[0]) is None:
+            raise LayoutParseError(f"{where}: background must be one CSS color.")
+        return tinycss2.serialize(tokens)
 
     def css_classes(self, raw: Any, where: str) -> Any:
         if self.strict and not (

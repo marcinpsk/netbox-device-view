@@ -242,6 +242,10 @@ class TestFields:
             (lambda d: d["meta"].update(background="#12"), "background"),
             (lambda d: d["canvas"].update(background=5), "background"),
             (lambda d: front(d).update(background="url(x)"), "background"),
+            (lambda d: d["meta"].update(background="notacolor"), "background"),
+            (lambda d: d["meta"].update(background="red /*"), "background"),
+            (lambda d: d["meta"].update(background="/**/red"), "background"),
+            (lambda d: d["meta"].update(background="red blue"), "background"),
             (lambda d: d["meta"].update(description=["x"]), "description"),
             (lambda d: d["canvas"].update(columns=0), "columns"),
             (lambda d: d["canvas"].update(columns=True), "columns"),
@@ -285,11 +289,23 @@ class TestFields:
         with pytest.raises(LayoutParseError, match=message):
             strict(layout(change))
 
-    def test_named_and_hex_backgrounds(self):
-        for background in ("black", "#abc", "#abcd", "#aabbcc", "#aabbccdd"):
-            strict(
-                layout(lambda d, value=background: d["meta"].update(background=value))
-            )
+    @pytest.mark.parametrize(
+        ("background", "stored"),
+        [
+            ("black", "black"),
+            ("#abc", "#abc"),
+            ("#aabbccdd", "#aabbccdd"),
+            ("transparent", "transparent"),
+            ("rgb(0 0 0 / 50%)", "rgb(0 0 0 / 50%)"),
+            ("lab(50% 40 59)", "lab(50% 40 59)"),
+            # CSS closes a function at the end of input; the stored form does too.
+            ("rgb(0, 0, 0", "rgb(0, 0, 0)"),
+            ("  black  ", "black"),
+        ],
+    )
+    def test_css_colors_are_accepted_in_serialized_form(self, background, stored):
+        parsed = strict(layout(lambda d: d["meta"].update(background=background)))
+        assert parsed.front.canvas.background == stored
 
     def test_view_background_is_applied(self):
         parsed = parse(
