@@ -161,6 +161,10 @@ class LayoutParseError(ValueError):
     """Raised when the YAML layout schema is invalid."""
 
 
+_MERGE_TAG = "tag:yaml.org,2002:merge"
+_MERGE_KEY = object()
+
+
 class _DepthLimitedLoader(yaml.SafeLoader):
     """A SafeLoader that stops at deep nesting before the scanner and composer slow down."""
 
@@ -183,15 +187,17 @@ class _DepthLimitedLoader(yaml.SafeLoader):
         # Check the composed node: construction flattens merge keys in place.
         seen = set()
         for key_node, _ in node.value:
-            if (
-                isinstance(key_node, yaml.ScalarNode)
-                and key_node.tag != "tag:yaml.org,2002:merge"
-            ):
+            if not isinstance(key_node, yaml.ScalarNode):
+                continue
+            if key_node.tag == _MERGE_TAG:
+                key, name = _MERGE_KEY, "<<"
+            else:
                 # deep=True makes a container tag on a scalar key fail here.
                 key = self.construct_object(key_node, deep=True)
-                if key in seen:
-                    raise LayoutParseError(f"Invalid YAML: duplicate key {key!r:.80}.")
-                seen.add(key)
+                name = repr(key)
+            if key in seen:
+                raise LayoutParseError(f"Invalid YAML: duplicate key {name:.80}.")
+            seen.add(key)
 
 
 def _is_identifier(value: Any) -> bool:

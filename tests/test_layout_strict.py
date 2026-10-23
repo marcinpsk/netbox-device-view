@@ -436,6 +436,7 @@ class TestReviewFindings:
             "views:\n  front:\n    elements: [{key: p1, key: p2}]\n",
             "views:\n  front: {elements: [{key: p1}]}\nviews: {}\n",
             "views:\n  front: {elements: [{<<: {key: p1, key: p2}}]}\n",
+            "views:\n  front: {<<: {elements: [{key: p1}]}, <<: {canvas: {rows: 1}}}\n",
         ],
     )
     def test_duplicate_keys_are_rejected(self, text):
@@ -450,6 +451,16 @@ class TestReviewFindings:
         )
         elements = strict(text).front.elements
         assert [(e.key, e.label) for e in elements] == [("p1", "one"), ("p2", "two")]
+
+    def test_a_merge_key_can_list_several_mappings(self):
+        text = (
+            "views:\n  front:\n    elements:\n"
+            "      - &p1 {key: p1, label: one}\n"
+            "      - &p3 {key: p3, label: three, css_classes: [c]}\n"
+            "      - {<<: [*p1, *p3], key: p2}\n"
+        )
+        element = strict(text).front.elements[-1]
+        assert (element.key, element.label, element.css_classes) == ("p2", "one", ["c"])
 
     def test_a_merged_anchor_can_be_reused(self):
         text = (
