@@ -11,6 +11,7 @@ import copy
 import dataclasses
 import difflib
 import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -48,7 +49,15 @@ BATCH_TOO_LARGE = (
 )
 TOO_MANY_ROWS = f"Select at most {MAX_BATCH_ROWS} files in one import."
 FILE_UNAVAILABLE = "The file is not available in this Data Source."
-EXISTING_DEVICE_VIEW = "a device view already exists for this device type."
+REVIEW_AGAIN = "Review the import again."
+INVALID_TOKEN = "The review token is not valid."
+STALE_TARGET = (
+    f"the device view or its device type changed after review. {REVIEW_AGAIN}"
+)
+CONCURRENT_CREATE = (
+    "another change created a device view for this device type during the import. "
+    + REVIEW_AGAIN
+)
 REPEATED_FILE = "Each file can be selected only once."
 IMPORTED_FIELDS = ("yaml_layout", "grid_template_area", "render_mode")
 
@@ -76,6 +85,8 @@ class Action(models.TextChoices):
 
 # The object permission action that each writing action needs.
 ACTION_PERMISSIONS = {Action.CREATE: "add", Action.REPLACE: "change"}
+# The permission that a replayed row needs on a record that already has its fields.
+REPLAY_PERMISSIONS = {**ACTION_PERMISSIONS, Action.UNCHANGED: "view"}
 
 
 class TargetState(models.TextChoices):
@@ -120,6 +131,7 @@ class ReviewedRow:
     device_type_id: int
     action: Action
     render_mode: str
+    baseline: str
 
     def to_payload(self) -> dict:
         return dataclasses.asdict(self)
@@ -218,6 +230,7 @@ class _Proposal:
     device_view: DeviceView | None
     action: Action
     fields: dict[str, str]
+    baseline: str
 
 
 def can_import(user) -> bool:
@@ -346,6 +359,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
                 device_type_id=proposal.device_type.pk,
                 action=proposal.action,
                 render_mode=proposal.fields["render_mode"],
+                baseline=proposal.baseline,
             )
         )
     files_per_device_type = Counter(
@@ -379,10 +393,13 @@ def apply(user, token: str) -> ApplyResult:
             "The review has expired. Review the import again."
         ) from exc
     except signing.BadSignature as exc:
-        raise ImportRejected("The review token is not valid.") from exc
+        raise ImportRejected(INVALID_TOKEN) from exc
     if not user.is_authenticated or payload["user"] != user.pk:
         raise ImportRejected("The review token belongs to a different user.")
-    rows = [ReviewedRow.from_payload(row) for row in payload["rows"]]
+    try:
+        rows = [ReviewedRow.from_payload(row) for row in payload["rows"]]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ImportRejected(INVALID_TOKEN) from exc
     for action in {row.action for row in rows} & ACTION_PERMISSIONS.keys():
         if not _has_permission(user, action):
             raise ImportRejected(_permission_denied(action))
@@ -396,6 +413,7 @@ def apply(user, token: str) -> ApplyResult:
     }
     try:
         with transaction.atomic():
+            _lock_targets(rows)
             for row in rows:
                 action, device_view = _apply_row(user, source, row)
                 outcomes[action].append(device_view)
@@ -424,21 +442,39 @@ def _apply_row(user, source, reviewed: ReviewedRow) -> tuple[Action, DeviceView]
         )
     except ValidationError as exc:
         raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
-    # A replayed review finds the proposed fields already in place.
-    if proposal.action not in (reviewed.action, Action.UNCHANGED):
-        if reviewed.action == Action.CREATE:
-            raise ImportRejected(f"{reviewed.path}: {EXISTING_DEVICE_VIEW}")
-        raise ImportRejected(
-            f"{reviewed.path}: the device view changed after review. Review the "
-            "import again."
-        )
     if proposal.fields["render_mode"] != reviewed.render_mode:
         raise ImportRejected(
-            f"{reviewed.path}: the render mode differs from the review."
+            f"{reviewed.path}: the render mode differs from the review. {REVIEW_AGAIN}"
         )
+    # A replayed review finds the proposed fields already in place.
     if proposal.action == Action.UNCHANGED:
+        permission = REPLAY_PERMISSIONS[reviewed.action]
+        if not _permits(user, permission, proposal.device_view):
+            raise ImportRejected(
+                f"{reviewed.path}: {_permission_denied(reviewed.action)}"
+            )
         return Action.UNCHANGED, proposal.device_view
+    if proposal.baseline != reviewed.baseline:
+        raise ImportRejected(f"{reviewed.path}: {STALE_TARGET}")
     return proposal.action, _write(user, reviewed.path, proposal)
+
+
+def _lock_targets(rows: list[ReviewedRow]) -> None:
+    """Lock the target device types, then their device views, each in primary-key order."""
+    device_type_ids = {row.device_type_id for row in rows}
+    # NO KEY UPDATE serializes imports but lets foreign-key inserts (devices, other views) run.
+    list(
+        DeviceType.objects.select_for_update(no_key=True)
+        .filter(pk__in=device_type_ids)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+    list(
+        DeviceView.objects.select_for_update()
+        .filter(device_type__in=device_type_ids)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
 
 
 def _write(user, path: str, proposal: _Proposal) -> DeviceView:
@@ -453,7 +489,7 @@ def _write(user, path: str, proposal: _Proposal) -> DeviceView:
     try:
         device_view.save()
     except IntegrityError as exc:
-        raise ImportRejected(f"{path}: {EXISTING_DEVICE_VIEW}") from exc
+        raise ImportRejected(f"{path}: {CONCURRENT_CREATE}") from exc
     if not _permits(user, ACTION_PERMISSIONS[proposal.action], device_view):
         raise ImportRejected(
             f"{path}: the resulting device view violates your permissions."
@@ -538,8 +574,25 @@ def _propose(
     if action == Action.REPLACE and not _permits(user, "change", device_view):
         raise ValidationError(_permission_denied(action))
     return _Proposal(
-        device_type=device_type, device_view=device_view, action=action, fields=fields
+        device_type=device_type,
+        device_view=device_view,
+        action=action,
+        fields=fields,
+        baseline=_baseline(device_type, device_view),
     )
+
+
+def _baseline(device_type: DeviceType, device_view: DeviceView | None) -> str:
+    """Return a digest of the target identity, its device view and its imported fields."""
+    state = {
+        "device_type": [
+            device_type.pk,
+            device_type.manufacturer.name,
+            device_type.model,
+        ],
+        "device_view": device_view and [device_view.pk, _imported_fields(device_view)],
+    }
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
 
 
 def _has_permission(user, action) -> bool:
@@ -555,7 +608,7 @@ def _permits(user, permission: str, device_view: DeviceView) -> bool:
 
 def _permission_denied(action) -> str:
     return (
-        f"You do not have permission to {ACTION_PERMISSIONS[action]} this device view."
+        f"You do not have permission to {REPLAY_PERMISSIONS[action]} this device view."
     )
 
 
