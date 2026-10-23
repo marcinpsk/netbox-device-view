@@ -3,6 +3,7 @@ from typing import ClassVar
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.db.models import Count
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
@@ -100,6 +101,20 @@ class DeviceViewBulkImportView(BulkImportView):
     model_form = DeviceViewImportForm
 
 
+def _selected_datafiles(user, source_form, data):
+    """Return the selected catalog DataFiles; raise ValidationError for any other selection."""
+    values = data.getlist("file")
+    if len(values) > datasource_import.MAX_BATCH_ROWS:
+        raise ValidationError(datasource_import.TOO_MANY_ROWS)
+    file_ids = {pk for pk in map(_parse_pk, values) if pk is not None}
+    datafiles = datasource_import.catalog(
+        user, source_form.cleaned_data["source"], source_form.cleaned_data["prefix"]
+    ).filter(pk__in=file_ids)
+    if not values or len(file_ids) != len(values) or len(datafiles) != len(values):
+        raise ValidationError(_("Select one or more files from the catalog."))
+    return datafiles
+
+
 class DataSourceImportPermissionMixin(ContentTypePermissionRequiredMixin):
     def get_required_permission(self):
         return "netbox_device_view.add_deviceview"
@@ -149,13 +164,10 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
             + "?"
             + urlencode({"source": source.pk, "prefix": prefix})
         )
-        values = request.POST.getlist("file")
-        file_ids = {pk for pk in map(_parse_pk, values) if pk is not None}
-        datafiles = datasource_import.catalog(request.user, source, prefix).filter(
-            pk__in=file_ids
-        )
-        if not values or len(file_ids) != len(values) or len(datafiles) != len(values):
-            messages.error(request, _("Select one or more files from the catalog."))
+        try:
+            datafiles = _selected_datafiles(request.user, source_form, request.POST)
+        except ValidationError as exc:
+            messages.error(request, exc.message)
             return redirect(catalog_url)
 
         if request.POST.get("step") == "review":
@@ -187,20 +199,19 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
         )
 
 
-def _review_again_fields(post):
-    """Return the review form fields of a rejected apply POST; apply itself ignores them."""
-    file_ids = [pk for pk in map(_parse_pk, post.getlist("file")) if pk is not None]
-    if not file_ids:
-        return []
-    fields = [
-        ("source", post.get("source", "")),
-        ("prefix", post.get("prefix", "")),
-        ("step", "review"),
-    ]
-    for pk in file_ids:
-        field_name = forms.DataSourceImportTargetForm.field_name(pk)
-        fields += [("file", pk), (field_name, post.get(field_name, ""))]
-    return fields
+def _review_again_context(request):
+    """Rebuild the review forms from a rejected apply POST; apply itself ignores them."""
+    source_form = forms.DataSourceImportSourceForm(request.POST, user=request.user)
+    if not source_form.is_valid():
+        return {}
+    try:
+        datafiles = _selected_datafiles(request.user, source_form, request.POST)
+    except ValidationError:
+        return {}
+    target_form = forms.DataSourceImportTargetForm(
+        request.POST, user=request.user, datafiles=datafiles
+    )
+    return {"source_form": source_form, "target_form": target_form}
 
 
 class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View):
@@ -215,7 +226,7 @@ class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View)
             return render(
                 request,
                 "netbox_device_view/datasource_import_result.html",
-                {"error": str(exc), "review_again": _review_again_fields(request.POST)},
+                {"error": str(exc), **_review_again_context(request)},
                 status=400,
             )
         visible = set(

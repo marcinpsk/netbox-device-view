@@ -21,6 +21,7 @@ from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
 from django.db.models import Q, Sum
+from django.db.models.functions import Length
 
 from .layout import LayoutParseError, parse_yaml, render_css
 from .models import DeviceView, RenderMode
@@ -41,6 +42,8 @@ BATCH_TOO_LARGE = (
     " in total."
 )
 TOO_MANY_ROWS = f"Select at most {MAX_BATCH_ROWS} files in one import."
+FILE_UNAVAILABLE = "The file is not available in this Data Source."
+REPEATED_FILE = "Each file can be selected only once."
 
 
 class Format(models.TextChoices):
@@ -259,9 +262,6 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
         except ValidationError as exc:
             row.error = " ".join(exc.messages)
             continue
-        if source_file is None:
-            row.error = "The file is not available in this Data Source."
-            continue
         row.path = source_file.path
         row.format = source_file.format
         try:
@@ -334,8 +334,8 @@ def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
         source_file = _read_source_file(user, source, reviewed.datafile_id)
     except ValidationError as exc:
         raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
-    if source_file is None or source_file.path != reviewed.path:
-        raise ImportRejected(f"{reviewed.path}: the file is no longer available.")
+    if source_file.path != reviewed.path:
+        raise ImportRejected(f"{reviewed.path}: {FILE_UNAVAILABLE}")
     if source_file.sha256 != reviewed.sha256:
         raise ImportRejected(f"{reviewed.path}: the file changed after review.")
     try:
@@ -368,32 +368,36 @@ def _importable_source(user, source_id) -> DataSource:
 
 
 def _batch_errors(user, source, selections: list[Selection]) -> list[str]:
-    """Check the batch limits from file metadata, before any file content is read."""
+    """Check the batch limits in the database, before any file content is read."""
     if len(selections) > MAX_BATCH_ROWS:
         return [TOO_MANY_ROWS]
+    datafile_ids = [selection.datafile_id for selection in selections]
+    if len(set(datafile_ids)) != len(datafile_ids):
+        return [REPEATED_FILE]
     total = (
         DataFile.objects.restrict(user, "view")
-        .filter(source=source, pk__in=[s.datafile_id for s in selections])
-        .aggregate(total=Sum("size"))["total"]
+        .filter(source=source, pk__in=datafile_ids)
+        .aggregate(total=Sum(Length("data")))["total"]
     )
     if total and total > MAX_BATCH_BYTES:
         return [BATCH_TOO_LARGE]
     return []
 
 
-def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
+def _read_source_file(user, source, datafile_id) -> _SourceFile:
     datafile = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, pk=datafile_id)
-        .only("path", "size")
+        .annotate(stored_bytes=Length("data"))
+        .only("path")
         .first()
     )
     file_format = None if datafile is None else _file_format(datafile.path)
     if file_format is None:
-        return None
-    if datafile.size > MAX_FILE_BYTES:
+        raise ValidationError(FILE_UNAVAILABLE)
+    if datafile.stored_bytes > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)
-    # Accessing the deferred field reads the content only after the size check.
+    # The deferred content loads in a second query, and a sync can replace it first.
     content = bytes(datafile.data)
     if len(content) > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)

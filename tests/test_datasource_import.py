@@ -7,10 +7,10 @@ object permissions, and the plugin's UI request paths.
 
 import hashlib
 import re
-from html.parser import HTMLParser
 import shutil
 import tempfile
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
@@ -334,9 +334,7 @@ class CatalogTests(DataSourceImportTestBase):
             datafile_id=hidden.pk, device_type_id=self.device_type.pk
         )
         review = datasource_import.review(self.user, self.source, [selection])
-        self.assertEqual(
-            review.rows[0].error, "The file is not available in this Data Source."
-        )
+        self.assertEqual(review.rows[0].error, datasource_import.FILE_UNAVAILABLE)
         self.assertEqual(review.rows[0].proposed_fields, {})
         self.assertEqual(self.apply(token).status_code, 400)
         self.assertFalse(DeviceView.objects.exists())
@@ -1072,11 +1070,51 @@ class BulkImportTests(DataSourceImportTestBase):
             [(datafile, self.device_type) for datafile in datafiles[:-1]]
         ).context["review"]
         self.assertEqual(at_limit.errors, [])
-        response = self.review([(datafile, self.device_type) for datafile in datafiles])
-        review = response.context["review"]
+        for step in ("match", "review"):
+            with self.subTest(step=step):
+                fields = {
+                    "source": self.source.pk,
+                    "prefix": "examples/",
+                    "step": step,
+                    "file": [datafile.pk for datafile in datafiles],
+                }
+                response = self.client.post(reverse(REVIEW_URL), fields, follow=True)
+                self.assertEqual(response.redirect_chain[0][1], 302)
+                self.assertContains(response, datasource_import.TOO_MANY_ROWS)
+        selections = [
+            datasource_import.Selection(datafile.pk, self.device_type.pk)
+            for datafile in datafiles
+        ]
+        review = datasource_import.review(self.user, self.source, selections)
         self.assertEqual(review.errors, [datasource_import.TOO_MANY_ROWS])
         self.assertEqual(review.rows, [])
-        self.assertContains(response, datasource_import.TOO_MANY_ROWS)
+
+    def test_limits_use_the_stored_bytes_not_the_size_column(self):
+        size = datasource_import.MAX_FILE_BYTES
+        self.write_file("examples/big.css", b"\xff" * (size + 1))
+        datafiles = self.write_sized(
+            datasource_import.MAX_BATCH_BYTES // size + 1, size
+        )
+        big = self.datafile("examples/big.css")
+        DataFile.objects.filter(pk__in=[big.pk, *(df.pk for df in datafiles)]).update(
+            size=1
+        )
+        review = self.review(
+            [(datafile, self.device_type) for datafile in datafiles]
+        ).context["review"]
+        self.assertEqual(review.errors, [datasource_import.BATCH_TOO_LARGE])
+        single = self.review([(big, self.device_type)]).context["review"]
+        self.assertEqual(single.rows[0].error, datasource_import.FILE_TOO_LARGE)
+
+    def test_a_file_selected_twice_is_rejected(self):
+        other = DeviceType.objects.get(model="C9500-24Y4C")
+        selections = [
+            datasource_import.Selection(self.datafile().pk, device_type.pk)
+            for device_type in (self.device_type, other)
+        ]
+        review = datasource_import.review(self.user, self.source, selections)
+        self.assertEqual(review.errors, [datasource_import.REPEATED_FILE])
+        self.assertEqual(review.token, "")
 
     def test_invalid_unselected_file_does_not_block_a_valid_batch(self):
         self.write_file("examples/yaml/Cisco/Broken.yaml", b"views: [not closed")

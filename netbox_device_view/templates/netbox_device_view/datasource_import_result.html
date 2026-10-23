@@ -23,10 +23,11 @@
     </div>
   {% endif %}
   <div class="btn-list mt-3">
-    {% if review_again %}
+    {% if target_form %}
       <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
         {% csrf_token %}
-        {% for name, value in review_again %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+        <input type="hidden" name="step" value="review">
+        {% include 'netbox_device_view/inc/datasource_import_selection.html' %}
         <button type="submit" class="btn btn-primary">{% trans "Review again" %}</button>
       </form>
     {% endif %}
