@@ -1,5 +1,6 @@
 {% extends 'generic/_base.html' %}
 {% load form_helpers %}
+{% load helpers %}
 {% load i18n %}
 
 {% block title %}{% trans "Import Device Views from a Data Source" %}{% endblock %}
@@ -23,49 +24,83 @@
       </form>
 
       {% if page is not None %}
-        <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
-          {% csrf_token %}
-          <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
-          <input type="hidden" name="prefix" value="{{ form.cleaned_data.prefix }}">
-          <input type="hidden" name="step" value="match">
-          <div class="card">
-            <h2 class="card-header">{% trans "Layout files" %}</h2>
+        <div class="card">
+          <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="card-title mb-0">{% trans "Layout files" %}</h2>
+            <form method="get" role="search">
+              <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
+              <input type="hidden" name="prefix" value="{{ form.cleaned_data.prefix }}">
+              <div class="input-group">
+                <input type="search" name="q" value="{{ form.cleaned_data.q }}" class="form-control" placeholder="{% trans "Search paths" %}" aria-label="{% trans "Search paths" %}">
+                <button type="submit" class="btn btn-outline-primary">{% trans "Search" %}</button>
+              </div>
+            </form>
+          </div>
+          <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
+            {% csrf_token %}
+            <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
+            <input type="hidden" name="prefix" value="{{ form.cleaned_data.prefix }}">
+            <input type="hidden" name="step" value="match">
             <div class="table-responsive">
               <table class="table table-hover align-middle mb-0">
                 <thead>
                   <tr>
                     <th scope="col" style="width: 1%"><span class="visually-hidden">{% trans "Select" %}</span></th>
                     <th scope="col">{% trans "Path" %}</th>
-                    <th scope="col">{% trans "Size" %}</th>
-                    <th scope="col">{% trans "Last updated" %}</th>
+                    <th scope="col">{% trans "Format" %}</th>
+                    <th scope="col">{% trans "Suggested device type" %}</th>
+                    <th scope="col">{% trans "Device view" %}</th>
+                    <th scope="col">{% trans "Problems" %}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {% for datafile in page %}
+                  {% for row in rows %}
                     <tr>
                       <td>
-                        <input type="checkbox" class="form-check-input" name="file" value="{{ datafile.pk }}" id="file-{{ datafile.pk }}" aria-label="{% trans "Select" %} {{ datafile.path }}">
+                        <input type="checkbox" class="form-check-input" name="file" value="{{ row.datafile.pk }}" id="file-{{ row.datafile.pk }}" aria-label="{% trans "Select" %} {{ row.datafile.path }}">
                       </td>
-                      <td><label for="file-{{ datafile.pk }}" class="font-monospace">{{ datafile.path }}</label></td>
-                      <td>{{ datafile.size|filesizeformat }}</td>
-                      <td>{{ datafile.last_updated|date:"SHORT_DATETIME_FORMAT" }}</td>
+                      <td><label for="file-{{ row.datafile.pk }}" class="font-monospace">{{ row.datafile.path }}</label></td>
+                      <td>{{ row.format.label }}</td>
+                      <td>
+                        {% if row.suggestion %}
+                          <a href="{{ row.suggestion.get_absolute_url }}">{{ row.suggestion.manufacturer }} {{ row.suggestion.model }}</a>
+                        {% else %}
+                          {{ ''|placeholder }}
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if row.device_view %}
+                          <a href="{{ row.device_view.get_absolute_url }}">{{ row.state.label }}</a>
+                        {% else %}
+                          {{ row.state.label|placeholder }}
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% for problem in row.problems %}<div class="text-warning small">{{ problem }}</div>{% endfor %}
+                      </td>
                     </tr>
                   {% empty %}
                     <tr>
-                      <td colspan="4" class="text-muted">{% trans "No YAML layout files below this directory." %}</td>
+                      <td colspan="6" class="text-muted">
+                        {% if form.cleaned_data.q %}
+                          {% trans "No layout files match the search." %}
+                        {% else %}
+                          {% trans "No YAML layout files below this directory." %}
+                        {% endif %}
+                      </td>
                     </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
             {% include 'inc/paginator.html' with placement='bottom' %}
-            {% if page.object_list %}
+            {% if rows %}
               <div class="card-footer text-end">
                 <button type="submit" class="btn btn-primary">{% trans "Assign device types" %}</button>
               </div>
             {% endif %}
-          </div>
-        </form>
+          </form>
+        </div>
       {% endif %}
     </div>
   </div>

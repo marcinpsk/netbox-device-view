@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
 from core.signals import clear_events
-from dcim.models import DeviceType
+from dcim.models import DeviceType, Manufacturer
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
@@ -26,7 +27,16 @@ from .models import DeviceView, RenderMode
 
 SIGNING_SALT = "netbox_device_view.datasource_import.review"
 REVIEW_MAX_AGE_SECONDS = 15 * 60
-YAML_SUFFIXES = (".yaml", ".yml")
+TARGET_UNAVAILABLE = "The device type is not available as an import target."
+NO_MATCH = "No device type matches this path."
+AMBIGUOUS_MATCH = "Several files below this directory match this device type."
+
+
+class Format(models.TextChoices):
+    YAML = "yaml", "YAML"
+
+
+FORMAT_SUFFIXES = {".yaml": Format.YAML, ".yml": Format.YAML}
 
 
 class ImportRejected(Exception):
@@ -35,6 +45,31 @@ class ImportRejected(Exception):
 
 class Action(models.TextChoices):
     CREATE = "create", "Create"
+
+
+class TargetState(models.TextChoices):
+    NO_DEVICE_VIEW = "none", "No device view"
+    EXISTING = "existing", "Existing device view"
+    UNAVAILABLE = "unavailable", "Unavailable"
+
+
+@dataclass
+class CatalogRow:
+    """One catalog file with its suggested device type and the state of that target."""
+
+    datafile: DataFile
+    suggestion: DeviceType | None = None
+    state: TargetState | None = None
+    device_view: DeviceView | None = None
+    problems: list[str] = field(default_factory=list)
+
+    @property
+    def format(self) -> Format:
+        return _file_format(self.datafile.path)
+
+    @property
+    def is_selectable(self):
+        return self.state == TargetState.NO_DEVICE_VIEW and not self.problems
 
 
 @dataclass(frozen=True)
@@ -128,18 +163,65 @@ def normalize_prefix(raw: str) -> str:
     return "/".join(parts) + "/" if parts else ""
 
 
-def catalog(user, source: DataSource, prefix: str):
+def catalog(user, source: DataSource, prefix: str, search: str = ""):
     """Return the viewable importable DataFiles below the prefix, without their content."""
     suffixes = Q()
-    for suffix in YAML_SUFFIXES:
+    for suffix in FORMAT_SUFFIXES:
         suffixes |= Q(path__endswith=suffix)
-    return (
+    datafiles = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, path__startswith=prefix)
         .filter(suffixes)
-        .only("pk", "path", "size", "last_updated")
+        .only("pk", "path")
         .order_by("path")
     )
+    if search:
+        datafiles = datafiles.filter(path__icontains=search)
+    return datafiles
+
+
+def permitted_device_types(user):
+    """Return the device types the user can view, limited to visible manufacturers."""
+    return DeviceType.objects.restrict(user, "view").filter(
+        manufacturer__in=Manufacturer.objects.restrict(user, "view")
+    )
+
+
+def catalog_rows(user, source: DataSource, prefix: str, datafiles) -> list[CatalogRow]:
+    """Return a catalog row with a suggested device type and its state for each DataFile."""
+    matches = _match_paths(
+        user, catalog(user, source, prefix).values_list("path", flat=True)
+    )
+    # A device type matched by several files below the prefix is ambiguous.
+    files_per_device_type = Counter(dt.pk for dt in matches.values())
+    rows = [
+        CatalogRow(datafile=datafile, suggestion=matches.get(datafile.path))
+        for datafile in datafiles
+    ]
+    device_view_ids = dict(
+        DeviceView.objects.filter(
+            device_type__in=[row.suggestion for row in rows if row.suggestion]
+        ).values_list("device_type", "pk")
+    )
+    visible = DeviceView.objects.restrict(user, "view").in_bulk(
+        device_view_ids.values()
+    )
+    for row in rows:
+        if row.suggestion is None:
+            row.problems.append(NO_MATCH)
+            continue
+        if files_per_device_type[row.suggestion.pk] > 1:
+            row.problems.append(AMBIGUOUS_MATCH)
+        device_view_id = device_view_ids.get(row.suggestion.pk)
+        if device_view_id is None:
+            row.state = TargetState.NO_DEVICE_VIEW
+        elif device_view_id in visible:
+            row.state = TargetState.EXISTING
+            row.device_view = visible[device_view_id]
+        else:
+            row.state = TargetState.UNAVAILABLE
+            row.problems.append(TARGET_UNAVAILABLE)
+    return rows
 
 
 def review(user, source: DataSource, selections: list[Selection]) -> Review:
@@ -261,7 +343,7 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
         .only("path", "data")
         .first()
     )
-    if datafile is None or not datafile.path.endswith(YAML_SUFFIXES):
+    if datafile is None or _file_format(datafile.path) is None:
         return None
     return _SourceFile(path=datafile.path, content=bytes(datafile.data))
 
@@ -270,16 +352,48 @@ def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
     """Validate one file for one target; raise ValidationError when it cannot be imported."""
     device_type = _available_target(user, device_type_id)
     if device_type is None:
-        raise ValidationError("The device type is not available as an import target.")
+        raise ValidationError(TARGET_UNAVAILABLE)
     fields = _proposed_fields(source_file.content)
     DeviceView(device_type=device_type, **fields).full_clean(validate_unique=False)
     return _Proposal(device_type=device_type, fields=fields)
 
 
+def _file_format(path: str) -> Format | None:
+    # Same rule as the catalog's path__endswith filter, so "Cisco/.yaml" is YAML too.
+    for suffix, file_format in FORMAT_SUFFIXES.items():
+        if path.endswith(suffix):
+            return file_format
+    return None
+
+
+def _match_paths(user, paths) -> dict[str, DeviceType]:
+    """Map each "<Manufacturer>/<Model>.<ext>" path to the visible device type it names exactly."""
+    keys = {}
+    for path in paths:
+        parts = PurePosixPath(path).parts
+        if len(parts) >= 2:
+            keys[path] = (parts[-2], PurePosixPath(parts[-1]).stem)
+    if not keys:
+        return {}
+    device_types = (
+        permitted_device_types(user)
+        .filter(
+            manufacturer__name__in={manufacturer for manufacturer, _ in keys.values()},
+            model__in={model for _, model in keys.values()},
+        )
+        .select_related("manufacturer")
+    )
+    by_key = {
+        (device_type.manufacturer.name, device_type.model): device_type
+        for device_type in device_types
+    }
+    return {path: by_key[key] for path, key in keys.items() if key in by_key}
+
+
 def _available_target(user, device_type_id) -> DeviceType | None:
     """Return a permitted device type without a device view, else None."""
     device_type = (
-        DeviceType.objects.restrict(user, "view")
+        permitted_device_types(user)
         .select_related("manufacturer")
         .filter(pk=device_type_id)
         .first()

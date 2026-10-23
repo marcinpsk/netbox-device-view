@@ -22,6 +22,7 @@ from django.db.models.signals import pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils.text import slugify
 from users.models import ObjectPermission, User
 
 from netbox_device_view import datasource_import
@@ -68,6 +69,7 @@ class DataSourceImportTestBase(TestCase):
         self.client.force_login(self.user)
         self.grant(DataSource, "view")
         self.grant(DataFile, "view")
+        self.grant(Manufacturer, "view")
         self.grant(DeviceType, "view")
         self.grant(Device, "view")
         self.grant(DeviceView, "view")
@@ -100,6 +102,17 @@ class DataSourceImportTestBase(TestCase):
         for datafile, device_type in selections:
             data[f"device_type_{datafile.pk}"] = device_type.pk
         return self.client.post(reverse(REVIEW_URL), data)
+
+    def match(self, datafiles):
+        return self.client.post(
+            reverse(REVIEW_URL),
+            {
+                "source": self.source.pk,
+                "prefix": "examples/",
+                "step": "match",
+                "file": [datafile.pk for datafile in datafiles],
+            },
+        )
 
     def review_token(self, selections):
         response = self.review(selections)
@@ -281,6 +294,219 @@ class CatalogTests(DataSourceImportTestBase):
         self.assertTrue(datafile_queries)
         for sql in datafile_queries:
             self.assertNotIn('"core_datafile"."data"', sql)
+
+
+class SuggestionTests(DataSourceImportTestBase):
+    def catalog(self, **params):
+        response = self.client.get(
+            reverse(START_URL),
+            {"source": self.source.pk, "prefix": "examples/", **params},
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def rows(self, **params):
+        return {
+            row.datafile.path: row for row in self.catalog(**params).context["rows"]
+        }
+
+    def assert_preselected(self, response, datafile, device_type):
+        field = response.context["target_form"][f"device_type_{datafile.pk}"]
+        self.assertEqual(field.value(), device_type.pk if device_type else None)
+
+    def test_bundled_examples_are_suggested_by_exact_path_match(self):
+        expected = {}
+        for example in sorted(EXAMPLES.glob("yaml/*/*.yaml")):
+            path = f"examples/{example.relative_to(EXAMPLES)}"
+            self.write_file(path, example.read_bytes())
+            manufacturer, _ = Manufacturer.objects.get_or_create(
+                name=example.parent.name,
+                defaults={"slug": slugify(example.parent.name)},
+            )
+            expected[path], _ = DeviceType.objects.get_or_create(
+                manufacturer=manufacturer,
+                model=example.stem,
+                defaults={"slug": slugify(example.stem)},
+            )
+        self.source.sync()
+        self.assertGreater(len(expected), 10)
+
+        response = self.catalog(per_page=100)
+        rows = {row.datafile.path: row for row in response.context["rows"]}
+        self.assertEqual(set(rows), set(expected))
+        for path, device_type in expected.items():
+            with self.subTest(path=path):
+                row = rows[path]
+                self.assertEqual(row.suggestion, device_type)
+                self.assertEqual(row.format, datasource_import.Format.YAML)
+                self.assertEqual(
+                    row.state, datasource_import.TargetState.NO_DEVICE_VIEW
+                )
+                self.assertEqual(row.problems, [])
+                self.assertTrue(row.is_selectable)
+        self.assertContains(response, "No device view")
+        self.assertContains(
+            response, reverse("dcim:devicetype", kwargs={"pk": self.device_type.pk})
+        )
+
+        datafiles = [self.datafile(path) for path in expected]
+        match = self.match(datafiles)
+        for datafile in datafiles:
+            self.assert_preselected(match, datafile, expected[datafile.path])
+
+    def test_only_exact_matches_are_suggested(self):
+        Manufacturer.objects.create(name="Generic", slug="generic")
+        paths = [
+            "examples/cisco/C9300-24T.yaml",
+            "examples/Cisco/c9300-24t.yaml",
+            "examples/Cisco/C9300_24T.yaml",
+            "examples/Cisco /C9300-24T.yaml",
+            "examples/Generic/C9300-24T.yaml",
+            "examples/C9300-24T.yaml",
+            "examples/Cisco/C9300-24T/layout.yaml",
+        ]
+        for path in paths:
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        rows = self.rows()
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertIsNone(rows[path].suggestion)
+                self.assertEqual(rows[path].problems, [datasource_import.NO_MATCH])
+                self.assertFalse(rows[path].is_selectable)
+        self.assertEqual(rows[EXAMPLE_PATH].suggestion, self.device_type)
+        self.assertFalse(Manufacturer.objects.filter(name="cisco").exists())
+
+    def test_unmatched_file_is_manually_assignable(self):
+        path = "examples/custom/my-layout.yaml"
+        self.write_file(path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        datafile = self.datafile(path)
+        self.assert_preselected(self.match([datafile]), datafile, None)
+        self.review_token([(datafile, self.device_type)])
+
+    def test_suggestion_can_be_corrected_manually(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        datafile = self.datafile()
+        self.assert_preselected(self.match([datafile]), datafile, self.device_type)
+        response = self.review([(datafile, other)])
+        review = response.context["review"]
+        self.assertEqual(review.rows[0].device_type, other)
+        self.assertTrue(review.token)
+        self.apply(review.token)
+        self.assertTrue(DeviceView.objects.filter(device_type=other).exists())
+        self.assertFalse(
+            DeviceView.objects.filter(device_type=self.device_type).exists()
+        )
+
+    def test_ambiguous_matches_are_flagged_across_the_prefix(self):
+        other_path = "examples/Cisco/C9300-24T.yml"
+        self.write_file(other_path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        for params in ({}, {"q": ".yml"}):
+            with self.subTest(params=params):
+                for row in self.rows(**params).values():
+                    self.assertEqual(row.suggestion, self.device_type)
+                    self.assertEqual(row.problems, [datasource_import.AMBIGUOUS_MATCH])
+                    self.assertFalse(row.is_selectable)
+        datafiles = [self.datafile(), self.datafile(other_path)]
+        match = self.match(datafiles)
+        for datafile in datafiles:
+            self.assert_preselected(match, datafile, None)
+
+    def test_hidden_manufacturer_or_device_type_is_not_suggested(self):
+        for model, constraints in (
+            (Manufacturer, {"name": "Other"}),
+            (DeviceType, {"model": "Other"}),
+        ):
+            with self.subTest(model=model.__name__):
+                permissions = ObjectPermission.objects.filter(
+                    object_types=ObjectType.objects.get_for_model(model)
+                )
+                permissions.update(constraints=constraints)
+                try:
+                    row = self.rows()[EXAMPLE_PATH]
+                    self.assertIsNone(row.suggestion)
+                    self.assertFalse(row.is_selectable)
+                finally:
+                    permissions.update(constraints=None)
+
+    def test_visible_existing_device_view_is_shown_and_not_preselected(self):
+        device_view = DeviceView.objects.create(
+            device_type=self.device_type, grid_template_area="x"
+        )
+        response = self.catalog()
+        row = response.context["rows"][0]
+        self.assertEqual(row.state, datasource_import.TargetState.EXISTING)
+        self.assertEqual(row.device_view, device_view)
+        self.assertFalse(row.is_selectable)
+        self.assertContains(response, device_view.get_absolute_url())
+        self.assert_preselected(self.match([self.datafile()]), self.datafile(), None)
+
+    def test_hidden_device_view_is_only_unavailable(self):
+        device_view = DeviceView.objects.create(
+            device_type=self.device_type, grid_template_area="hidden-area"
+        )
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DeviceView)
+        ).update(constraints={"device_type__model": "Other"})
+        response = self.catalog()
+        row = response.context["rows"][0]
+        self.assertEqual(row.state, datasource_import.TargetState.UNAVAILABLE)
+        self.assertIsNone(row.device_view)
+        self.assertEqual(row.problems, [datasource_import.TARGET_UNAVAILABLE])
+        self.assertFalse(row.is_selectable)
+        self.assertNotContains(response, device_view.get_absolute_url())
+        self.assertNotContains(response, "hidden-area")
+        review = self.review([(self.datafile(), self.device_type)]).context["review"]
+        self.assertEqual(review.rows[0].error, datasource_import.TARGET_UNAVAILABLE)
+        self.assert_preselected(self.match([self.datafile()]), self.datafile(), None)
+
+    def test_file_named_only_by_its_suffix_is_listed(self):
+        # Native sync skips dotfiles; other DataFile writers may not.
+        for path in ("examples/Cisco/.yaml", "examples/.yml"):
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+            datafile = DataFile(source=self.source, path=path)
+            datafile.refresh_from_disk(self.repo)
+            datafile.save()
+        rows = self.rows()
+        for path in ("examples/Cisco/.yaml", "examples/.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(rows[path].format, datasource_import.Format.YAML)
+                self.assertIsNone(rows[path].suggestion)
+
+    def test_device_type_of_hidden_manufacturer_is_not_a_permitted_target(self):
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(Manufacturer)
+        ).update(constraints={"name": "Other"})
+        self.assertIsNone(self.rows()[EXAMPLE_PATH].suggestion)
+        response = self.review([(self.datafile(), self.device_type)])
+        self.assertIsNone(response.context["review"])
+        self.assertTrue(response.context["target_form"].errors)
+        selection = datasource_import.Selection(
+            datafile_id=self.datafile().pk, device_type_id=self.device_type.pk
+        )
+        review = datasource_import.review(self.user, self.source, [selection])
+        self.assertEqual(review.rows[0].error, datasource_import.TARGET_UNAVAILABLE)
+
+    def test_search_filters_paths_and_keeps_pagination(self):
+        # The paginator keeps up to five orphans on the last page.
+        paths = [f"examples/Ubiquiti/USW-{index:02}.yaml" for index in range(12)]
+        for path in paths:
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        self.assertEqual(set(self.rows(q="ubiquiti")), set(paths))
+        first_page = self.catalog(q="ubiquiti", per_page=6)
+        self.assertEqual(
+            [row.datafile.path for row in first_page.context["rows"]], paths[:6]
+        )
+        self.assertContains(first_page, "q=ubiquiti")
+        self.assertContains(first_page, 'value="ubiquiti"')
+        empty = self.catalog(q="nothing-matches")
+        self.assertContains(empty, "No layout files match the search.")
+        self.assertNotContains(empty, "Assign device types")
 
 
 class ReviewTests(DataSourceImportTestBase):

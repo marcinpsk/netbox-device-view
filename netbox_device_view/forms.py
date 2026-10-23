@@ -65,6 +65,7 @@ class DataSourceImportSourceForm(forms.Form):
         label=_("Directory prefix"),
         help_text=_("Path relative to the source root. Leave empty for the root."),
     )
+    q = forms.CharField(required=False, label=_("Search paths"))
 
     def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
@@ -77,14 +78,17 @@ class DataSourceImportSourceForm(forms.Form):
 class DataSourceImportTargetForm(forms.Form):
     """One device type selector for each selected DataFile."""
 
-    def __init__(self, *args, user, datafiles, **kwargs):
+    def __init__(self, *args, user, datafiles, catalog_rows=(), **kwargs):
         super().__init__(*args, **kwargs)
         self.datafiles = list(datafiles)
         for datafile in self.datafiles:
             self.fields[self.field_name(datafile.pk)] = DynamicModelChoiceField(
-                queryset=DeviceType.objects.restrict(user, "view"),
+                queryset=datasource_import.permitted_device_types(user),
                 label=_("Device type"),
             )
+        for row in catalog_rows:
+            if row.is_selectable:
+                self.initial[self.field_name(row.datafile.pk)] = row.suggestion.pk
 
     @staticmethod
     def field_name(datafile_id):
