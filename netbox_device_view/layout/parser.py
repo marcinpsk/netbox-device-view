@@ -82,7 +82,6 @@ A view can copy another view's row definitions and add overrides:
 from __future__ import annotations
 
 import re
-from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Any
 
@@ -168,26 +167,30 @@ class _DepthLimitedLoader(yaml.SafeLoader):
     depth = 0
 
     def compose_node(self, parent, index):
+        is_alias = self.check_event(yaml.AliasEvent)
         self.depth += 1
         if self.depth > _MAX_YAML_DEPTH:
             raise LayoutParseError("Invalid YAML: the document is nested too deeply.")
         try:
-            return super().compose_node(parent, index)
+            node = super().compose_node(parent, index)
         finally:
             self.depth -= 1
+        if not is_alias and isinstance(node, yaml.MappingNode):
+            self._reject_duplicate_keys(node)
+        return node
 
-    def construct_mapping(self, node, deep=False):
+    def _reject_duplicate_keys(self, node):
+        # Check the composed node: construction flattens merge keys in place.
         seen = set()
         for key_node, _ in node.value:
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                continue
-            key = self.construct_object(key_node, deep=True)
-            if not isinstance(key, Hashable):
-                continue  # The parent raises its own error for this key.
-            if key in seen:
-                raise LayoutParseError(f"Invalid YAML: duplicate key {key!r:.80}.")
-            seen.add(key)
-        return super().construct_mapping(node, deep=deep)
+            if (
+                isinstance(key_node, yaml.ScalarNode)
+                and key_node.tag != "tag:yaml.org,2002:merge"
+            ):
+                key = self.construct_object(key_node)
+                if key in seen:
+                    raise LayoutParseError(f"Invalid YAML: duplicate key {key!r:.80}.")
+                seen.add(key)
 
 
 def _is_identifier(value: Any) -> bool:

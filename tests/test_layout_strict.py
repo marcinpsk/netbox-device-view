@@ -434,6 +434,7 @@ class TestReviewFindings:
             "views:\n  front: {elements: [{key: p1}]}\n  front: {elements: [{key: p2}]}\n",
             "views:\n  front:\n    elements: [{key: p1, key: p2}]\n",
             "views:\n  front: {elements: [{key: p1}]}\nviews: {}\n",
+            "views:\n  front: {elements: [{<<: {key: p1, key: p2}}]}\n",
         ],
     )
     def test_duplicate_keys_are_rejected(self, text):
@@ -448,6 +449,16 @@ class TestReviewFindings:
         )
         elements = strict(text).front.elements
         assert [(e.key, e.label) for e in elements] == [("p1", "one"), ("p2", "two")]
+
+    def test_a_merged_anchor_can_be_reused(self):
+        text = (
+            "views:\n"
+            "  front: {<<: &base {<<: {elements: [{key: p1}]}, elements: [{key: p2}]}}\n"
+            "  rear: *base\n"
+        )
+        parsed = strict(text)
+        assert [e.key for e in parsed.front.elements] == ["p2"]
+        assert [e.key for e in parsed.rear.elements] == ["p2"]
 
     @pytest.mark.parametrize(
         ("field", "value", "limit"),
