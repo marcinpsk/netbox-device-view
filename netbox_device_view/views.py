@@ -187,6 +187,22 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
         )
 
 
+def _review_again_fields(post):
+    """Return the review form fields of a rejected apply POST; apply itself ignores them."""
+    file_ids = [pk for pk in map(_parse_pk, post.getlist("file")) if pk is not None]
+    if not file_ids:
+        return []
+    fields = [
+        ("source", post.get("source", "")),
+        ("prefix", post.get("prefix", "")),
+        ("step", "review"),
+    ]
+    for pk in file_ids:
+        field_name = forms.DataSourceImportTargetForm.field_name(pk)
+        fields += [("file", pk), (field_name, post.get(field_name, ""))]
+    return fields
+
+
 class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View):
     """Apply a reviewed import."""
 
@@ -199,13 +215,22 @@ class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View)
             return render(
                 request,
                 "netbox_device_view/datasource_import_result.html",
-                {"error": str(exc)},
+                {"error": str(exc), "review_again": _review_again_fields(request.POST)},
                 status=400,
             )
+        visible = set(
+            models.DeviceView.objects.restrict(request.user, "view")
+            .filter(pk__in=[device_view.pk for device_view in created])
+            .values_list("pk", flat=True)
+        )
         return render(
             request,
             "netbox_device_view/datasource_import_result.html",
-            {"created": created},
+            {
+                "created": [
+                    (device_view, device_view.pk in visible) for device_view in created
+                ]
+            },
         )
 
 

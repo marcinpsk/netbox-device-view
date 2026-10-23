@@ -7,6 +7,7 @@ object permissions, and the plugin's UI request paths.
 
 import hashlib
 import re
+from html.parser import HTMLParser
 import shutil
 import tempfile
 import time
@@ -19,7 +20,7 @@ from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
-from django.db.models.signals import pre_save
+from django.db.models.signals import post_save, pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -44,6 +45,46 @@ RECORDED_EVENTS = []
 
 def record_events(events):
     RECORDED_EVENTS.extend(events)
+
+
+class _FormFields(HTMLParser):
+    """Collect the values a browser submits for the first form posting to one action."""
+
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+        self.state = "before"
+        self.select = None
+        self.fields = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form" and self.state == "before":
+            self.state = "inside" if attrs.get("action") == self.action else "before"
+        if self.state != "inside":
+            return
+        if tag == "input" and attrs.get("name"):
+            if attrs.get("type") == "checkbox" and "checked" not in attrs:
+                return
+            self.fields.setdefault(attrs["name"], []).append(attrs.get("value", ""))
+        elif tag == "select":
+            self.select = attrs["name"]
+        elif tag == "option" and self.select and "selected" in attrs:
+            self.fields.setdefault(self.select, []).append(attrs["value"])
+
+    def handle_endtag(self, tag):
+        if tag == "select":
+            self.select = None
+        elif tag == "form" and self.state == "inside":
+            self.state = "after"
+
+
+def submitted(response, url_name):
+    """Return what the page's form for url_name would submit, without unchecked boxes."""
+    parser = _FormFields(reverse(url_name))
+    parser.feed(response.content.decode())
+    assert parser.state == "after", f"no form posts to {url_name}"
+    return parser.fields
 
 
 class DataSourceImportTestBase(TestCase):
@@ -126,6 +167,16 @@ class DataSourceImportTestBase(TestCase):
 
     def apply(self, token):
         return self.client.post(reverse(APPLY_URL), {"token": token})
+
+    def assert_rejected(self, response):
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "No records were changed", status_code=400)
+        self.assertFalse(DeviceView.objects.exists())
+        self.assertFalse(
+            ObjectChange.objects.filter(
+                changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+            ).exists()
+        )
 
 
 class ImportWorkflowTests(DataSourceImportTestBase):
@@ -666,7 +717,11 @@ class CssImportTests(DataSourceImportTestBase):
                 (self.datafile(EXAMPLE_CSS_PATH), self.device_type),
             ]
         ).context["review"]
+        self.assertEqual(
+            [row.error for row in review.rows], [datasource_import.DUPLICATE_TARGET] * 2
+        )
         self.assertEqual(review.token, "")
+        self.review_token([(self.datafile(EXAMPLE_CSS_PATH), self.device_type)])
 
 
 class ReviewTests(DataSourceImportTestBase):
@@ -771,7 +826,7 @@ class ReviewTests(DataSourceImportTestBase):
                 )
                 self.assertEqual(response.status_code, 302)
 
-    def test_two_files_for_one_device_type_are_rejected(self):
+    def test_two_files_for_one_device_type_are_rejected_until_one_is_kept(self):
         other_path = "examples/yaml/Cisco/Other.yaml"
         self.write_file(other_path, EXAMPLE_YAML.read_bytes())
         self.source.sync()
@@ -782,13 +837,17 @@ class ReviewTests(DataSourceImportTestBase):
             ]
         )
         review = response.context["review"]
-        self.assertEqual(review.rows[0].error, "")
         self.assertEqual(
-            review.rows[1].error,
-            "Another selected file already targets this device type.",
+            [row.error for row in review.rows], [datasource_import.DUPLICATE_TARGET] * 2
         )
         self.assertEqual(review.token, "")
         self.assertNotContains(response, "Apply import")
+
+        fields = submitted(response, REVIEW_URL)
+        fields["file"].remove(str(self.datafile(other_path).pk))
+        kept = self.client.post(reverse(REVIEW_URL), fields).context["review"]
+        self.assertEqual([row.path for row in kept.rows], [EXAMPLE_PATH])
+        self.assertTrue(kept.token)
 
     def test_review_rejects_a_source_the_user_cannot_view(self):
         ObjectPermission.objects.filter(
@@ -815,16 +874,6 @@ class ReviewTests(DataSourceImportTestBase):
 
 
 class ApplyTests(DataSourceImportTestBase):
-    def assert_rejected(self, response):
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "No records were changed", status_code=400)
-        self.assertFalse(DeviceView.objects.exists())
-        self.assertFalse(
-            ObjectChange.objects.filter(
-                changed_object_type=ObjectType.objects.get_for_model(DeviceView)
-            ).exists()
-        )
-
     def test_tampered_token_is_rejected(self):
         token = self.review_token([(self.datafile(), self.device_type)])
         self.assert_rejected(
@@ -902,6 +951,221 @@ class ApplyTests(DataSourceImportTestBase):
         response = self.client.get(reverse(START_URL))
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("login"), response["Location"])
+
+
+class BulkImportTests(DataSourceImportTestBase):
+    # In catalog order, which sorts by path.
+    BULK_PATHS = (
+        "examples/Cisco/C9300-48P.css",
+        EXAMPLE_PATH,
+        "examples/yaml/Cisco/C9500-24Y4C.yaml",
+    )
+
+    def setUp(self):
+        super().setUp()
+        for path in (self.BULK_PATHS[0], self.BULK_PATHS[2]):
+            self.write_file(path, (EXAMPLES.parent / path).read_bytes())
+        self.source.sync()
+        for model in ("C9300-48P", "C9500-24Y4C"):
+            DeviceType.objects.create(
+                manufacturer=self.manufacturer, model=model, slug=slugify(model)
+            )
+
+    def catalog(self):
+        return self.client.get(
+            reverse(START_URL), {"source": self.source.pk, "prefix": "examples/"}
+        )
+
+    def review_page(self, datafiles):
+        """Submit the catalog and the match pages as a browser would."""
+        fields = submitted(self.catalog(), REVIEW_URL)
+        fields["file"] = [str(datafile.pk) for datafile in datafiles]
+        match = self.client.post(reverse(REVIEW_URL), fields)
+        self.assertEqual(match.status_code, 200)
+        return self.client.post(reverse(REVIEW_URL), submitted(match, REVIEW_URL))
+
+    def write_sized(self, count, size, name="file"):
+        for index in range(count):
+            self.write_file(f"examples/limits/{name}{index:03}.css", b"\xff" * size)
+        self.source.sync()
+        return list(
+            self.source.datafiles.filter(path__startswith="examples/limits/").order_by(
+                "path"
+            )
+        )
+
+    def test_mixed_bulk_create_end_to_end(self):
+        datafiles = [self.datafile(path) for path in self.BULK_PATHS]
+        review = self.review_page(datafiles)
+        self.assertEqual(
+            [row.format for row in review.context["review"].rows],
+            [
+                datasource_import.Format.CSS,
+                datasource_import.Format.YAML,
+                datasource_import.Format.YAML,
+            ],
+        )
+        result = self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
+        self.assertEqual(result.status_code, 200)
+        created = DeviceView.objects.order_by("device_type__model")
+        self.assertEqual(
+            [device_view.device_type.model for device_view in created],
+            ["C9300-24T", "C9300-48P", "C9500-24Y4C"],
+        )
+        for device_view in created:
+            self.assertContains(result, device_view.get_absolute_url())
+        self.assertEqual(
+            ObjectChange.objects.filter(
+                changed_object_type=ObjectType.objects.get_for_model(DeviceView),
+                action="create",
+            ).count(),
+            3,
+        )
+
+    def test_result_links_only_visible_device_views(self):
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DeviceView), actions=["view"]
+        ).update(constraints={"device_type__model": "C9300-24T"})
+        datafiles = [self.datafile(path) for path in self.BULK_PATHS[:2]]
+        result = self.client.post(
+            reverse(APPLY_URL), submitted(self.review_page(datafiles), APPLY_URL)
+        )
+        self.assertEqual(result.status_code, 200)
+        visible = DeviceView.objects.get(device_type__model="C9300-24T")
+        hidden = DeviceView.objects.get(device_type__model="C9300-48P")
+        self.assertContains(result, visible.get_absolute_url())
+        self.assertNotContains(result, hidden.get_absolute_url())
+        self.assertContains(result, str(hidden))
+
+    def test_file_over_size_limit_is_rejected_before_decoding(self):
+        limit = datasource_import.MAX_FILE_BYTES
+        padded = EXAMPLE_YAML.read_bytes()
+        padded += b"#" * (limit - len(padded) - 1) + b"\n"
+        self.write_file(EXAMPLE_PATH, padded)
+        self.write_file("examples/limits/big.css", b"\xff" * (limit + 1))
+        self.source.sync()
+        self.review_token([(self.datafile(), self.device_type)])
+        review = self.review(
+            [(self.datafile("examples/limits/big.css"), self.device_type)]
+        ).context["review"]
+        self.assertEqual(review.rows[0].error, datasource_import.FILE_TOO_LARGE)
+
+    def test_batch_over_byte_limit_is_rejected_before_reading(self):
+        limit = datasource_import.MAX_BATCH_BYTES
+        size = datasource_import.MAX_FILE_BYTES
+        datafiles = self.write_sized(limit // size + 1, size)
+        at_limit = self.review(
+            [(datafile, self.device_type) for datafile in datafiles[:-1]]
+        ).context["review"]
+        self.assertEqual(at_limit.errors, [])
+        response = self.review([(datafile, self.device_type) for datafile in datafiles])
+        review = response.context["review"]
+        self.assertEqual(review.errors, [datasource_import.BATCH_TOO_LARGE])
+        self.assertEqual(review.rows, [])
+        self.assertEqual(review.token, "")
+        self.assertContains(response, datasource_import.BATCH_TOO_LARGE)
+
+    def test_batch_over_row_limit_is_rejected_before_reading(self):
+        limit = datasource_import.MAX_BATCH_ROWS
+        datafiles = self.write_sized(limit + 1, 1)
+        at_limit = self.review(
+            [(datafile, self.device_type) for datafile in datafiles[:-1]]
+        ).context["review"]
+        self.assertEqual(at_limit.errors, [])
+        response = self.review([(datafile, self.device_type) for datafile in datafiles])
+        review = response.context["review"]
+        self.assertEqual(review.errors, [datasource_import.TOO_MANY_ROWS])
+        self.assertEqual(review.rows, [])
+        self.assertContains(response, datasource_import.TOO_MANY_ROWS)
+
+    def test_invalid_unselected_file_does_not_block_a_valid_batch(self):
+        self.write_file("examples/yaml/Cisco/Broken.yaml", b"views: [not closed")
+        self.source.sync()
+        datafiles = [self.datafile(path) for path in self.BULK_PATHS[:2]]
+        review = self.review_page(datafiles)
+        self.assertTrue(review.context["review"].token)
+        result = self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(DeviceView.objects.count(), 2)
+
+    def test_mixed_valid_invalid_review_keeps_selections_and_corrections(self):
+        broken = "examples/yaml/Cisco/Broken.yaml"
+        self.write_file(broken, b"views: [not closed")
+        self.source.sync()
+        other = DeviceType.objects.get(model="C9500-24Y4C")
+        response = self.review(
+            [(self.datafile(), self.device_type), (self.datafile(broken), other)]
+        )
+        review = response.context["review"]
+        errors = {row.path: row.error for row in review.rows}
+        self.assertEqual(errors[EXAMPLE_PATH], "")
+        self.assertTrue(errors[broken])
+        self.assertEqual(review.token, "")
+        self.assertFalse(DeviceView.objects.exists())
+
+        fields = submitted(response, REVIEW_URL)
+        self.assertEqual(
+            fields["file"], [str(self.datafile(broken).pk), str(self.datafile().pk)]
+        )
+        self.assertEqual(
+            fields[f"device_type_{self.datafile(broken).pk}"], [str(other.pk)]
+        )
+
+    def test_one_invalid_row_rolls_back_the_whole_apply(self):
+        last = "examples/yaml/Cisco/C9500-24Y4C.yaml"
+        datafiles = [self.datafile(path) for path in self.BULK_PATHS]
+        review = self.review_page(datafiles)
+        apply_fields = submitted(review, APPLY_URL)
+        self.write_file(last, (EXAMPLES.parent / last).read_bytes() + b"\n# edited\n")
+        self.source.sync()
+        saved = []
+
+        def record_save(sender, instance, created, **kwargs):
+            saved.append(instance.device_type.model)
+
+        post_save.connect(record_save, sender=DeviceView)
+        self.addCleanup(post_save.disconnect, record_save, sender=DeviceView)
+        response = self.client.post(reverse(APPLY_URL), apply_fields)
+        self.assertEqual(saved, ["C9300-48P", "C9300-24T"])
+        self.assert_rejected(response)
+        self.assertContains(response, last, status_code=400)
+        self.assertNotContains(response, "Created", status_code=400)
+
+    def test_rejected_apply_offers_a_new_review_with_the_same_selections(self):
+        manual = "examples/yaml/Cisco/Manual.yaml"
+        self.write_file(manual, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        corrected = DeviceType.objects.get(model="C9500-24Y4C")
+        selections = [
+            (self.datafile(), self.device_type),
+            (self.datafile(manual), corrected),
+        ]
+        review = self.review(selections)
+        apply_fields = submitted(review, APPLY_URL)
+        self.write_file(manual, EXAMPLE_YAML.read_bytes() + b"\n# edited\n")
+        self.source.sync()
+        rejected = self.client.post(reverse(APPLY_URL), apply_fields)
+        self.assert_rejected(rejected)
+
+        again = self.client.post(reverse(REVIEW_URL), submitted(rejected, REVIEW_URL))
+        rows = again.context["review"].rows
+        self.assertEqual(
+            [(row.path, row.device_type) for row in rows],
+            [(EXAMPLE_PATH, self.device_type), (manual, corrected)],
+        )
+        self.assertTrue(again.context["review"].token)
+
+    def test_apply_ignores_selection_fields_outside_the_token(self):
+        review = self.review([(self.datafile(), self.device_type)])
+        fields = submitted(review, APPLY_URL)
+        other = DeviceType.objects.get(model="C9500-24Y4C")
+        fields[f"device_type_{self.datafile().pk}"] = [str(other.pk)]
+        fields["file"].append(str(self.datafile(self.BULK_PATHS[0]).pk))
+        self.assertEqual(self.client.post(reverse(APPLY_URL), fields).status_code, 200)
+        self.assertEqual(
+            list(DeviceView.objects.values_list("device_type", flat=True)),
+            [self.device_type.pk],
+        )
 
 
 class MigrationTests(TestCase):

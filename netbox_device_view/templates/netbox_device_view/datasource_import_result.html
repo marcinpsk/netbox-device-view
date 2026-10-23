@@ -10,15 +10,26 @@
     </div>
   {% else %}
     <div class="card">
-      <h2 class="card-header">{% trans "Created" %}</h2>
+      <h2 class="card-header">
+        {% blocktrans count counter=created|length %}Created {{ counter }} device view{% plural %}Created {{ counter }} device views{% endblocktrans %}
+      </h2>
       <ul class="list-group list-group-flush">
-        {% for device_view in created %}
-          <li class="list-group-item"><a href="{{ device_view.get_absolute_url }}">{{ device_view }}</a></li>
+        {% for device_view, visible in created %}
+          <li class="list-group-item">
+            {% if visible %}<a href="{{ device_view.get_absolute_url }}">{{ device_view }}</a>{% else %}{{ device_view }}{% endif %}
+          </li>
         {% endfor %}
       </ul>
     </div>
   {% endif %}
   <div class="btn-list mt-3">
+    {% if review_again %}
+      <form method="post" action="{% url 'plugins:netbox_device_view:deviceview_datasource_import_review' %}">
+        {% csrf_token %}
+        {% for name, value in review_again %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+        <button type="submit" class="btn btn-primary">{% trans "Review again" %}</button>
+      </form>
+    {% endif %}
     <a href="{% url 'plugins:netbox_device_view:deviceview_datasource_import' %}" class="btn btn-outline-secondary">{% trans "Start a new import" %}</a>
     <a href="{% url 'plugins:netbox_device_view:deviceview_list' %}" class="btn btn-outline-secondary">{% trans "Device Views" %}</a>
   </div>
