@@ -158,6 +158,11 @@ class DataSourceImportTestBase(TestCase):
             },
         )
 
+    def review_file(self, path, content):
+        self.write_file(path, content.encode())
+        self.source.sync()
+        return self.review([(self.datafile(path), self.device_type)])
+
     def review_token(self, selections):
         response = self.review(selections)
         self.assertEqual(response.status_code, 200)
@@ -578,11 +583,6 @@ class SuggestionTests(DataSourceImportTestBase):
 class StrictYamlImportTests(DataSourceImportTestBase):
     INJECTION = 'x" onmouseover="alert(1)'
 
-    def review_yaml(self, path, content):
-        self.write_file(path, content.encode())
-        self.source.sync()
-        return self.review([(self.datafile(path), self.device_type)])
-
     def test_bundled_yaml_examples_pass_review_unchanged(self):
         selections = []
         for example in sorted(EXAMPLES.glob("yaml/*/*.yaml")):
@@ -623,7 +623,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         self.assertNotEqual(variant, EXAMPLE_YAML.read_text())
         for name, content in (("base", base), ("variant", variant)):
             with self.subTest(name):
-                response = self.review_yaml(f"examples/{name}.yaml", content)
+                response = self.review_file(f"examples/{name}.yaml", content)
                 review = response.context["review"]
                 self.assertIn("css_classes", review.rows[0].error)
                 self.assertEqual(review.token, "")
@@ -637,7 +637,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         )
 
     def test_malformed_yaml_error_is_escaped(self):
-        response = self.review_yaml(
+        response = self.review_file(
             "examples/malformed.yaml", "views: [<script>alert(1)</script>"
         )
         error = response.context["review"].rows[0].error
@@ -648,7 +648,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
     def test_unbounded_sequence_is_rejected(self):
         content = EXAMPLE_YAML.read_text().replace("count: 12", "count: 1000000000", 1)
         started = time.monotonic()
-        review = self.review_yaml("examples/huge.yaml", content).context["review"]
+        review = self.review_file("examples/huge.yaml", content).context["review"]
         self.assertLess(time.monotonic() - started, 5)
         self.assertIn("10000 elements", review.rows[0].error)
 
@@ -677,7 +677,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         )
         for name, (content, message) in contents.items():
             with self.subTest(name):
-                response = self.review_yaml(f"examples/{name}.yaml", content)
+                response = self.review_file(f"examples/{name}.yaml", content)
                 self.assertEqual(response.status_code, 200)
                 review = response.context["review"]
                 self.assertIn(message, review.rows[0].error)
@@ -745,17 +745,47 @@ class CssImportTests(DataSourceImportTestBase):
             '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
         )
 
-    def test_imported_css_cannot_close_the_style_element(self):
-        raw = (
-            '.deviceview.area { grid-template-areas: "a<b"; }\n'
-            "</style><script>alert(1)</script>\n"
+    def test_unsafe_css_is_rejected_before_any_write(self):
+        base = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        unsafe = {
+            "html": base + "/* </style><script>alert(1)</script> */\n",
+            "parse-error": base + ".deviceview.area { background: #000;",
+            "at-rule": '@import "other.css";\n' + base,
+            "url": base.replace("{", "{ background: url(x.png);"),
+            "custom-property": base.replace("{", "{ --x: 1;"),
+            "nested-rule": base.replace("{", "{ .x { background: #000; }"),
+            "combinator": base.replace(".deviceview.area", ".deviceview .area"),
+            "attribute": base.replace(".area", ".area[title]"),
+            "pseudo-class": base.replace(".area", ".area:hover"),
+            "selector-list": base.replace(".area", ".area, .deviceview.area.dRear"),
+            "property": base.replace("{", "{ position: fixed;"),
+            "image": base.replace("{", "{ background: linear-gradient(red, blue);"),
+            "no-grid-area": ".deviceview.area { background: #000; }\n",
+        }
+        for name, css in unsafe.items():
+            with self.subTest(name):
+                response = self.review_file(f"examples/Cisco/{name}.css", css)
+                self.assertEqual(response.status_code, 200)
+                review = response.context["review"]
+                self.assertIn("Invalid CSS layout", review.rows[0].error)
+                self.assertEqual(review.token, "")
+                self.assertNotContains(response, "Apply import")
+                self.assertNotContains(response, "<script>alert(1)")
+        self.assertFalse(DeviceView.objects.exists())
+        self.assertFalse(
+            ObjectChange.objects.filter(
+                changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+            ).exists()
         )
-        self.write_file("examples/Cisco/inject.css", raw.encode())
-        self.source.sync()
-        self.apply(
-            self.review_token(
-                [(self.datafile("examples/Cisco/inject.css"), self.device_type)]
-            )
+
+    def test_stored_css_cannot_close_the_style_element(self):
+        # The import rejects this CSS; a form, API or earlier record can still hold it.
+        DeviceView.objects.create(
+            device_type=self.device_type,
+            grid_template_area=(
+                '.deviceview.area { grid-template-areas: "a<b"; }\n'
+                "</style><script>alert(1)</script>\n"
+            ),
         )
         plugin_config = {
             **settings.PLUGINS_CONFIG["netbox_device_view"],

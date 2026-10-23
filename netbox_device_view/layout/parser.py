@@ -200,6 +200,14 @@ class _DepthLimitedLoader(yaml.SafeLoader):
             seen.add(key)
 
 
+def _one_css_color(tokens: list[Any]) -> list[Any] | None:
+    """Return the token list of one CSS color without whitespace, or None."""
+    values = [token for token in tokens if token.type != "whitespace"]
+    if len(values) == 1 and tinycss2.color4.parse_color(values[0]) is not None:
+        return values
+    return None
+
+
 def _is_identifier(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -279,16 +287,12 @@ class _Rules:
         """Return a strict background as tinycss2 serializes its one color value."""
         if not self.strict or raw is None:
             return raw
-        tokens = []
+        color = None
         if isinstance(raw, str):
-            tokens = [
-                token
-                for token in tinycss2.parse_component_value_list(raw)
-                if token.type != "whitespace"
-            ]
-        if len(tokens) != 1 or tinycss2.color4.parse_color(tokens[0]) is None:
+            color = _one_css_color(tinycss2.parse_component_value_list(raw))
+        if color is None:
             raise LayoutParseError(f"{where}: background must be one CSS color.")
-        return tinycss2.serialize(tokens)
+        return tinycss2.serialize(color)
 
     def css_classes(self, raw: Any, where: str) -> Any:
         if self.strict and not (

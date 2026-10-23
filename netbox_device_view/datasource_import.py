@@ -24,6 +24,7 @@ from django.db.models import Q, Sum
 from django.db.models.functions import Length
 
 from .layout import LayoutParseError, parse_yaml, render_css
+from .layout.css_profile import validate_css
 from .models import DeviceView, RenderMode
 from .utils import normalize_grid_template_area
 
@@ -475,17 +476,18 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
         raise ValidationError("The file is empty.")
     if source_file.format == Format.CSS:
         # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
-        return {
-            "yaml_layout": "",
-            "grid_template_area": normalize_grid_template_area(text),
-            "render_mode": RenderMode.CSS.value,
-        }
+        yaml_layout, css = "", normalize_grid_template_area(text)
+    else:
+        try:
+            yaml_layout, css = text, render_css(parse_yaml(text, strict=True))
+        except LayoutParseError as exc:
+            raise ValidationError(f"Invalid YAML layout: {exc}") from exc
     try:
-        css = render_css(parse_yaml(text, strict=True))
+        validate_css(css)
     except LayoutParseError as exc:
-        raise ValidationError(f"Invalid YAML layout: {exc}") from exc
+        raise ValidationError(f"Invalid CSS layout: {exc}") from exc
     return {
-        "yaml_layout": text,
+        "yaml_layout": yaml_layout,
         "grid_template_area": css,
         "render_mode": RenderMode.CSS.value,
     }
