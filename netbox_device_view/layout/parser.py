@@ -81,6 +81,8 @@ A view can copy another view's row definitions and add overrides:
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from typing import Any
 
 import yaml
@@ -121,74 +123,171 @@ _PORT_KINDS = {
 }
 
 
+# ── Strict rules (parse(..., strict=True), used by the Data Source import) ────
+MAX_CANVAS_CELLS = 4096
+MAX_EXPANDED_ELEMENTS = 10000
+MAX_CELL_SIZE = 100
+MAX_LABEL_LENGTH = 64
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+# Appended to "module" in a CSS class, so a leading digit is valid.
+_VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
+_BACKGROUND = re.compile(
+    r"#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[A-Za-z]+"
+)
+_VIEW_NAMES = ("front", "rear")
+_FACE_NAMES = ("front", "rear", "both")
+_ROW_ENTRY_KEYS = ("elements", "sequence", "group", "spacer", "blank")
+_SECTION_KEYS = ("sequence", "elements", "blank")
+_KEYS = {
+    "layout": {"version", "meta", "canvas", "views", "variants"},
+    "meta": {"description", "background"},
+    "canvas": {"columns", "rows", "cell_size", "background"},
+    "view": {"background", "canvas", "copy_from", "rows", "elements"},
+    "variant": {"match", "view", "rows", "elements"},
+    "sequence": {"kind", "prefix", "start", "count", "pattern", "step", "row"},
+    "group": {"spacer", "sections"},
+    "element": {"kind", "key", "at", "span", "label", "css_classes", "face"},
+    "at": {"row", "col"},
+    "span": {"rows", "cols"},
+}
+
+
 class LayoutParseError(ValueError):
     """Raised when the YAML layout schema is invalid."""
+
+
+@dataclass
+class _Rules:
+    """The strict import rules; with strict=False each check keeps the lenient behaviour."""
+
+    strict: bool = False
+    elements_left: int = MAX_EXPANDED_ELEMENTS
+
+    def mapping(self, raw: Any, kind: str, where: str) -> Any:
+        if self.strict:
+            if not isinstance(raw, dict):
+                raise LayoutParseError(f"{where}: must be a mapping.")
+            unknown = sorted(str(key) for key in raw if key not in _KEYS[kind])
+            if unknown:
+                raise LayoutParseError(f"{where}: unknown key {', '.join(unknown)}.")
+        return raw
+
+    def one_of(self, raw: Any, keys: tuple[str, ...], where: str) -> None:
+        if self.strict and (
+            not isinstance(raw, dict) or len(raw) != 1 or next(iter(raw)) not in keys
+        ):
+            raise LayoutParseError(
+                f"{where}: must have exactly one key of {', '.join(keys)}."
+            )
+
+    def items(self, raw: Any, where: str) -> Any:
+        if self.strict and not isinstance(raw, list):
+            raise LayoutParseError(f"{where}: must be a list.")
+        return raw
+
+    def integer(
+        self, raw: Any, where: str, minimum: int = 0, maximum: int | None = None
+    ) -> int:
+        if not self.strict:
+            return int(raw)
+        if type(raw) is not int or raw < minimum or (maximum and raw > maximum):
+            bounds = f"from {minimum} to {maximum}" if maximum else f"{minimum} or more"
+            raise LayoutParseError(f"{where}: must be an integer {bounds}.")
+        return raw
+
+    def text(self, raw: Any, where: str, choices: tuple[str, ...] = ()) -> Any:
+        if self.strict and (
+            not isinstance(raw, str) or (choices and raw not in choices)
+        ):
+            expected = f"one of {', '.join(choices)}" if choices else "a string"
+            raise LayoutParseError(f"{where}: must be {expected}.")
+        return raw
+
+    def background(self, raw: Any, where: str) -> Any:
+        if (
+            self.strict
+            and raw is not None
+            and not (isinstance(raw, str) and _BACKGROUND.fullmatch(raw))
+        ):
+            raise LayoutParseError(
+                f"{where}: background must be a hex color or a color name."
+            )
+        return raw
+
+    def css_classes(self, raw: Any, where: str) -> Any:
+        if self.strict and not (
+            isinstance(raw, list)
+            and all(isinstance(c, str) and _IDENTIFIER.fullmatch(c) for c in raw)
+        ):
+            raise LayoutParseError(
+                f"{where}.css_classes: must be a list of identifiers that match "
+                f"{_IDENTIFIER.pattern}."
+            )
+        return raw
+
+    def take(self, count: int) -> None:
+        """Reserve ``count`` elements before they are allocated."""
+        if not self.strict:
+            return
+        self.elements_left -= count
+        if self.elements_left < 0:
+            raise LayoutParseError(
+                f"The layout expands to more than {MAX_EXPANDED_ELEMENTS} elements."
+            )
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def parse(yaml_text: str) -> NormalizedLayout:
+def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     """
     Parse a YAML layout string and return a NormalizedLayout.
 
+    ``strict=True`` also applies the bounded, strict import rules.
     Raises LayoutParseError on schema violations.
     """
+    rules = _Rules(strict=strict)
     try:
         data = yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
         raise LayoutParseError(f"Invalid YAML: {exc}") from exc
+    except RecursionError as exc:
+        raise LayoutParseError(
+            "Invalid YAML: the document is nested too deeply."
+        ) from exc
 
     if not isinstance(data, dict):
         raise LayoutParseError("Layout must be a YAML mapping at the top level.")
+    if strict:
+        _reject_recursive_aliases(data)
+    rules.mapping(data, "layout", "layout")
 
     version = data.get("version", 1)
-    if int(version) != SUPPORTED_VERSION:
+    if rules.integer(version, "version", 1) != SUPPORTED_VERSION:
         raise LayoutParseError(
             f"Unsupported layout version {version!r}. "
             f"This parser supports version {SUPPORTED_VERSION}."
         )
 
-    meta = data.get("meta", {}) or {}
-    description = meta.get("description", "")
-    global_bg = meta.get("background", None)
+    meta = rules.mapping(data.get("meta", {}) or {}, "meta", "meta")
+    description = rules.text(meta.get("description", ""), "meta.description")
+    global_bg = rules.background(meta.get("background", None), "meta")
 
-    canvas_cfg = _parse_canvas(data.get("canvas", {}), global_bg)
+    canvas_cfg = _parse_canvas(data.get("canvas", {}), rules, "canvas", global_bg)
 
     # Collect raw view definitions
     raw_views: dict[str, Any] = data.get("views", {}) or {}
     raw_variants: dict[str, Any] = data.get("variants", {}) or {}
+    if strict:
+        for where, raw in (("views", raw_views), ("variants", raw_variants)):
+            if not isinstance(raw, dict):
+                raise LayoutParseError(f"{where}: must be a mapping.")
 
     layout = NormalizedLayout(description=description, source="yaml")
-
-    # First pass: compile all views (copy_from resolution happens here)
-    compiled_views: dict[str, LayoutView] = {}
-    for view_name, view_data in raw_views.items():
-        face = _parse_face(view_name)
-        view_canvas = _parse_canvas(view_data.get("canvas", {}), global_bg, canvas_cfg)
-        compiled_views[view_name] = _compile_view(
-            view_name, view_data, face, view_canvas, raw_views, canvas_cfg, global_bg
-        )
-
-    # Second pass: compile variants into each affected view
-    for variant_name, variant_data in raw_variants.items():
-        variant_view_name = variant_data.get("view", "front")
-        if variant_view_name not in compiled_views:
-            # Create an implicit front view if needed
-            compiled_views[variant_view_name] = LayoutView(
-                face=Face.FRONT,
-                canvas=canvas_cfg,
-            )
-        view = compiled_views[variant_view_name]
-        variant_elements = _compile_rows(
-            variant_data.get("rows", []),
-            variant_data.get("elements", []),
-            view.canvas,
-            variant_name=variant_name,
-        )
-        view.variants[variant_name] = variant_elements
-
-    layout.views = compiled_views
+    layout.views = _compile_views(raw_views, canvas_cfg, global_bg, rules)
+    _compile_variants(raw_variants, layout.views, canvas_cfg, rules)
+    if strict:
+        _check_elements(layout)
     return layout
 
 
@@ -210,6 +309,75 @@ def validate(yaml_text: str) -> list[str]:
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
+def _compile_views(
+    raw_views: dict[str, Any],
+    canvas_cfg: CanvasConfig,
+    global_bg: str | None,
+    rules: _Rules,
+) -> dict[str, LayoutView]:
+    # First pass: compile all views (copy_from resolution happens here)
+    compiled_views: dict[str, LayoutView] = {}
+    for view_name, view_data in raw_views.items():
+        where = f"views.{view_name}"
+        rules.text(view_name, f"{where} (view name)", _VIEW_NAMES)
+        rules.mapping(view_data, "view", where)
+        face = _parse_face(view_name)
+        view_bg = rules.background(view_data.get("background"), where) or global_bg
+        view_canvas = _parse_canvas(
+            view_data.get("canvas", {}), rules, f"{where}.canvas", view_bg, canvas_cfg
+        )
+        compiled_views[view_name] = _compile_view(
+            view_name,
+            view_data,
+            face,
+            view_canvas,
+            raw_views,
+            canvas_cfg,
+            global_bg,
+            rules,
+        )
+
+    return compiled_views
+
+
+def _compile_variants(
+    raw_variants: dict[str, Any],
+    compiled_views: dict[str, LayoutView],
+    canvas_cfg: CanvasConfig,
+    rules: _Rules,
+) -> None:
+    # Second pass: compile variants into each affected view
+    for variant_name, variant_data in raw_variants.items():
+        where = f"variants.{variant_name}"
+        if rules.strict and not (
+            isinstance(variant_name, str) and _VARIANT_NAME.fullmatch(variant_name)
+        ):
+            raise LayoutParseError(
+                f"{where}: the variant name must match {_VARIANT_NAME.pattern}."
+            )
+        rules.mapping(variant_data, "variant", where)
+        rules.text(variant_data.get("match", "module"), f"{where}.match", ("module",))
+        variant_view_name = rules.text(
+            variant_data.get("view", "front"), f"{where}.view", _VIEW_NAMES
+        )
+        if variant_view_name not in compiled_views:
+            # Create an implicit front view if needed
+            compiled_views[variant_view_name] = LayoutView(
+                face=Face.FRONT,
+                canvas=canvas_cfg,
+            )
+        view = compiled_views[variant_view_name]
+        variant_elements = _compile_rows(
+            variant_data.get("rows", []),
+            variant_data.get("elements", []),
+            view.canvas,
+            rules,
+            where,
+            variant_name=variant_name,
+        )
+        view.variants[variant_name] = variant_elements
+
+
 def _parse_face(name: str) -> Face:
     mapping = {"front": Face.FRONT, "rear": Face.REAR, "both": Face.BOTH}
     return mapping.get(name.lower(), Face.FRONT)
@@ -217,19 +385,31 @@ def _parse_face(name: str) -> Face:
 
 def _parse_canvas(
     raw: Any,
+    rules: _Rules,
+    where: str,
     global_bg: str | None = None,
     parent: CanvasConfig | None = None,
 ) -> CanvasConfig:
     """Merge canvas config from raw dict, inheriting from parent if given."""
+    rules.mapping(raw, "canvas", where)
     if not isinstance(raw, dict):
         raw = {}
     p = parent or CanvasConfig()
-    return CanvasConfig(
-        columns=int(raw.get("columns", p.columns)),
-        rows=int(raw.get("rows", p.rows)),
-        cell_size=int(raw.get("cell_size", p.cell_size)),
-        background=raw.get("background", global_bg or p.background),
+    canvas = CanvasConfig(
+        columns=rules.integer(raw.get("columns", p.columns), f"{where}.columns", 1),
+        rows=rules.integer(raw.get("rows", p.rows), f"{where}.rows", 1),
+        cell_size=rules.integer(
+            raw.get("cell_size", p.cell_size), f"{where}.cell_size", 0, MAX_CELL_SIZE
+        ),
+        background=rules.background(
+            raw.get("background", global_bg or p.background), where
+        ),
     )
+    if rules.strict and canvas.columns * canvas.rows > MAX_CANVAS_CELLS:
+        raise LayoutParseError(
+            f"{where}: the canvas has more than {MAX_CANVAS_CELLS} cells."
+        )
+    return canvas
 
 
 def _compile_view(
@@ -240,10 +420,12 @@ def _compile_view(
     raw_views: dict[str, Any],
     global_canvas: CanvasConfig,
     global_bg: str | None,
+    rules: _Rules,
 ) -> LayoutView:
     """Compile a single view, handling copy_from."""
     if not isinstance(view_data, dict):
         view_data = {}
+    where = f"views.{view_name}"
 
     # Handle copy_from
     base_elements: list[PlacedElement] = []
@@ -255,17 +437,33 @@ def _compile_view(
                 f"which does not exist."
             )
         src = raw_views[copy_from]
-        src_canvas = _parse_canvas(src.get("canvas", {}), global_bg, global_canvas)
+        # The copy reads only the source's own rows, so a chain would drop content.
+        if rules.strict and src.get("copy_from"):
+            raise LayoutParseError(
+                f"{where}: copy_from='{copy_from}' names a view that also uses "
+                "copy_from. Cyclic or chained copy_from is not supported."
+            )
+        src_canvas = _parse_canvas(
+            src.get("canvas", {}),
+            rules,
+            f"views.{copy_from}.canvas",
+            global_bg,
+            global_canvas,
+        )
         base_elements = _compile_rows(
             src.get("rows", []),
             src.get("elements", []),
             src_canvas,
+            rules,
+            f"views.{copy_from}",
         )
 
     elements = _compile_rows(
         view_data.get("rows", []),
         view_data.get("elements", []),
         canvas,
+        rules,
+        where,
     )
 
     # Merge: base_elements first, then this view's elements override by key
@@ -282,22 +480,32 @@ def _compile_rows(
     rows: list[Any],
     flat_elements: list[Any],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None = None,
 ) -> list[PlacedElement]:
     """
     Compile either a rows-based or flat elements-based definition into
     a list of PlacedElement objects.
     """
+    rules.items(rows, f"{where}.rows")
+    rules.items(flat_elements, f"{where}.elements")
     if flat_elements:
-        return _compile_flat_elements(flat_elements, canvas, variant_name)
+        return _compile_flat_elements(
+            flat_elements, canvas, rules, f"{where}.elements", variant_name
+        )
     if rows:
-        return _compile_rows_definition(rows, canvas, variant_name)
+        return _compile_rows_definition(
+            rows, canvas, rules, f"{where}.rows", variant_name
+        )
     return []
 
 
 def _compile_flat_elements(
     elements: list[Any],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
 ) -> list[PlacedElement]:
     """Compile an explicit list of element dicts with at:/span: coordinates."""
@@ -307,13 +515,17 @@ def _compile_flat_elements(
             raise LayoutParseError(
                 f"Element #{i} must be a mapping, got {type(raw).__name__}."
             )
-        result.extend(_expand_element(raw, canvas, variant_name))
+        result.extend(
+            _expand_element(raw, canvas, rules, f"{where}[{i}]", variant_name)
+        )
     return result
 
 
 def _compile_rows_definition(
     rows: list[Any],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
 ) -> list[PlacedElement]:
     """
@@ -337,42 +549,72 @@ def _compile_rows_definition(
     row_cursors: dict[int, int] = {r: 1 for r in range(1, canvas.rows + 1)}
     current_single_row = 1  # for "all"-pattern sequences
 
-    for entry in rows:
+    for i, entry in enumerate(rows):
         if not isinstance(entry, dict):
             raise LayoutParseError(
                 f"Row entry must be a mapping, got {type(entry).__name__}."
             )
+        entry_where = f"{where}[{i}]"
+        rules.one_of(entry, _ROW_ENTRY_KEYS, entry_where)
 
         if "elements" in entry:
             elements, row_cursors = _compile_explicit_row(
-                entry["elements"], row_cursors, current_single_row, canvas, variant_name
+                entry["elements"],
+                row_cursors,
+                current_single_row,
+                canvas,
+                rules,
+                f"{entry_where}.elements",
+                variant_name,
             )
             result.extend(elements)
             current_single_row = min(current_single_row + 1, canvas.rows)
 
         elif "sequence" in entry:
             elements, row_cursors = _expand_sequence(
-                entry["sequence"], row_cursors, canvas, variant_name
+                entry["sequence"],
+                row_cursors,
+                canvas,
+                rules,
+                f"{entry_where}.sequence",
+                variant_name,
             )
             result.extend(elements)
 
         elif "group" in entry:
             elements, row_cursors = _expand_group(
-                entry["group"], row_cursors, canvas, variant_name
+                entry["group"],
+                row_cursors,
+                canvas,
+                rules,
+                f"{entry_where}.group",
+                variant_name,
             )
             result.extend(elements)
 
         elif "spacer" in entry:
-            n = int(entry["spacer"])
+            n = rules.integer(entry["spacer"], f"{entry_where}.spacer")
             spacer_elements, row_cursors = _insert_filler(
-                ElementKind.SPACER, n, row_cursors, canvas, variant_name, prefix="s"
+                ElementKind.SPACER,
+                n,
+                row_cursors,
+                canvas,
+                rules,
+                variant_name,
+                prefix="s",
             )
             result.extend(spacer_elements)
 
         elif "blank" in entry:
-            n = int(entry["blank"])
+            n = rules.integer(entry["blank"], f"{entry_where}.blank")
             blank_elements, row_cursors = _insert_filler(
-                ElementKind.BLANK, n, row_cursors, canvas, variant_name, prefix="x"
+                ElementKind.BLANK,
+                n,
+                row_cursors,
+                canvas,
+                rules,
+                variant_name,
+                prefix="x",
             )
             result.extend(blank_elements)
 
@@ -390,13 +632,17 @@ def _compile_explicit_row(
     row_cursors: dict[int, int],
     current_row: int,
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
 ) -> tuple[list[PlacedElement], dict[int, int]]:
     """Place an explicit list of elements into ``current_row``."""
     result: list[PlacedElement] = []
     col = row_cursors.get(current_row, 1)
-    for raw in elements:
+    rules.items(elements, where)
+    for i, raw in enumerate(elements):
         if isinstance(raw, str):
+            rules.take(1)
             # shorthand: just a key name, infer kind
             kind = (
                 ElementKind.SPACER
@@ -411,7 +657,13 @@ def _compile_explicit_row(
             col += 1
         elif isinstance(raw, dict):
             expanded = _expand_element(
-                raw, canvas, variant_name, default_row=current_row, default_col=col
+                raw,
+                canvas,
+                rules,
+                f"{where}[{i}]",
+                variant_name,
+                default_row=current_row,
+                default_col=col,
             )
             result.extend(expanded)
             col += sum(el.col_span for el in expanded)
@@ -427,6 +679,8 @@ def _expand_sequence(
     seq: Any,
     row_cursors: dict[int, int],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
 ) -> tuple[list[PlacedElement], dict[int, int]]:
     """
@@ -443,21 +697,23 @@ def _expand_sequence(
     """
     if not isinstance(seq, dict):
         raise LayoutParseError("'sequence' must be a mapping.")
+    rules.mapping(seq, "sequence", where)
 
     kind_str = seq.get("kind", "port")
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
-        raise LayoutParseError(f"Unknown element kind: {kind_str!r}.")
+        raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
 
-    prefix = seq.get("prefix", "")
-    start = int(seq.get("start", 1))
-    count = int(seq.get("count", 1))
-    step = int(seq.get("step", 1))
+    prefix = rules.text(seq.get("prefix", ""), f"{where}.prefix")
+    start = rules.integer(seq.get("start", 1), f"{where}.start")
+    count = rules.integer(seq.get("count", 1), f"{where}.count")
+    step = rules.integer(seq.get("step", 1), f"{where}.step", 1)
     pattern = seq.get("pattern", "top-odd")
     explicit_row = seq.get("row", None)
     if explicit_row is not None:
-        explicit_row = int(explicit_row)
+        explicit_row = rules.integer(explicit_row, f"{where}.row", 1, canvas.rows)
 
+    rules.take(count)
     # Generate port numbers
     port_numbers = [start + i * step for i in range(count)]
 
@@ -518,7 +774,8 @@ def _expand_sequence(
 
     else:
         raise LayoutParseError(
-            f"Unknown sequence pattern: {pattern!r}. Use 'top-odd', 'top-even', or 'all'."
+            f"{where}: Unknown sequence pattern: {pattern!r}. "
+            "Use 'top-odd', 'top-even', or 'all'."
         )
 
     return result, row_cursors
@@ -528,6 +785,8 @@ def _expand_group(
     group: Any,
     row_cursors: dict[int, int],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
 ) -> tuple[list[PlacedElement], dict[int, int]]:
     """
@@ -541,12 +800,14 @@ def _expand_group(
     """
     if not isinstance(group, dict):
         raise LayoutParseError("'group' must be a mapping.")
+    rules.mapping(group, "group", where)
 
-    spacer_width = int(group.get("spacer", 1))
-    sections = group.get("sections", [])
+    spacer_width = rules.integer(group.get("spacer", 1), f"{where}.spacer")
+    sections = rules.items(group.get("sections", []), f"{where}.sections")
     result: list[PlacedElement] = []
 
     for i, section in enumerate(sections):
+        section_where = f"{where}.sections[{i}]"
         if i > 0:
             # Insert spacer between sections
             spacer_els, row_cursors = _insert_filler(
@@ -554,6 +815,7 @@ def _expand_group(
                 spacer_width,
                 row_cursors,
                 canvas,
+                rules,
                 variant_name,
                 prefix="s",
             )
@@ -561,22 +823,40 @@ def _expand_group(
 
         if not isinstance(section, dict):
             raise LayoutParseError("Group section must be a mapping.")
+        rules.one_of(section, _SECTION_KEYS, section_where)
 
         if "sequence" in section:
             els, row_cursors = _expand_sequence(
-                section["sequence"], row_cursors, canvas, variant_name
+                section["sequence"],
+                row_cursors,
+                canvas,
+                rules,
+                f"{section_where}.sequence",
+                variant_name,
             )
             result.extend(els)
         elif "elements" in section:
             row = _single_active_row(row_cursors, canvas)
             els, row_cursors = _compile_explicit_row(
-                section["elements"], row_cursors, row, canvas, variant_name
+                section["elements"],
+                row_cursors,
+                row,
+                canvas,
+                rules,
+                f"{section_where}.elements",
+                variant_name,
             )
             result.extend(els)
         elif "blank" in section:
-            n = int(section["blank"])
+            n = rules.integer(section["blank"], f"{section_where}.blank")
             els, row_cursors = _insert_filler(
-                ElementKind.BLANK, n, row_cursors, canvas, variant_name, prefix="x"
+                ElementKind.BLANK,
+                n,
+                row_cursors,
+                canvas,
+                rules,
+                variant_name,
+                prefix="x",
             )
             result.extend(els)
         else:
@@ -592,10 +872,12 @@ def _insert_filler(
     count: int,
     row_cursors: dict[int, int],
     canvas: CanvasConfig,
+    rules: _Rules,
     variant_name: str | None,
     prefix: str = "x",
 ) -> tuple[list[PlacedElement], dict[int, int]]:
     """Insert ``count`` filler elements spanning all active rows."""
+    rules.take(count)
     result: list[PlacedElement] = []
     row_cursors = dict(row_cursors)
     start_col = max(row_cursors.get(r, 1) for r in range(1, canvas.rows + 1))
@@ -633,23 +915,27 @@ def _insert_filler(
 def _expand_element(
     raw: dict[str, Any],
     canvas: CanvasConfig,
+    rules: _Rules,
+    where: str,
     variant_name: str | None,
     default_row: int = 1,
     default_col: int = 1,
 ) -> list[PlacedElement]:
     """Compile a single explicit element dict."""
+    rules.mapping(raw, "element", where)
+    rules.take(1)
     kind_str = raw.get("kind", "port")
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
-        raise LayoutParseError(f"Unknown element kind: {kind_str!r}.")
+        raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
 
-    at = raw.get("at", {}) or {}
-    span = raw.get("span", {}) or {}
+    at = rules.mapping(raw.get("at", {}) or {}, "at", f"{where}.at")
+    span = rules.mapping(raw.get("span", {}) or {}, "span", f"{where}.span")
 
-    row = int(at.get("row", default_row))
-    col = int(at.get("col", default_col))
-    row_span = int(span.get("rows", 1))
-    col_span = int(span.get("cols", 1))
+    row = rules.integer(at.get("row", default_row), f"{where}.at.row", 1)
+    col = rules.integer(at.get("col", default_col), f"{where}.at.col", 1)
+    row_span = rules.integer(span.get("rows", 1), f"{where}.span.rows", 1)
+    col_span = rules.integer(span.get("cols", 1), f"{where}.span.cols", 1)
 
     # key is required for port-like elements; optional for spacers/blanks
     key = raw.get("key", "")
@@ -660,9 +946,11 @@ def _expand_element(
         key = f"{'s' if kind == ElementKind.SPACER else 'x'}{col}"
 
     label = raw.get("label")
+    if "css_classes" in raw:
+        rules.css_classes(raw["css_classes"], where)
     css_classes = raw.get("css_classes", []) or []
 
-    face_str = raw.get("face", "both")
+    face_str = rules.text(raw.get("face", "both"), f"{where}.face", _FACE_NAMES)
     face_map = {"front": Face.FRONT, "rear": Face.REAR, "both": Face.BOTH}
     face = face_map.get(face_str, Face.BOTH)
 
@@ -685,3 +973,55 @@ def _expand_element(
 def _single_active_row(row_cursors: dict[int, int], canvas: CanvasConfig) -> int:
     """Return the first row number (1) for single-row operations."""
     return 1
+
+
+def _reject_recursive_aliases(data: Any) -> None:
+    """Raise when a YAML alias refers to one of its own ancestors; visit shared nodes once."""
+    on_path: set[int] = set()
+    done: set[int] = set()
+    stack: list[tuple[Any, bool]] = [(data, False)]
+    while stack:
+        node, leaving = stack.pop()
+        if leaving:
+            on_path.discard(id(node))
+            done.add(id(node))
+            continue
+        if not isinstance(node, (dict, list)) or id(node) in done:
+            continue
+        if id(node) in on_path:
+            raise LayoutParseError("Recursive YAML aliases are not supported.")
+        on_path.add(id(node))
+        stack.append((node, True))
+        children = node.values() if isinstance(node, dict) else node
+        stack.extend((child, False) for child in children)
+
+
+def _check_elements(layout: NormalizedLayout) -> None:
+    """Check the compiled elements of every view and variant against the strict rules."""
+    if not any(view.elements for view in layout.views.values()):
+        raise LayoutParseError("The layout must define at least one grid area.")
+    for view_name, view in layout.views.items():
+        element_sets = [(f"views.{view_name}", view.elements)]
+        element_sets += [
+            (f"variants.{name}", els) for name, els in view.variants.items()
+        ]
+        for where, elements in element_sets:
+            for el in elements:
+                _check_element(el, where)
+
+
+def _check_element(el: PlacedElement, where: str) -> None:
+    if not isinstance(el.key, str) or not _IDENTIFIER.fullmatch(el.key):
+        raise LayoutParseError(
+            f"{where}: the element key {el.key!r} must match {_IDENTIFIER.pattern}."
+        )
+    where = f"{where}: element {el.key!r}"
+    if el.label is not None and not (
+        isinstance(el.label, str)
+        and el.label.isprintable()
+        and len(el.label) <= MAX_LABEL_LENGTH
+    ):
+        raise LayoutParseError(
+            f"{where}: the label must be printable text of at most "
+            f"{MAX_LABEL_LENGTH} characters."
+        )
