@@ -638,6 +638,30 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         self.assertLess(time.monotonic() - started, 5)
         self.assertIn("10000 elements", review.rows[0].error)
 
+    def test_review_rejects_shapes_the_lenient_parser_cannot_read(self):
+        huge = "1" + "0" * 3000
+        contents = {
+            "views-list": ("version: 1\nviews: [front]\n", "views"),
+            "duplicate-key": (
+                "views:\n  front: {elements: [{key: p1}]}\n  front: {elements: [{key: p2}]}\n",
+                "duplicate key",
+            ),
+            "huge-key-number": (
+                (
+                    "views:\n  front:\n    rows:\n      - sequence: "
+                    f"{{prefix: p, count: {huge}, step: {huge}}}\n"
+                ),
+                "prefix",
+            ),
+        }
+        for name, (content, message) in contents.items():
+            with self.subTest(name):
+                response = self.review_yaml(f"examples/{name}.yaml", content)
+                self.assertEqual(response.status_code, 200)
+                review = response.context["review"]
+                self.assertIn(message, review.rows[0].error)
+                self.assertEqual(review.token, "")
+
     def test_local_definitions_keep_the_lenient_parser(self):
         # Rendering reads stored YAML with the lenient parser; only imports are strict.
         DeviceView.objects.create(

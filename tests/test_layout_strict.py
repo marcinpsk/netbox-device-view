@@ -421,8 +421,36 @@ class TestReviewFindings:
             "views:\n  front: {elements: [{key: p1, span: false}]}\n",
             "views:\n  front: {elements: [p1], rows: [{bogus: 1}]}\n",
             "views: {front: {elements: [p1]}}\nvariants: {V: {elements: [p1], rows: [{x: 1}]}}\n",
+            "version: 1\nviews: [front]\n",
         ],
     )
     def test_malformed_input_raises_a_parse_error(self, text):
         with pytest.raises(LayoutParseError):
             strict(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "views:\n  front: {elements: [{key: p1}]}\n  front: {elements: [{key: p2}]}\n",
+            "views:\n  front:\n    elements: [{key: p1, key: p2}]\n",
+            "views:\n  front: {elements: [{key: p1}]}\nviews: {}\n",
+        ],
+    )
+    def test_duplicate_keys_are_rejected(self, text):
+        with pytest.raises(LayoutParseError, match="duplicate key"):
+            strict(text)
+
+    def test_merge_keys_still_apply(self):
+        text = (
+            "views:\n  front:\n    elements:\n"
+            "      - &p1 {key: p1, label: one}\n"
+            "      - {<<: *p1, key: p2, label: two}\n"
+        )
+        elements = strict(text).front.elements
+        assert [(e.key, e.label) for e in elements] == [("p1", "one"), ("p2", "two")]
+
+    def test_huge_generated_key_number_is_rejected(self):
+        huge = 10**3000
+        sequence = {"prefix": "p", "count": huge, "step": huge}
+        with pytest.raises(LayoutParseError, match="prefix"):
+            strict(layout(lambda d: front(d)["rows"].append({"sequence": sequence})))

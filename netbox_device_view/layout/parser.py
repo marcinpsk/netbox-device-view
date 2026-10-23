@@ -82,6 +82,7 @@ A view can copy another view's row definitions and add overrides:
 from __future__ import annotations
 
 import re
+from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,6 +175,19 @@ class _DepthLimitedLoader(yaml.SafeLoader):
             return super().compose_node(parent, index)
         finally:
             self.depth -= 1
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=True)
+            if not isinstance(key, Hashable):
+                continue  # The parent raises its own error for this key.
+            if key in seen:
+                raise LayoutParseError(f"Invalid YAML: duplicate key {key!r:.80}.")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def _is_identifier(value: Any) -> bool:
@@ -279,9 +293,13 @@ class _Rules:
             )
         return raw
 
-    def generated_key(self, last_key: str, where: str) -> None:
+    def generated_key(self, prefix: str, last_number: int, where: str) -> None:
         """Bound the longest key a sequence generates before it allocates any."""
-        if self.strict and len(last_key) > MAX_KEY_LENGTH:
+        # Compare the number first: str() fails above 4300 digits.
+        if self.strict and (
+            last_number >= 10**MAX_KEY_LENGTH
+            or len(prefix) + len(str(last_number)) > MAX_KEY_LENGTH
+        ):
             raise LayoutParseError(
                 f"{where}.prefix: the generated keys are longer than "
                 f"{MAX_KEY_LENGTH} characters."
@@ -796,7 +814,7 @@ def _expand_sequence(
     if explicit_row is not None:
         explicit_row = rules.integer(explicit_row, f"{where}.row", 1, canvas.rows)
 
-    rules.generated_key(f"{prefix}{start + max(count - 1, 0) * step}", where)
+    rules.generated_key(prefix, start + max(count - 1, 0) * step, where)
     rules.take(count)
     # Generate port numbers
     port_numbers = [start + i * step for i in range(count)]
