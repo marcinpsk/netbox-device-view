@@ -125,9 +125,15 @@ _PORT_KINDS = {
 
 # ── Strict rules (parse(..., strict=True), used by the Data Source import) ────
 MAX_CANVAS_CELLS = 4096
+MAX_CANVAS_ROWS = 64
 MAX_EXPANDED_ELEMENTS = 10000
+# Every view and variant renders its whole canvas grid again.
+MAX_RENDERED_CELLS = 4 * MAX_CANVAS_CELLS
 MAX_CELL_SIZE = 100
 MAX_LABEL_LENGTH = 64
+MAX_KEY_LENGTH = 64
+MAX_CSS_CLASSES = 8
+_MAX_YAML_DEPTH = 32
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 # Appended to "module" in a CSS class, so a leading digit is valid.
 _VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -135,7 +141,7 @@ _BACKGROUND = re.compile(
     r"#(?:[0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[A-Za-z]+"
 )
 _VIEW_NAMES = ("front", "rear")
-_FACE_NAMES = ("front", "rear", "both")
+_FACES = {face.value: face for face in Face}
 _ROW_ENTRY_KEYS = ("elements", "sequence", "group", "spacer", "blank")
 _SECTION_KEYS = ("sequence", "elements", "blank")
 _KEYS = {
@@ -156,12 +162,47 @@ class LayoutParseError(ValueError):
     """Raised when the YAML layout schema is invalid."""
 
 
+class _DepthLimitedLoader(yaml.SafeLoader):
+    """A SafeLoader that stops at deep nesting before the scanner and composer slow down."""
+
+    depth = 0
+
+    def compose_node(self, parent, index):
+        self.depth += 1
+        if self.depth > _MAX_YAML_DEPTH:
+            raise LayoutParseError("Invalid YAML: the document is nested too deeply.")
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            self.depth -= 1
+
+
+def _is_identifier(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= MAX_KEY_LENGTH
+        and _IDENTIFIER.fullmatch(value) is not None
+    )
+
+
 @dataclass
 class _Rules:
     """The strict import rules; with strict=False each check keeps the lenient behaviour."""
 
     strict: bool = False
     elements_left: int = MAX_EXPANDED_ELEMENTS
+    cells_left: int = MAX_RENDERED_CELLS
+
+    def optional_mapping(self, raw: Any, kind: str, where: str) -> Any:
+        if not self.strict:
+            return raw or {}
+        return self.mapping({} if raw is None else raw, kind, where)
+
+    def named_mapping(self, raw: Any, where: str) -> Any:
+        """Return a mapping whose keys are names, such as views or variants."""
+        if self.strict and raw is not None and not isinstance(raw, dict):
+            raise LayoutParseError(f"{where}: must be a mapping.")
+        return raw or {}
 
     def mapping(self, raw: Any, kind: str, where: str) -> Any:
         if self.strict:
@@ -190,8 +231,16 @@ class _Rules:
     ) -> int:
         if not self.strict:
             return int(raw)
-        if type(raw) is not int or raw < minimum or (maximum and raw > maximum):
-            bounds = f"from {minimum} to {maximum}" if maximum else f"{minimum} or more"
+        if (
+            type(raw) is not int
+            or raw < minimum
+            or (maximum is not None and raw > maximum)
+        ):
+            bounds = (
+                f"{minimum} or more"
+                if maximum is None
+                else f"from {minimum} to {maximum}"
+            )
             raise LayoutParseError(f"{where}: must be an integer {bounds}.")
         return raw
 
@@ -217,22 +266,47 @@ class _Rules:
     def css_classes(self, raw: Any, where: str) -> Any:
         if self.strict and not (
             isinstance(raw, list)
-            and all(isinstance(c, str) and _IDENTIFIER.fullmatch(c) for c in raw)
+            and len(raw) <= MAX_CSS_CLASSES
+            and all(_is_identifier(c) for c in raw)
         ):
             raise LayoutParseError(
-                f"{where}.css_classes: must be a list of identifiers that match "
-                f"{_IDENTIFIER.pattern}."
+                f"{where}.css_classes: must be a list of at most {MAX_CSS_CLASSES} "
+                f"identifiers that match {_IDENTIFIER.pattern}, each at most "
+                f"{MAX_KEY_LENGTH} characters."
             )
         return raw
 
+    def generated_key(self, last_key: str, where: str) -> None:
+        """Bound the longest key a sequence generates before it allocates any."""
+        if self.strict and len(last_key) > MAX_KEY_LENGTH:
+            raise LayoutParseError(
+                f"{where}.prefix: the generated keys are longer than "
+                f"{MAX_KEY_LENGTH} characters."
+            )
+
+    def one_source(self, rows: Any, elements: Any, where: str) -> None:
+        if self.strict and rows and elements:
+            raise LayoutParseError(f"{where}: use either rows or elements, not both.")
+
     def take(self, count: int) -> None:
-        """Reserve ``count`` elements before they are allocated."""
+        """Reserve ``count`` elements before they are allocated; an empty entry costs one."""
         if not self.strict:
             return
-        self.elements_left -= count
+        self.elements_left -= max(count, 1)
         if self.elements_left < 0:
             raise LayoutParseError(
                 f"The layout expands to more than {MAX_EXPANDED_ELEMENTS} elements."
+            )
+
+    def render(self, canvas: CanvasConfig, where: str) -> None:
+        """Reserve the grid cells that the CSS renderer writes for one view or variant."""
+        if not self.strict:
+            return
+        self.cells_left -= canvas.columns * canvas.rows
+        if self.cells_left < 0:
+            raise LayoutParseError(
+                f"{where}: the views and variants render more than "
+                f"{MAX_RENDERED_CELLS} cells in total."
             )
 
 
@@ -247,9 +321,13 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     Raises LayoutParseError on schema violations.
     """
     rules = _Rules(strict=strict)
+    loader = _DepthLimitedLoader if strict else yaml.SafeLoader
     try:
-        data = yaml.safe_load(yaml_text)
-    except yaml.YAMLError as exc:
+        data = yaml.load(yaml_text, Loader=loader)
+    except LayoutParseError:
+        raise
+    except (yaml.YAMLError, ValueError) as exc:
+        # PyYAML raises ValueError for integers longer than Python's digit limit.
         raise LayoutParseError(f"Invalid YAML: {exc}") from exc
     except RecursionError as exc:
         raise LayoutParseError(
@@ -269,19 +347,15 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
             f"This parser supports version {SUPPORTED_VERSION}."
         )
 
-    meta = rules.mapping(data.get("meta", {}) or {}, "meta", "meta")
+    meta = rules.optional_mapping(data.get("meta"), "meta", "meta")
     description = rules.text(meta.get("description", ""), "meta.description")
     global_bg = rules.background(meta.get("background", None), "meta")
 
     canvas_cfg = _parse_canvas(data.get("canvas", {}), rules, "canvas", global_bg)
 
     # Collect raw view definitions
-    raw_views: dict[str, Any] = data.get("views", {}) or {}
-    raw_variants: dict[str, Any] = data.get("variants", {}) or {}
-    if strict:
-        for where, raw in (("views", raw_views), ("variants", raw_variants)):
-            if not isinstance(raw, dict):
-                raise LayoutParseError(f"{where}: must be a mapping.")
+    raw_views: dict[str, Any] = rules.named_mapping(data.get("views"), "views")
+    raw_variants: dict[str, Any] = rules.named_mapping(data.get("variants"), "variants")
 
     layout = NormalizedLayout(description=description, source="yaml")
     layout.views = _compile_views(raw_views, canvas_cfg, global_bg, rules)
@@ -326,6 +400,7 @@ def _compile_views(
         view_canvas = _parse_canvas(
             view_data.get("canvas", {}), rules, f"{where}.canvas", view_bg, canvas_cfg
         )
+        rules.render(view_canvas, where)
         compiled_views[view_name] = _compile_view(
             view_name,
             view_data,
@@ -367,6 +442,7 @@ def _compile_variants(
                 canvas=canvas_cfg,
             )
         view = compiled_views[variant_view_name]
+        rules.render(view.canvas, where)
         variant_elements = _compile_rows(
             variant_data.get("rows", []),
             variant_data.get("elements", []),
@@ -379,8 +455,7 @@ def _compile_variants(
 
 
 def _parse_face(name: str) -> Face:
-    mapping = {"front": Face.FRONT, "rear": Face.REAR, "both": Face.BOTH}
-    return mapping.get(name.lower(), Face.FRONT)
+    return _FACES.get(name.lower(), Face.FRONT)
 
 
 def _parse_canvas(
@@ -397,7 +472,9 @@ def _parse_canvas(
     p = parent or CanvasConfig()
     canvas = CanvasConfig(
         columns=rules.integer(raw.get("columns", p.columns), f"{where}.columns", 1),
-        rows=rules.integer(raw.get("rows", p.rows), f"{where}.rows", 1),
+        rows=rules.integer(
+            raw.get("rows", p.rows), f"{where}.rows", 1, MAX_CANVAS_ROWS
+        ),
         cell_size=rules.integer(
             raw.get("cell_size", p.cell_size), f"{where}.cell_size", 0, MAX_CELL_SIZE
         ),
@@ -430,13 +507,15 @@ def _compile_view(
     # Handle copy_from
     base_elements: list[PlacedElement] = []
     copy_from = view_data.get("copy_from")
+    if copy_from is not None:
+        rules.text(copy_from, f"{where}.copy_from")
     if copy_from:
         if copy_from not in raw_views:
             raise LayoutParseError(
                 f"View '{view_name}' references copy_from='{copy_from}' "
                 f"which does not exist."
             )
-        src = raw_views[copy_from]
+        src = rules.mapping(raw_views[copy_from], "view", f"views.{copy_from}")
         # The copy reads only the source's own rows, so a chain would drop content.
         if rules.strict and src.get("copy_from"):
             raise LayoutParseError(
@@ -490,6 +569,7 @@ def _compile_rows(
     """
     rules.items(rows, f"{where}.rows")
     rules.items(flat_elements, f"{where}.elements")
+    rules.one_source(rows, flat_elements, where)
     if flat_elements:
         return _compile_flat_elements(
             flat_elements, canvas, rules, f"{where}.elements", variant_name
@@ -699,7 +779,7 @@ def _expand_sequence(
         raise LayoutParseError("'sequence' must be a mapping.")
     rules.mapping(seq, "sequence", where)
 
-    kind_str = seq.get("kind", "port")
+    kind_str = rules.text(seq.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
         raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
@@ -713,6 +793,7 @@ def _expand_sequence(
     if explicit_row is not None:
         explicit_row = rules.integer(explicit_row, f"{where}.row", 1, canvas.rows)
 
+    rules.generated_key(f"{prefix}{start + max(count - 1, 0) * step}", where)
     rules.take(count)
     # Generate port numbers
     port_numbers = [start + i * step for i in range(count)]
@@ -924,13 +1005,13 @@ def _expand_element(
     """Compile a single explicit element dict."""
     rules.mapping(raw, "element", where)
     rules.take(1)
-    kind_str = raw.get("kind", "port")
+    kind_str = rules.text(raw.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
         raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
 
-    at = rules.mapping(raw.get("at", {}) or {}, "at", f"{where}.at")
-    span = rules.mapping(raw.get("span", {}) or {}, "span", f"{where}.span")
+    at = rules.optional_mapping(raw.get("at"), "at", f"{where}.at")
+    span = rules.optional_mapping(raw.get("span"), "span", f"{where}.span")
 
     row = rules.integer(at.get("row", default_row), f"{where}.at.row", 1)
     col = rules.integer(at.get("col", default_col), f"{where}.at.col", 1)
@@ -939,6 +1020,8 @@ def _expand_element(
 
     # key is required for port-like elements; optional for spacers/blanks
     key = raw.get("key", "")
+    if rules.strict and "key" in raw and not _is_identifier(key):
+        raise LayoutParseError(_key_error(where, key))
     if not key:
         if kind in _PORT_KINDS:
             raise LayoutParseError(f"Element of kind {kind_str!r} must have a 'key'.")
@@ -950,9 +1033,8 @@ def _expand_element(
         rules.css_classes(raw["css_classes"], where)
     css_classes = raw.get("css_classes", []) or []
 
-    face_str = rules.text(raw.get("face", "both"), f"{where}.face", _FACE_NAMES)
-    face_map = {"front": Face.FRONT, "rear": Face.REAR, "both": Face.BOTH}
-    face = face_map.get(face_str, Face.BOTH)
+    face_str = rules.text(raw.get("face", "both"), f"{where}.face", tuple(_FACES))
+    face = _FACES.get(face_str, Face.BOTH)
 
     return [
         PlacedElement(
@@ -1010,18 +1092,22 @@ def _check_elements(layout: NormalizedLayout) -> None:
                 _check_element(el, where)
 
 
+def _key_error(where: str, key: Any) -> str:
+    return (
+        f"{where}: the element key {key!r:.80} must match {_IDENTIFIER.pattern} "
+        f"and have at most {MAX_KEY_LENGTH} characters."
+    )
+
+
 def _check_element(el: PlacedElement, where: str) -> None:
-    if not isinstance(el.key, str) or not _IDENTIFIER.fullmatch(el.key):
-        raise LayoutParseError(
-            f"{where}: the element key {el.key!r} must match {_IDENTIFIER.pattern}."
-        )
-    where = f"{where}: element {el.key!r}"
+    if not _is_identifier(el.key):
+        raise LayoutParseError(_key_error(where, el.key))
     if el.label is not None and not (
         isinstance(el.label, str)
         and el.label.isprintable()
         and len(el.label) <= MAX_LABEL_LENGTH
     ):
         raise LayoutParseError(
-            f"{where}: the label must be printable text of at most "
+            f"{where}: element {el.key!r}: the label must be printable text of at most "
             f"{MAX_LABEL_LENGTH} characters."
         )

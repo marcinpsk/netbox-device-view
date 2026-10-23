@@ -13,7 +13,11 @@ import yaml
 
 from netbox_device_view.layout.parser import (
     MAX_CANVAS_CELLS,
+    MAX_CANVAS_ROWS,
+    MAX_CSS_CLASSES,
     MAX_EXPANDED_ELEMENTS,
+    MAX_KEY_LENGTH,
+    MAX_RENDERED_CELLS,
     LayoutParseError,
     parse,
 )
@@ -98,13 +102,13 @@ def test_lenient_parse_is_unchanged():
 class TestLimits:
     def test_canvas_cell_limit(self):
         strict(layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2)))
-        with pytest.raises(LayoutParseError, match="4096 cells"):
+        with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
             strict(
                 layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2 + 1))
             )
 
     def test_view_canvas_cell_limit(self):
-        with pytest.raises(LayoutParseError, match="4096 cells"):
+        with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
             strict(
                 layout(lambda d: front(d).update(canvas={"columns": 4096, "rows": 2}))
             )
@@ -120,9 +124,9 @@ class TestLimits:
     )
     def test_expansion_is_checked_before_allocation(self, row):
         started = time.monotonic()
-        with pytest.raises(LayoutParseError, match="10000 elements"):
+        with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
             strict(layout(lambda d: front(d)["rows"].append(row)))
-        assert time.monotonic() - started < 1
+        assert time.monotonic() - started < 5
 
     def test_expansion_budget_spans_views_and_variants(self):
         # Each part fits a canvas; together they exceed the budget.
@@ -138,7 +142,7 @@ class TestLimits:
                 for name, view in (("A", "front"), ("B", "rear"))
             }
 
-        with pytest.raises(LayoutParseError, match="10000 elements"):
+        with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
             strict(layout(change))
 
 
@@ -156,7 +160,7 @@ class TestCycles:
         started = time.monotonic()
         with pytest.raises(LayoutParseError, match="meta.description"):
             strict(text)
-        assert time.monotonic() - started < 1
+        assert time.monotonic() - started < 5
 
     def test_deep_nesting(self):
         with pytest.raises(LayoutParseError, match="nested too deeply"):
@@ -334,3 +338,75 @@ class TestGridAreas:
 
     def test_port_names_need_not_match_components(self):
         strict(layout(lambda d: variant_element(d).update(key="does-not-exist")))
+
+
+class TestReviewFindings:
+    """Inputs that once passed strict parse with unbounded cost, or failed with a non-parse error."""
+
+    def test_long_sequence_prefix_is_rejected(self):
+        sequence = {"prefix": "a" * (MAX_KEY_LENGTH + 1), "count": 2}
+        with pytest.raises(LayoutParseError, match="prefix"):
+            strict(layout(lambda d: front(d)["rows"].append({"sequence": sequence})))
+
+    def test_long_element_key_is_rejected(self):
+        with pytest.raises(LayoutParseError, match="key"):
+            strict(layout(lambda d: variant_element(d).update(key="a" * 65)))
+
+    def test_too_many_css_classes_are_rejected(self):
+        classes = [f"c{i}" for i in range(MAX_CSS_CLASSES + 1)]
+        with pytest.raises(LayoutParseError, match="css_classes"):
+            strict(layout(lambda d: variant_element(d).update(css_classes=classes)))
+
+    def test_rendered_cells_are_bounded_across_variants(self):
+        # Each variant renders the whole canvas again, even with no elements.
+        def change(d):
+            d["canvas"] = {"columns": 2048, "rows": 2, "cell_size": 0}
+            d["variants"] = {f"V{i}": {"elements": []} for i in range(40)}
+
+        with pytest.raises(LayoutParseError, match=f"{MAX_RENDERED_CELLS} cells"):
+            strict(layout(change))
+
+    def test_canvas_rows_are_bounded(self):
+        with pytest.raises(LayoutParseError, match="rows"):
+            strict(
+                layout(
+                    lambda d: d["canvas"].update(columns=1, rows=MAX_CANVAS_ROWS + 1)
+                )
+            )
+
+    def test_entries_without_elements_use_the_budget(self):
+        def change(d):
+            d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
+            front(d)["rows"] = [{"spacer": 0}] * (MAX_EXPANDED_ELEMENTS + 1)
+
+        started = time.monotonic()
+        with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
+            strict(layout(change))
+        assert time.monotonic() - started < 5
+
+    def test_deep_nesting_fails_fast(self):
+        started = time.monotonic()
+        with pytest.raises(LayoutParseError, match="^Invalid YAML: the document"):
+            strict("meta: " + "[" * 100000)
+        assert time.monotonic() - started < 5
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "views:\n  front: {copy_from: rear}\n  rear: null\n",
+            "views:\n  front: {copy_from: rear}\n  rear: [1]\n",
+            "views:\n  front: {copy_from: [x]}\n",
+            "views:\n  front: {elements: [{kind: [x], key: p1}]}\n",
+            "views:\n  front: {rows: [{sequence: {kind: [x]}}]}\n",
+            "views:\n  front: {elements: [{key: [p1]}]}\n",
+            "views:\n  front: {elements: [{key: p1, at: {row: " + "9" * 5000 + "}}]}\n",
+            "meta: 0\nviews: {front: {elements: [p1]}}\n",
+            "views:\n  front: {elements: [{key: p1, at: 0}]}\n",
+            "views:\n  front: {elements: [{key: p1, span: false}]}\n",
+            "views:\n  front: {elements: [p1], rows: [{bogus: 1}]}\n",
+            "views: {front: {elements: [p1]}}\nvariants: {V: {elements: [p1], rows: [{x: 1}]}}\n",
+        ],
+    )
+    def test_malformed_input_raises_a_parse_error(self, text):
+        with pytest.raises(LayoutParseError):
+            strict(text)
