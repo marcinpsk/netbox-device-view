@@ -654,6 +654,13 @@ class StrictYamlImportTests(DataSourceImportTestBase):
                 "prefix",
             ),
         }
+        wide = ", ".join(
+            f"{{key: p{i}, span: {{cols: {'9' * 4299}}}}}" for i in range(12)
+        )
+        contents["huge-span"] = (
+            f"views:\n  front:\n    rows:\n      - elements: [{wide}]\n      - blank: 1\n",
+            "span.cols",
+        )
         for name, (content, message) in contents.items():
             with self.subTest(name):
                 response = self.review_yaml(f"examples/{name}.yaml", content)

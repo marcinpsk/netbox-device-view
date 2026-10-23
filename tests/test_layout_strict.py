@@ -449,6 +449,27 @@ class TestReviewFindings:
         elements = strict(text).front.elements
         assert [(e.key, e.label) for e in elements] == [("p1", "one"), ("p2", "two")]
 
+    @pytest.mark.parametrize(
+        ("field", "value", "limit"),
+        [
+            ("at", "row", MAX_CANVAS_ROWS),
+            ("at", "col", MAX_CANVAS_CELLS),
+            ("span", "rows", MAX_CANVAS_ROWS),
+            ("span", "cols", MAX_CANVAS_CELLS),
+        ],
+    )
+    def test_element_position_and_span_are_bounded(self, field, value, limit):
+        def place(n):
+            return layout(
+                lambda d: front(d).update(
+                    rows=[], elements=[{"key": "p1", field: {value: n}}]
+                )
+            )
+
+        strict(place(limit))
+        with pytest.raises(LayoutParseError, match=f"{field}.{value}"):
+            strict(place(limit + 1))
+
     def test_huge_generated_key_number_is_rejected(self):
         huge = 10**3000
         sequence = {"prefix": "p", "count": huge, "step": huge}

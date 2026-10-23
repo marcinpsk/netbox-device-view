@@ -1034,10 +1034,19 @@ def _expand_element(
     at = rules.optional_mapping(raw.get("at"), "at", f"{where}.at")
     span = rules.optional_mapping(raw.get("span"), "span", f"{where}.span")
 
-    row = rules.integer(at.get("row", default_row), f"{where}.at.row", 1)
-    col = rules.integer(at.get("col", default_col), f"{where}.at.col", 1)
-    row_span = rules.integer(span.get("rows", 1), f"{where}.span.rows", 1)
-    col_span = rules.integer(span.get("cols", 1), f"{where}.span.cols", 1)
+    # Elements may extend past their canvas, but not past the largest canvas.
+    row = rules.integer(
+        at.get("row", default_row), f"{where}.at.row", 1, MAX_CANVAS_ROWS
+    )
+    col = rules.integer(
+        at.get("col", default_col), f"{where}.at.col", 1, MAX_CANVAS_CELLS
+    )
+    row_span = rules.integer(
+        span.get("rows", 1), f"{where}.span.rows", 1, MAX_CANVAS_ROWS
+    )
+    col_span = rules.integer(
+        span.get("cols", 1), f"{where}.span.cols", 1, MAX_CANVAS_CELLS
+    )
 
     # key is required for port-like elements; optional for spacers/blanks
     key = raw.get("key", "")
