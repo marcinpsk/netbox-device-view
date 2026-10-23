@@ -32,6 +32,14 @@ from ..model import (
     PlacedElement,
 )
 
+# The CSS import profile accepts these selector classes and sizing properties.
+GRID_CLASSES = ("deviceview", "area")
+FRONT_CLASS = "dFront"
+REAR_CLASS = "dRear"
+MODULE_CLASS_PREFIX = "module"
+AUTO_SIZING_PROPERTIES = ("grid-auto-rows", "grid-auto-columns")
+_GRID_SELECTOR = "".join(f".{name}" for name in GRID_CLASSES)
+
 
 def render(layout: NormalizedLayout) -> str:
     """
@@ -46,9 +54,9 @@ def render(layout: NormalizedLayout) -> str:
     if layout.has_separate_faces():
         # Patch-panel style: front and rear are separate selectors
         if layout.front:
-            parts.append(_render_view(layout.front, selector_suffix=".dFront"))
+            parts.append(_render_view(layout.front, selector_suffix=f".{FRONT_CLASS}"))
         if layout.rear:
-            parts.append(_render_view(layout.rear, selector_suffix=".dRear"))
+            parts.append(_render_view(layout.rear, selector_suffix=f".{REAR_CLASS}"))
     else:
         # Single-face device (switch, router, firewall)
         view = layout.front or layout.rear
@@ -66,7 +74,7 @@ def render(layout: NormalizedLayout) -> str:
 
 def _render_view(view: LayoutView, selector_suffix: str) -> str:
     """Render a single LayoutView to a CSS block."""
-    selector = f".deviceview.area{selector_suffix}"
+    selector = f"{_GRID_SELECTOR}{selector_suffix}"
     grid_areas = _elements_to_grid_template_areas(view.elements, view.canvas)
     return _build_css_block(selector, view.canvas, grid_areas)
 
@@ -83,7 +91,8 @@ def _render_variant(
         merged[el.key] = el
     all_elements = list(merged.values())
 
-    selector = f".deviceview.module{variant_name}.area"
+    deviceview, area = GRID_CLASSES
+    selector = f".{deviceview}.{MODULE_CLASS_PREFIX}{variant_name}.{area}"
     grid_areas = _elements_to_grid_template_areas(all_elements, base_view.canvas)
     return _build_css_block(selector, base_view.canvas, grid_areas)
 
@@ -101,8 +110,7 @@ def _build_css_block(
 
     # Patch-panel views use auto sizing; standard views use fixed 20px cells
     if _is_patch_panel_canvas(canvas):
-        lines.append("    grid-auto-rows: auto;")
-        lines.append("    grid-auto-columns: auto;")
+        lines.extend(f"    {name}: auto;" for name in AUTO_SIZING_PROPERTIES)
 
     if grid_areas:
         area_lines = "\n".join(f'        "{row}"' for row in grid_areas)

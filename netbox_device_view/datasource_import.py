@@ -475,8 +475,9 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
     if not text.strip():
         raise ValidationError("The file is empty.")
     if source_file.format == Format.CSS:
+        css = normalize_grid_template_area(text)
         # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
-        yaml_layout, css = "", normalize_grid_template_area(text)
+        yaml_layout = ""
     else:
         try:
             yaml_layout, css = text, render_css(parse_yaml(text, strict=True))

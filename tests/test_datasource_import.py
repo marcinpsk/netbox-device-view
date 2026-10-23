@@ -761,6 +761,12 @@ class CssImportTests(DataSourceImportTestBase):
             "property": base.replace("{", "{ position: fixed;"),
             "image": base.replace("{", "{ background: linear-gradient(red, blue);"),
             "no-grid-area": ".deviceview.area { background: #000; }\n",
+            "escape": base.replace('"a b"', '"\\61  b"'),
+            "important": base.replace('";', '" !important;'),
+            "row-widths": base.replace('"a b"', '"a b" "c"'),
+            "sizing": base.replace("{", "{ grid-auto-rows: 20px;"),
+            "other-class": base.replace(".area", ".area.other"),
+            "type-selector": base.replace(".deviceview", "div.deviceview"),
         }
         for name, css in unsafe.items():
             with self.subTest(name):
@@ -777,6 +783,17 @@ class CssImportTests(DataSourceImportTestBase):
                 changed_object_type=ObjectType.objects.get_for_model(DeviceView)
             ).exists()
         )
+
+    def test_css_with_a_byte_order_mark_is_accepted(self):
+        css = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        self.write_file("examples/Cisco/bom.css", b"\xef\xbb\xbf" + css.encode())
+        self.source.sync()
+        self.apply(
+            self.review_token(
+                [(self.datafile("examples/Cisco/bom.css"), self.device_type)]
+            )
+        )
+        self.assertEqual(DeviceView.objects.get().grid_template_area, css)
 
     def test_stored_css_cannot_close_the_style_element(self):
         # The import rejects this CSS; a form, API or earlier record can still hold it.

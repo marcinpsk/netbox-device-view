@@ -12,12 +12,18 @@ from typing import Any
 
 import tinycss2
 
-from .parser import _IDENTIFIER, _VARIANT_NAME, LayoutParseError, _one_css_color
+from .parser import IDENTIFIER, VARIANT_NAME, LayoutParseError, one_css_color
+from .renderers.css_grid import (
+    AUTO_SIZING_PROPERTIES,
+    FRONT_CLASS,
+    GRID_CLASSES,
+    MODULE_CLASS_PREFIX,
+    REAR_CLASS,
+)
 
-_REQUIRED_CLASSES = {"deviceview", "area"}
-_FACE_CLASSES = {"dFront", "dRear"}
-_MODULE_CLASS = re.compile(f"module{_VARIANT_NAME.pattern}")
-_AUTO_SIZING = ("grid-auto-rows", "grid-auto-columns")
+_REQUIRED_CLASSES = set(GRID_CLASSES)
+_FACE_CLASSES = {FRONT_CLASS, REAR_CLASS}
+_MODULE_CLASS = re.compile(f"{MODULE_CLASS_PREFIX}{VARIANT_NAME.pattern}")
 _BACKGROUNDS = ("background", "background-color")
 _CSS_WHITESPACE = re.compile(r"[ \t\n\r\f]+")
 _EMPTY_CELL = re.compile(r"\.+")
@@ -40,26 +46,24 @@ def validate_css(css: str) -> None:
             raise LayoutParseError("CSS must not contain the HTML delimiters < or >.")
         if node.type == "url" or (node.type == "function" and node.lower_name == "url"):
             raise LayoutParseError("CSS must not contain a URL.")
-    rules = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
-    if not [rule for rule in rules if _check_rule(rule)]:
+    names_area = False
+    for rule in tinycss2.parse_stylesheet(
+        css, skip_comments=True, skip_whitespace=True
+    ):
+        names_area = _check_rule(rule) or names_area
+    if not names_area:
         raise LayoutParseError("The CSS must define at least one grid area.")
 
 
 def _check_rule(rule: Any) -> bool:
     """Check one rule; return True when it names a grid area."""
-    if rule.type == "error":
-        raise LayoutParseError(f"CSS parse error: {rule.message}")
-    if rule.type == "at-rule":
-        raise LayoutParseError(f"@{rule.at_keyword}: at-rules are not accepted.")
+    _reject_error_or_at_rule(rule)
     _check_selector(rule.prelude)
     names_area = False
     for item in tinycss2.parse_blocks_contents(
         rule.content, skip_comments=True, skip_whitespace=True
     ):
-        if item.type == "at-rule":
-            raise LayoutParseError(f"@{item.at_keyword}: at-rules are not accepted.")
-        if item.type == "error":
-            raise LayoutParseError(f"CSS parse error: {item.message}")
+        _reject_error_or_at_rule(item)
         if item.type != "declaration":
             raise LayoutParseError("Nested rules are not accepted.")
         if item.name.startswith("--"):
@@ -68,6 +72,13 @@ def _check_rule(rule: Any) -> bool:
             raise LayoutParseError(f"{item.name}: !important is not accepted.")
         names_area = _check_declaration(item) or names_area
     return names_area
+
+
+def _reject_error_or_at_rule(node: Any) -> None:
+    if node.type == "error":
+        raise LayoutParseError(f"CSS parse error: {node.message}")
+    if node.type == "at-rule":
+        raise LayoutParseError(f"@{node.at_keyword}: at-rules are not accepted.")
 
 
 def _check_declaration(declaration: Any) -> bool:
@@ -80,7 +91,7 @@ def _check_declaration(declaration: Any) -> bool:
     ]
     if name == "grid-template-areas":
         return _check_grid_areas(values)
-    if name in _AUTO_SIZING:
+    if name in AUTO_SIZING_PROPERTIES:
         if (
             len(values) != 1
             or values[0].type != "ident"
@@ -88,7 +99,7 @@ def _check_declaration(declaration: Any) -> bool:
         ):
             raise LayoutParseError(f"{declaration.name}: must be auto.")
     elif name in _BACKGROUNDS:
-        if _one_css_color(values) is None:
+        if one_css_color(values) is None:
             raise LayoutParseError(
                 f"{declaration.name}: must be one literal CSS color."
             )
@@ -110,7 +121,7 @@ def _check_grid_areas(values: list[Any]) -> bool:
             token.type != "string"
             or not cells
             or not all(
-                _IDENTIFIER.fullmatch(cell) or _EMPTY_CELL.fullmatch(cell)
+                IDENTIFIER.fullmatch(cell) or _EMPTY_CELL.fullmatch(cell)
                 for cell in cells
             )
         ):
@@ -123,7 +134,7 @@ def _check_grid_areas(values: list[Any]) -> bool:
         raise LayoutParseError(
             "grid-template-areas: every row must have the same number of cells."
         )
-    return any(_IDENTIFIER.fullmatch(cell) for row in rows for cell in row)
+    return any(IDENTIFIER.fullmatch(cell) for row in rows for cell in row)
 
 
 def _check_selector(prelude: list[Any]) -> None:
@@ -153,7 +164,7 @@ def _check_selector(prelude: list[Any]) -> None:
         or extra != faces | modules
         or len(faces) > 1
         or len(modules) > 1
-        or not all(_IDENTIFIER.fullmatch(name) for name in classes)
+        or not all(IDENTIFIER.fullmatch(name) for name in classes)
     ):
         raise LayoutParseError(
             f"{tinycss2.serialize(prelude).strip()!r:.80}: the selector must be one "
