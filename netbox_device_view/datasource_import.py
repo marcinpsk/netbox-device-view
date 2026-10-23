@@ -28,6 +28,8 @@ from .models import DeviceView, RenderMode
 SIGNING_SALT = "netbox_device_view.datasource_import.review"
 REVIEW_MAX_AGE_SECONDS = 15 * 60
 TARGET_UNAVAILABLE = "The device type is not available as an import target."
+NO_MATCH = "No device type matches this path."
+AMBIGUOUS_MATCH = "Several files below this directory match this device type."
 
 
 class Format(models.TextChoices):
@@ -63,15 +65,11 @@ class CatalogRow:
 
     @property
     def format(self) -> Format:
-        return FORMAT_SUFFIXES[PurePosixPath(self.datafile.path).suffix]
+        return _file_format(self.datafile.path)
 
     @property
     def is_selectable(self):
-        return (
-            self.suggestion is not None
-            and self.state == TargetState.NO_DEVICE_VIEW
-            and not self.problems
-        )
+        return self.state == TargetState.NO_DEVICE_VIEW and not self.problems
 
 
 @dataclass(frozen=True)
@@ -182,32 +180,39 @@ def catalog(user, source: DataSource, prefix: str, search: str = ""):
     return datafiles
 
 
-def suggest(user, source: DataSource, prefix: str, datafiles) -> list[CatalogRow]:
-    """Suggest a device type for each DataFile from its Manufacturer/Model path."""
+def permitted_device_types(user):
+    """Return the device types the user can view, limited to visible manufacturers."""
+    return DeviceType.objects.restrict(user, "view").filter(
+        manufacturer__in=Manufacturer.objects.restrict(user, "view")
+    )
+
+
+def catalog_rows(user, source: DataSource, prefix: str, datafiles) -> list[CatalogRow]:
+    """Return a catalog row with a suggested device type and its state for each DataFile."""
     matches = _match_paths(
         user, catalog(user, source, prefix).values_list("path", flat=True)
     )
     # A device type matched by several files below the prefix is ambiguous.
-    claims = Counter(device_type.pk for device_type in matches.values())
+    files_per_device_type = Counter(dt.pk for dt in matches.values())
     rows = [
         CatalogRow(datafile=datafile, suggestion=matches.get(datafile.path))
         for datafile in datafiles
     ]
-    existing = dict(
+    device_view_ids = dict(
         DeviceView.objects.filter(
             device_type__in=[row.suggestion for row in rows if row.suggestion]
         ).values_list("device_type", "pk")
     )
-    visible = DeviceView.objects.restrict(user, "view").in_bulk(existing.values())
+    visible = DeviceView.objects.restrict(user, "view").in_bulk(
+        device_view_ids.values()
+    )
     for row in rows:
         if row.suggestion is None:
-            row.problems.append("No device type matches this path.")
+            row.problems.append(NO_MATCH)
             continue
-        if claims[row.suggestion.pk] > 1:
-            row.problems.append(
-                "Several files below this directory match this device type."
-            )
-        device_view_id = existing.get(row.suggestion.pk)
+        if files_per_device_type[row.suggestion.pk] > 1:
+            row.problems.append(AMBIGUOUS_MATCH)
+        device_view_id = device_view_ids.get(row.suggestion.pk)
         if device_view_id is None:
             row.state = TargetState.NO_DEVICE_VIEW
         elif device_view_id in visible:
@@ -338,7 +343,7 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
         .only("path", "data")
         .first()
     )
-    if datafile is None or not datafile.path.endswith(tuple(FORMAT_SUFFIXES)):
+    if datafile is None or _file_format(datafile.path) is None:
         return None
     return _SourceFile(path=datafile.path, content=bytes(datafile.data))
 
@@ -353,6 +358,14 @@ def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
     return _Proposal(device_type=device_type, fields=fields)
 
 
+def _file_format(path: str) -> Format | None:
+    # Same rule as the catalog's path__endswith filter, so "Cisco/.yaml" is YAML too.
+    for suffix, file_format in FORMAT_SUFFIXES.items():
+        if path.endswith(suffix):
+            return file_format
+    return None
+
+
 def _match_paths(user, paths) -> dict[str, DeviceType]:
     """Map each "<Manufacturer>/<Model>.<ext>" path to the visible device type it names exactly."""
     keys = {}
@@ -362,13 +375,10 @@ def _match_paths(user, paths) -> dict[str, DeviceType]:
             keys[path] = (parts[-2], PurePosixPath(parts[-1]).stem)
     if not keys:
         return {}
-    manufacturers = Manufacturer.objects.restrict(user, "view").filter(
-        name__in={manufacturer for manufacturer, _ in keys.values()}
-    )
     device_types = (
-        DeviceType.objects.restrict(user, "view")
+        permitted_device_types(user)
         .filter(
-            manufacturer__in=manufacturers,
+            manufacturer__name__in={manufacturer for manufacturer, _ in keys.values()},
             model__in={model for _, model in keys.values()},
         )
         .select_related("manufacturer")
@@ -383,7 +393,7 @@ def _match_paths(user, paths) -> dict[str, DeviceType]:
 def _available_target(user, device_type_id) -> DeviceType | None:
     """Return a permitted device type without a device view, else None."""
     device_type = (
-        DeviceType.objects.restrict(user, "view")
+        permitted_device_types(user)
         .select_related("manufacturer")
         .filter(pk=device_type_id)
         .first()

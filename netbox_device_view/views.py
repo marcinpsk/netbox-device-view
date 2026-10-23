@@ -112,11 +112,11 @@ class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
         form = forms.DataSourceImportSourceForm(
             request.GET if "source" in request.GET else None, user=request.user
         )
-        search = request.GET.get("q", "").strip()
-        context = {"form": form, "search": search}
+        context = {"form": form}
         if form.is_bound and form.is_valid():
             source = form.cleaned_data["source"]
             prefix = form.cleaned_data["prefix"]
+            search = form.cleaned_data["q"]
             paginator = EnhancedPaginator(
                 datasource_import.catalog(request.user, source, prefix, search),
                 get_paginate_count(request),
@@ -124,7 +124,7 @@ class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
             page = paginator.get_page(request.GET.get("page"))
             context["paginator"] = paginator
             context["page"] = page
-            context["rows"] = datasource_import.suggest(
+            context["rows"] = datasource_import.catalog_rows(
                 request.user, source, prefix, page.object_list
             )
         return render(request, "netbox_device_view/datasource_import.html", context)
@@ -163,17 +163,12 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
                 request.POST, user=request.user, datafiles=datafiles
             )
         else:
-            rows = datasource_import.suggest(request.user, source, prefix, datafiles)
             target_form = forms.DataSourceImportTargetForm(
                 user=request.user,
                 datafiles=datafiles,
-                initial={
-                    forms.DataSourceImportTargetForm.field_name(row.datafile.pk): (
-                        row.suggestion.pk
-                    )
-                    for row in rows
-                    if row.is_selectable
-                },
+                catalog_rows=datasource_import.catalog_rows(
+                    request.user, source, prefix, datafiles
+                ),
             )
         review = None
         if target_form.is_bound and target_form.is_valid():

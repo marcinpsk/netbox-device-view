@@ -372,9 +372,7 @@ class SuggestionTests(DataSourceImportTestBase):
         for path in paths:
             with self.subTest(path=path):
                 self.assertIsNone(rows[path].suggestion)
-                self.assertEqual(
-                    rows[path].problems, ["No device type matches this path."]
-                )
+                self.assertEqual(rows[path].problems, [datasource_import.NO_MATCH])
                 self.assertFalse(rows[path].is_selectable)
         self.assertEqual(rows[EXAMPLE_PATH].suggestion, self.device_type)
         self.assertFalse(Manufacturer.objects.filter(name="cisco").exists())
@@ -407,12 +405,11 @@ class SuggestionTests(DataSourceImportTestBase):
         other_path = "examples/Cisco/C9300-24T.yml"
         self.write_file(other_path, EXAMPLE_YAML.read_bytes())
         self.source.sync()
-        conflict = "Several files below this directory match this device type."
         for params in ({}, {"q": ".yml"}):
             with self.subTest(params=params):
                 for row in self.rows(**params).values():
                     self.assertEqual(row.suggestion, self.device_type)
-                    self.assertEqual(row.problems, [conflict])
+                    self.assertEqual(row.problems, [datasource_import.AMBIGUOUS_MATCH])
                     self.assertFalse(row.is_selectable)
         datafiles = [self.datafile(), self.datafile(other_path)]
         match = self.match(datafiles)
@@ -429,10 +426,12 @@ class SuggestionTests(DataSourceImportTestBase):
                     object_types=ObjectType.objects.get_for_model(model)
                 )
                 permissions.update(constraints=constraints)
-                row = self.rows()[EXAMPLE_PATH]
-                self.assertIsNone(row.suggestion)
-                self.assertFalse(row.is_selectable)
-                permissions.update(constraints=None)
+                try:
+                    row = self.rows()[EXAMPLE_PATH]
+                    self.assertIsNone(row.suggestion)
+                    self.assertFalse(row.is_selectable)
+                finally:
+                    permissions.update(constraints=None)
 
     def test_visible_existing_device_view_is_shown_and_not_preselected(self):
         device_view = DeviceView.objects.create(
@@ -464,6 +463,33 @@ class SuggestionTests(DataSourceImportTestBase):
         review = self.review([(self.datafile(), self.device_type)]).context["review"]
         self.assertEqual(review.rows[0].error, datasource_import.TARGET_UNAVAILABLE)
         self.assert_preselected(self.match([self.datafile()]), self.datafile(), None)
+
+    def test_file_named_only_by_its_suffix_is_listed(self):
+        # Native sync skips dotfiles; other DataFile writers may not.
+        for path in ("examples/Cisco/.yaml", "examples/.yml"):
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+            datafile = DataFile(source=self.source, path=path)
+            datafile.refresh_from_disk(self.repo)
+            datafile.save()
+        rows = self.rows()
+        for path in ("examples/Cisco/.yaml", "examples/.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(rows[path].format, datasource_import.Format.YAML)
+                self.assertIsNone(rows[path].suggestion)
+
+    def test_device_type_of_hidden_manufacturer_is_not_a_permitted_target(self):
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(Manufacturer)
+        ).update(constraints={"name": "Other"})
+        self.assertIsNone(self.rows()[EXAMPLE_PATH].suggestion)
+        response = self.review([(self.datafile(), self.device_type)])
+        self.assertIsNone(response.context["review"])
+        self.assertTrue(response.context["target_form"].errors)
+        selection = datasource_import.Selection(
+            datafile_id=self.datafile().pk, device_type_id=self.device_type.pk
+        )
+        review = datasource_import.review(self.user, self.source, [selection])
+        self.assertEqual(review.rows[0].error, datasource_import.TARGET_UNAVAILABLE)
 
     def test_search_filters_paths_and_keeps_pagination(self):
         # The paginator keeps up to five orphans on the last page.

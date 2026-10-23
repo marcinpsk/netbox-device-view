@@ -31,7 +31,7 @@
               <input type="hidden" name="source" value="{{ form.cleaned_data.source.pk }}">
               <input type="hidden" name="prefix" value="{{ form.cleaned_data.prefix }}">
               <div class="input-group">
-                <input type="search" name="q" value="{{ search }}" class="form-control" placeholder="{% trans "Search paths" %}" aria-label="{% trans "Search paths" %}">
+                <input type="search" name="q" value="{{ form.cleaned_data.q }}" class="form-control" placeholder="{% trans "Search paths" %}" aria-label="{% trans "Search paths" %}">
                 <button type="submit" class="btn btn-outline-primary">{% trans "Search" %}</button>
               </div>
             </form>
@@ -49,7 +49,7 @@
                     <th scope="col">{% trans "Path" %}</th>
                     <th scope="col">{% trans "Format" %}</th>
                     <th scope="col">{% trans "Suggested device type" %}</th>
-                    <th scope="col">{% trans "Definition" %}</th>
+                    <th scope="col">{% trans "Device view" %}</th>
                     <th scope="col">{% trans "Problems" %}</th>
                   </tr>
                 </thead>
@@ -82,7 +82,7 @@
                   {% empty %}
                     <tr>
                       <td colspan="6" class="text-muted">
-                        {% if search %}
+                        {% if form.cleaned_data.q %}
                           {% trans "No layout files match the search." %}
                         {% else %}
                           {% trans "No YAML layout files below this directory." %}
