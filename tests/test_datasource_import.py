@@ -31,6 +31,8 @@ from netbox_device_view.models import DeviceView, RenderMode
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXAMPLE_YAML = EXAMPLES / "yaml" / "Cisco" / "C9300-24T.yaml"
 EXAMPLE_PATH = "examples/yaml/Cisco/C9300-24T.yaml"
+EXAMPLE_CSS = EXAMPLES / "Cisco" / "C9300-24T.css"
+EXAMPLE_CSS_PATH = "examples/Cisco/C9300-24T.css"
 
 START_URL = "plugins:netbox_device_view:deviceview_datasource_import"
 REVIEW_URL = "plugins:netbox_device_view:deviceview_datasource_import_review"
@@ -252,7 +254,7 @@ class CatalogTests(DataSourceImportTestBase):
         response = self.client.get(
             reverse(START_URL), {"source": self.source.pk, "prefix": "nothing/"}
         )
-        self.assertContains(response, "No YAML layout files below this directory.")
+        self.assertContains(response, "No layout files below this directory.")
         self.assertNotContains(response, "Assign device types")
 
     def test_datafile_hidden_by_permission_constraint_is_not_readable(self):
@@ -507,6 +509,128 @@ class SuggestionTests(DataSourceImportTestBase):
         empty = self.catalog(q="nothing-matches")
         self.assertContains(empty, "No layout files match the search.")
         self.assertNotContains(empty, "Assign device types")
+
+
+class CssImportTests(DataSourceImportTestBase):
+    def setUp(self):
+        super().setUp()
+        self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
+        self.source.sync()
+
+    def test_import_one_css_layout_end_to_end(self):
+        css = EXAMPLE_CSS.read_text()
+        catalog = self.client.get(
+            reverse(START_URL),
+            {"source": self.source.pk, "prefix": "examples/", "q": ".css"},
+        )
+        (row,) = catalog.context["rows"]
+        self.assertEqual(row.datafile.path, EXAMPLE_CSS_PATH)
+        self.assertEqual(row.format, datasource_import.Format.CSS)
+        self.assertContains(catalog, "<td>CSS</td>", html=True)
+
+        datafile = self.datafile(EXAMPLE_CSS_PATH)
+        review = self.review([(datafile, self.device_type)])
+        (reviewed,) = review.context["review"].rows
+        self.assertEqual(reviewed.error, "")
+        self.assertEqual(reviewed.format, datasource_import.Format.CSS)
+        self.assertEqual(reviewed.render_mode_label, RenderMode.CSS.label)
+        self.assertContains(review, "<td>CSS</td>", html=True)
+        self.assertEqual(self.apply(review.context["review"].token).status_code, 200)
+
+        device_view = DeviceView.objects.get(device_type=self.device_type)
+        self.assertEqual(device_view.grid_template_area, css)
+        self.assertEqual(device_view.yaml_layout, "")
+        self.assertEqual(device_view.render_mode, RenderMode.CSS)
+        tab = self.client.get(
+            reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
+        )
+        self.assertEqual(tab.status_code, 200)
+        first_row = re.search(r'grid-template-areas:\s*"([^"]+)"', css)
+        self.assertContains(tab, first_row.group(1))
+
+    def test_css_whitespace_is_normalized(self):
+        raw = '.deviceview.area {\n  grid-template-areas: "a\u00a0b\u2009c";\n}\n'
+        self.write_file("examples/Cisco/spaces.css", raw.encode())
+        self.source.sync()
+        token = self.review_token(
+            [(self.datafile("examples/Cisco/spaces.css"), self.device_type)]
+        )
+        self.apply(token)
+        self.assertEqual(
+            DeviceView.objects.get().grid_template_area,
+            '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
+        )
+
+    def test_empty_or_non_utf8_css_is_rejected(self):
+        self.write_file("examples/empty.css", b" \n\t\n")
+        self.write_file(
+            "examples/latin1.css", ".deviceview.area { caf\xe9 }".encode("latin-1")
+        )
+        self.source.sync()
+        for path in ("examples/empty.css", "examples/latin1.css"):
+            with self.subTest(path=path):
+                review = self.review([(self.datafile(path), self.device_type)])
+                self.assertTrue(review.context["review"].rows[0].error)
+                self.assertEqual(review.context["review"].token, "")
+
+    def test_bundled_css_examples_pass_review(self):
+        selections = []
+        for example in sorted(EXAMPLES.glob("*/*.css")):
+            path = f"examples/{example.relative_to(EXAMPLES)}"
+            self.write_file(path, example.read_bytes())
+            manufacturer, _ = Manufacturer.objects.get_or_create(
+                name=example.parent.name,
+                defaults={"slug": slugify(example.parent.name)},
+            )
+            device_type, _ = DeviceType.objects.get_or_create(
+                manufacturer=manufacturer,
+                model=example.stem,
+                defaults={"slug": slugify(example.stem)},
+            )
+            selections.append((path, device_type))
+        self.source.sync()
+        self.assertGreater(len(selections), 10)
+        review = self.review(
+            [(self.datafile(path), device_type) for path, device_type in selections]
+        ).context["review"]
+        self.assertEqual([row.error for row in review.rows], [""] * len(selections))
+        self.assertTrue(review.token)
+
+    def test_mixed_yaml_and_css_selection(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        token = self.review_token(
+            [
+                (self.datafile(), self.device_type),
+                (self.datafile(EXAMPLE_CSS_PATH), other),
+            ]
+        )
+        self.assertEqual(self.apply(token).status_code, 200)
+        from_yaml = DeviceView.objects.get(device_type=self.device_type)
+        from_css = DeviceView.objects.get(device_type=other)
+        self.assertEqual(from_yaml.yaml_layout, EXAMPLE_YAML.read_text())
+        self.assertEqual(from_css.yaml_layout, "")
+        self.assertEqual(from_css.grid_template_area, EXAMPLE_CSS.read_text())
+
+    def test_yaml_and_css_for_one_model_are_ambiguous(self):
+        response = self.client.get(
+            reverse(START_URL), {"source": self.source.pk, "prefix": "examples/"}
+        )
+        rows = {row.datafile.path: row for row in response.context["rows"]}
+        for path in (EXAMPLE_PATH, EXAMPLE_CSS_PATH):
+            with self.subTest(path=path):
+                self.assertEqual(rows[path].suggestion, self.device_type)
+                self.assertEqual(
+                    rows[path].problems, [datasource_import.AMBIGUOUS_MATCH]
+                )
+        review = self.review(
+            [
+                (self.datafile(), self.device_type),
+                (self.datafile(EXAMPLE_CSS_PATH), self.device_type),
+            ]
+        ).context["review"]
+        self.assertEqual(review.token, "")
 
 
 class ReviewTests(DataSourceImportTestBase):

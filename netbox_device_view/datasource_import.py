@@ -24,6 +24,7 @@ from django.db.models import Q
 
 from .layout import LayoutParseError, parse_yaml, render_css
 from .models import DeviceView, RenderMode
+from .utils import normalize_grid_template_area
 
 SIGNING_SALT = "netbox_device_view.datasource_import.review"
 REVIEW_MAX_AGE_SECONDS = 15 * 60
@@ -34,9 +35,10 @@ AMBIGUOUS_MATCH = "Several files below this directory match this device type."
 
 class Format(models.TextChoices):
     YAML = "yaml", "YAML"
+    CSS = "css", "CSS"
 
 
-FORMAT_SUFFIXES = {".yaml": Format.YAML, ".yml": Format.YAML}
+FORMAT_SUFFIXES = {".yaml": Format.YAML, ".yml": Format.YAML, ".css": Format.CSS}
 
 
 class ImportRejected(Exception):
@@ -105,6 +107,7 @@ class ReviewRow:
     datafile_id: int
     action: Action
     path: str = ""
+    format: Format | None = None
     device_type: DeviceType | None = None
     proposed_fields: dict[str, str] = field(default_factory=dict)
     error: str = ""
@@ -130,6 +133,7 @@ class Review:
 @dataclass(frozen=True)
 class _SourceFile:
     path: str
+    format: Format
     content: bytes
 
     @property
@@ -238,6 +242,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             row.error = "The file is not available in this Data Source."
             continue
         row.path = source_file.path
+        row.format = source_file.format
         try:
             proposal = _propose(user, source_file, selection.device_type_id)
         except ValidationError as exc:
@@ -343,9 +348,12 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile | None:
         .only("path", "data")
         .first()
     )
-    if datafile is None or _file_format(datafile.path) is None:
+    file_format = None if datafile is None else _file_format(datafile.path)
+    if file_format is None:
         return None
-    return _SourceFile(path=datafile.path, content=bytes(datafile.data))
+    return _SourceFile(
+        path=datafile.path, format=file_format, content=bytes(datafile.data)
+    )
 
 
 def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
@@ -353,7 +361,7 @@ def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
     device_type = _available_target(user, device_type_id)
     if device_type is None:
         raise ValidationError(TARGET_UNAVAILABLE)
-    fields = _proposed_fields(source_file.content)
+    fields = _proposed_fields(source_file)
     DeviceView(device_type=device_type, **fields).full_clean(validate_unique=False)
     return _Proposal(device_type=device_type, fields=fields)
 
@@ -407,13 +415,20 @@ def _available_target(user, device_type_id) -> DeviceType | None:
     return device_type
 
 
-def _proposed_fields(raw: bytes) -> dict[str, str]:
+def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
     try:
-        text = raw.decode("utf-8-sig")
+        text = source_file.content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValidationError("The file is not valid UTF-8 text.") from exc
     if not text.strip():
         raise ValidationError("The file is empty.")
+    if source_file.format == Format.CSS:
+        # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
+        return {
+            "yaml_layout": "",
+            "grid_template_area": normalize_grid_template_area(text),
+            "render_mode": RenderMode.CSS.value,
+        }
     try:
         css = render_css(parse_yaml(text))
     except LayoutParseError as exc:
