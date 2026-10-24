@@ -261,7 +261,10 @@ class _Rules:
         self, raw: Any, where: str, minimum: int = 0, maximum: int | None = None
     ) -> int:
         if not self.strict:
-            return int(raw)
+            try:
+                return int(raw)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise LayoutParseError(f"{where}: must be an integer.") from exc
         if (
             type(raw) is not int
             or raw < minimum

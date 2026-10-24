@@ -44,6 +44,17 @@ class TestVersion:
         with pytest.raises(LayoutParseError, match="Unsupported layout version"):
             _parse("version: 99\nviews: {}")
 
+    @pytest.mark.parametrize("value", ["abc", "null", "[1]", ".inf", ".nan"])
+    def test_non_integer_version_raises_parse_error(self, value):
+        with pytest.raises(LayoutParseError, match="version: must be an integer"):
+            _parse(f"version: {value}\nviews: {{}}")
+
+    def test_non_integer_field_raises_parse_error(self):
+        with pytest.raises(
+            LayoutParseError, match="canvas.columns: must be an integer"
+        ):
+            _parse("canvas:\n  columns: abc\nviews: {}")
+
     def test_non_mapping_raises(self):
         with pytest.raises(LayoutParseError, match="must be a YAML mapping"):
             _parse("- item1\n- item2")
