@@ -850,3 +850,13 @@ views:
         svg = _render(yaml)
         # Background colour must appear (escaped) in the SVG
         assert "#d9d9d9" in svg or "d9d9d9" in svg
+
+
+def test_css_classes_of_a_lenient_local_layout_are_escaped():
+    layout = parse(
+        "views:\n  front:\n    elements:\n"
+        "      - {key: p1, css_classes: ['x\" onmouseover=\"alert(1)']}\n"
+    )
+    svg = render(layout)
+    assert 'onmouseover="alert(1)' not in svg
+    assert "x&quot; onmouseover=&quot;alert(1)" in svg
