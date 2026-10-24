@@ -745,6 +745,18 @@ class CssImportTests(DataSourceImportTestBase):
             '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
         )
 
+    def test_css_line_endings_are_normalized(self):
+        expected = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        for name, newline in (("crlf", "\r\n"), ("cr", "\r"), ("form-feed", "\f")):
+            with self.subTest(name):
+                DeviceView.objects.all().delete()
+                path = f"examples/Cisco/{name}.css"
+                self.write_file(path, expected.replace("\n", newline).encode())
+                self.source.sync()
+                token = self.review_token([(self.datafile(path), self.device_type)])
+                self.assertEqual(self.apply(token).status_code, 200)
+                self.assertEqual(DeviceView.objects.get().grid_template_area, expected)
+
     def test_unsafe_css_is_rejected_before_any_write(self):
         base = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
         unsafe = {

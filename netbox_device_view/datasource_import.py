@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -53,6 +54,8 @@ class Format(models.TextChoices):
 
 
 FORMAT_SUFFIXES = {".yaml": Format.YAML, ".yml": Format.YAML, ".css": Format.CSS}
+# tinycss2 reads these as "\n", and validate_css requires an unchanged round trip.
+CSS_NEWLINES = re.compile(r"\r\n?|\f")
 
 
 class ImportRejected(Exception):
@@ -475,7 +478,7 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
     if not text.strip():
         raise ValidationError("The file is empty.")
     if source_file.format == Format.CSS:
-        css = normalize_grid_template_area(text)
+        css = normalize_grid_template_area(CSS_NEWLINES.sub("\n", text))
         # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
         yaml_layout = ""
     else:
