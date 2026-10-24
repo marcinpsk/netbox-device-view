@@ -20,7 +20,7 @@ from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
-from django.db.models.signals import post_init, post_save, pre_save
+from django.db.models.signals import post_save, pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -169,15 +169,18 @@ class DataSourceImportTestBase(TestCase):
         return self.client.post(reverse(APPLY_URL), {"token": token})
 
     def delete_when_read(self, datafile):
-        """Delete the DataFile after the import reads its row and before it loads the content."""
+        """Delete the DataFile just before the import loads its deferred content."""
+        deleted = []
 
-        def delete(sender, instance, **kwargs):
-            if instance.pk == datafile.pk and "data" in instance.get_deferred_fields():
-                post_init.disconnect(delete, sender=DataFile)
+        def delete_first(execute, sql, params, many, context):
+            # Only the deferred load selects the data column without LENGTH().
+            if not deleted and '"core_datafile"."data"' in sql and "LENGTH" not in sql:
+                deleted.append(datafile.pk)
                 DataFile.objects.filter(pk=datafile.pk).delete()
+            return execute(sql, params, many, context)
 
-        post_init.connect(delete, sender=DataFile, weak=False)
-        self.addCleanup(post_init.disconnect, delete, sender=DataFile)
+        self.enterContext(connection.execute_wrapper(delete_first))
+        self.addCleanup(self.assertEqual, deleted, [datafile.pk])
 
     def assert_rejected(self, response):
         self.assertEqual(response.status_code, 400)
