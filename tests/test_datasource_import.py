@@ -1921,10 +1921,13 @@ class DriftTests(ReplacementTestBase):
         self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
 
     def test_delete_after_review_is_drift(self):
-        self.existing()
+        # CSS rendering keeps the render-mode check equal, so the baseline check decides.
+        self.existing(render_mode=RenderMode.CSS)
         review = self.replace()
         DeviceView.objects.all().delete()
-        self.assert_stale(self.apply_page(review))
+        response = self.apply_page(review)
+        self.assert_stale(response)
+        self.assertContains(response, datasource_import.STALE_TARGET, status_code=400)
         self.assertFalse(DeviceView.objects.exists())
 
     def test_device_view_moved_to_another_type_after_review_is_drift(self):
