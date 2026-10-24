@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.forms import DataSourceImportSourceForm
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
@@ -9,21 +11,20 @@ from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEM
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_import_page_states_the_code_limits():
-    page = (ROOT / "docs" / "import-from-data-source.md").read_text()
-    prefix = DataSourceImportSourceForm.base_fields["prefix"].initial
-    for statement in (
-        f"The default prefix is `{prefix}`.",
-        (
-            f"at most {datasource_import.MAX_FILE_BYTES // 1024} KiB per file, "
-            f"{datasource_import.MAX_BATCH_BYTES // 1024 // 1024} MiB and "
-            f"{datasource_import.MAX_BATCH_ROWS} files per import, "
-            f"{MAX_CANVAS_CELLS} cells per canvas, and "
-            f"{MAX_EXPANDED_ELEMENTS} expanded elements per layout."
-        ),
-        f"a review is valid for {datasource_import.REVIEW_MAX_AGE_SECONDS // 60} minutes",
-    ):
-        assert statement in page
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"default prefix is `{DataSourceImportSourceForm.base_fields['prefix'].initial}`",
+        f"{datasource_import.MAX_FILE_BYTES // 1024} KiB per file",
+        f"{datasource_import.MAX_BATCH_BYTES // 1024 // 1024} MiB",
+        f"{datasource_import.MAX_BATCH_ROWS} files per import",
+        f"{MAX_CANVAS_CELLS} cells per canvas",
+        f"{MAX_EXPANDED_ELEMENTS} expanded elements per layout",
+        f"valid for {datasource_import.REVIEW_MAX_AGE_SECONDS // 60} minutes",
+    ],
+)
+def test_import_page_states_the_code_limits(statement):
+    assert statement in (ROOT / "docs" / "import-from-data-source.md").read_text()
 
 
 def test_requirements_state_the_minimum_netbox_version():
