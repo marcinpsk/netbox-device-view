@@ -20,10 +20,11 @@
             <th scope="col" style="width: 1%">{% trans "Keep" %}</th>
             <th scope="col">{% trans "Path" %}</th>
             <th scope="col" class="w-50">{% trans "Device type" %}</th>
+            <th scope="col">{% trans "Existing device view" %}</th>
           </tr>
         </thead>
         <tbody>
-          {% for datafile, field in target_form.rows %}
+          {% for datafile, field, replace in target_form.rows %}
             <tr>
               <td>
                 <input type="checkbox" class="form-check-input" name="file" value="{{ datafile.pk }}" id="keep-{{ datafile.pk }}" checked aria-label="{% trans "Keep" %} {{ datafile.path }}">
@@ -32,6 +33,12 @@
               <td>
                 {{ field }}
                 {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+              </td>
+              <td>
+                <div class="form-check mb-0">
+                  <input type="checkbox" class="form-check-input" name="{{ replace.html_name }}" id="{{ replace.auto_id }}"{% if replace.value %} checked{% endif %}>
+                  <label class="form-check-label" for="{{ replace.auto_id }}">{% trans "Replace" %}</label>
+                </div>
               </td>
             </tr>
           {% endfor %}
@@ -52,7 +59,8 @@
           <div class="alert alert-danger">{{ error }}</div>
         {% endfor %}
         <div class="alert alert-info mb-0">
-          {% trans "A Device View applies to every device of its device type." %}
+          {% trans "A device view applies to every device of its device type. A replacement changes the view of every device of that type." %}
+          {% trans "Rows with an existing device view are skipped unless you choose Replace." %}
         </div>
       </div>
       <div class="table-responsive">
@@ -73,11 +81,13 @@
                 <td class="font-monospace">{{ row.path|default:row.datafile_id }}</td>
                 <td>{{ row.format.label|placeholder }}</td>
                 <td>{% if row.device_type %}{{ row.device_type.manufacturer }} {{ row.device_type.model }}{% else %}{{ ''|placeholder }}{% endif %}</td>
-                <td>{{ row.action.label }}</td>
+                <td>{{ row.action.label|placeholder }}</td>
                 <td>{{ row.render_mode_label|placeholder }}</td>
                 <td>
                   {% if row.error %}
                     <span class="text-danger">{{ row.error }}</span>
+                  {% elif row.is_skipped %}
+                    <span class="text-muted">{% trans "Not applied" %}</span>
                   {% else %}
                     <span class="text-success">{% trans "Ready" %}</span>
                   {% endif %}
@@ -86,13 +96,29 @@
               {% if row.proposed_fields and not row.error %}
                 <tr>
                   <td colspan="6">
-                    <details>
-                      <summary>{% trans "Proposed fields" %}</summary>
-                      {% for name, value in row.proposed_fields.items %}
-                        <h3 class="h6 mt-2">{{ name }}</h3>
-                        <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{{ value }}</pre>
-                      {% endfor %}
-                    </details>
+                    {% if not row.current_fields %}
+                      <details>
+                        <summary>{% trans "Proposed fields" %}</summary>
+                        {% for name, value in row.proposed_fields.items %}
+                          <h3 class="h6 mt-2">{{ name }}</h3>
+                          <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{{ value }}</pre>
+                        {% endfor %}
+                      </details>
+                    {% elif row.changes %}
+                      <details>
+                        <summary>
+                          {% trans "Changed fields:" %}
+                          {% for change in row.changes %}<span class="font-monospace">{{ change.name }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+                        </summary>
+                        {% for change in row.changes %}
+                          <h3 class="h6 mt-2">{{ change.name }}</h3>
+                          <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{% for kind, line in change.lines %}<span class="{% if kind == 'add' %}text-success{% elif kind == 'remove' %}text-danger{% elif kind == 'hunk' %}text-muted{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+                        {% endfor %}
+                      </details>
+                    {% else %}
+                      <span class="text-muted">{% trans "The device view already has these fields." %}</span>
+                    {% endif %}
                   </td>
                 </tr>
               {% endif %}
@@ -108,6 +134,8 @@
             {% include 'netbox_device_view/inc/datasource_import_selection.html' %}
             <button type="submit" class="btn btn-success">{% trans "Apply import" %}</button>
           </form>
+        {% elif review.is_valid %}
+          <span class="text-muted">{% trans "Nothing to apply: every selected row is skipped." %}</span>
         {% else %}
           <span class="text-danger">{% trans "Correct the errors above and review again." %}</span>
         {% endif %}

@@ -9,18 +9,20 @@
       {% trans "The import was rejected. No records were changed." %} {{ error }}
     </div>
   {% else %}
-    <div class="card">
-      <h2 class="card-header">
-        {% blocktrans count counter=created|length %}Created {{ counter }} device view{% plural %}Created {{ counter }} device views{% endblocktrans %}
-      </h2>
-      <ul class="list-group list-group-flush">
-        {% for device_view, visible in created %}
-          <li class="list-group-item">
-            {% if visible %}<a href="{{ device_view.get_absolute_url }}">{{ device_view }}</a>{% else %}{{ device_view }}{% endif %}
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
+    {% for label, device_views in outcomes %}
+      <div class="card">
+        <h2 class="card-header">{{ label }}: {{ device_views|length }}</h2>
+        {% if device_views %}
+          <ul class="list-group list-group-flush">
+            {% for device_view, visible in device_views %}
+              <li class="list-group-item">
+                {% if visible %}<a href="{{ device_view.get_absolute_url }}">{{ device_view }}</a>{% else %}{{ device_view }}{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    {% endfor %}
   {% endif %}
   <div class="btn-list mt-3">
     {% if target_form %}

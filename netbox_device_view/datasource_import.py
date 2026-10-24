@@ -7,11 +7,15 @@ transactional apply. Views call it and only handle forms and display.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+import difflib
 import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import PurePosixPath
 
 from core.choices import DataSourceStatusChoices
@@ -45,7 +49,17 @@ BATCH_TOO_LARGE = (
 )
 TOO_MANY_ROWS = f"Select at most {MAX_BATCH_ROWS} files in one import."
 FILE_UNAVAILABLE = "The file is not available in this Data Source."
+REVIEW_AGAIN = "Review the import again."
+INVALID_TOKEN = "The review token is not valid."
+STALE_TARGET = (
+    f"the device view or its device type changed after review. {REVIEW_AGAIN}"
+)
+CONCURRENT_CREATE = (
+    "another change created a device view for this device type during the import. "
+    + REVIEW_AGAIN
+)
 REPEATED_FILE = "Each file can be selected only once."
+IMPORTED_FIELDS = ("yaml_layout", "grid_template_area", "render_mode")
 
 
 class Format(models.TextChoices):
@@ -64,6 +78,15 @@ class ImportRejected(Exception):
 
 class Action(models.TextChoices):
     CREATE = "create", "Create"
+    REPLACE = "replace", "Replace"
+    UNCHANGED = "unchanged", "Unchanged"
+    SKIP = "skip", "Skip"
+
+
+# The object permission action that each writing action needs.
+ACTION_PERMISSIONS = {Action.CREATE: "add", Action.REPLACE: "change"}
+# The permission that a replayed row needs on a record that already has its fields.
+REPLAY_PERMISSIONS = {**ACTION_PERMISSIONS, Action.UNCHANGED: "view"}
 
 
 class TargetState(models.TextChoices):
@@ -88,14 +111,14 @@ class CatalogRow:
 
     @property
     def is_selectable(self):
-        return self.state == TargetState.NO_DEVICE_VIEW and not self.problems
+        return not self.problems
 
 
 @dataclass(frozen=True)
 class Selection:
     datafile_id: int
     device_type_id: int
-    action: Action = Action.CREATE
+    replace: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,6 +131,7 @@ class ReviewedRow:
     device_type_id: int
     action: Action
     render_mode: str
+    baseline: str
 
     def to_payload(self) -> dict:
         return dataclasses.asdict(self)
@@ -117,15 +141,24 @@ class ReviewedRow:
         return cls(**{**payload, "action": Action(payload["action"])})
 
 
+@dataclass(frozen=True)
+class FieldChange:
+    """One imported field that a review row changes, with its unified diff lines."""
+
+    name: str
+    lines: list[tuple[str, str]]
+
+
 @dataclass
 class ReviewRow:
     """One row of the review page."""
 
     datafile_id: int
-    action: Action
+    action: Action | None = None
     path: str = ""
     format: Format | None = None
     device_type: DeviceType | None = None
+    current_fields: dict[str, str] = field(default_factory=dict)
     proposed_fields: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
@@ -133,7 +166,24 @@ class ReviewRow:
     def render_mode_label(self):
         if not self.proposed_fields:
             return ""
-        return RenderMode(self.proposed_fields["render_mode"]).label
+        proposed = RenderMode(self.proposed_fields["render_mode"]).label
+        current = self.current_fields.get("render_mode")
+        if current is None or current == self.proposed_fields["render_mode"]:
+            return proposed
+        return f"{RenderMode(current).label} → {proposed}"
+
+    @property
+    def is_skipped(self):
+        return self.action == Action.SKIP
+
+    @cached_property
+    def changes(self) -> list[FieldChange]:
+        """Return a line diff for each imported field that differs from the current record."""
+        return [
+            FieldChange(name, _diff_lines(self.current_fields[name], value))
+            for name, value in self.proposed_fields.items()
+            if self.current_fields and self.current_fields[name] != value
+        ]
 
 
 @dataclass
@@ -152,6 +202,17 @@ class Review:
         )
 
 
+@dataclass
+class ApplyResult:
+    created: list[DeviceView] = field(default_factory=list)
+    updated: list[DeviceView] = field(default_factory=list)
+    unchanged: list[DeviceView] = field(default_factory=list)
+
+    @property
+    def device_views(self):
+        return self.created + self.updated + self.unchanged
+
+
 @dataclass(frozen=True)
 class _SourceFile:
     path: str
@@ -166,7 +227,15 @@ class _SourceFile:
 @dataclass(frozen=True)
 class _Proposal:
     device_type: DeviceType
+    device_view: DeviceView | None
+    action: Action
     fields: dict[str, str]
+    baseline: str
+
+
+def can_import(user) -> bool:
+    """Return True when the user may add or change device views, so an import can do something."""
+    return any(_has_permission(user, action) for action in ACTION_PERMISSIONS)
 
 
 def importable_sources(user):
@@ -259,7 +328,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
     rows = []
     reviewed = []
     for selection in selections:
-        row = ReviewRow(datafile_id=selection.datafile_id, action=selection.action)
+        row = ReviewRow(datafile_id=selection.datafile_id)
         rows.append(row)
         try:
             source_file = _read_source_file(user, source, selection.datafile_id)
@@ -269,20 +338,28 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
         row.path = source_file.path
         row.format = source_file.format
         try:
-            proposal = _propose(user, source_file, selection.device_type_id)
+            proposal = _propose(
+                user, source_file, selection.device_type_id, replace=selection.replace
+            )
         except ValidationError as exc:
             row.error = " ".join(exc.messages)
             continue
+        row.action = proposal.action
         row.device_type = proposal.device_type
         row.proposed_fields = proposal.fields
+        if proposal.device_view is not None:
+            row.current_fields = _imported_fields(proposal.device_view)
+        if proposal.action == Action.SKIP:
+            continue
         reviewed.append(
             ReviewedRow(
                 datafile_id=selection.datafile_id,
                 path=source_file.path,
                 sha256=source_file.sha256,
                 device_type_id=proposal.device_type.pk,
-                action=selection.action,
+                action=proposal.action,
                 render_mode=proposal.fields["render_mode"],
+                baseline=proposal.baseline,
             )
         )
     files_per_device_type = Counter(
@@ -293,7 +370,7 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
             row.error = DUPLICATE_TARGET
 
     result = Review(source=source, rows=rows)
-    if result.is_valid:
+    if result.is_valid and reviewed:
         result.token = signing.dumps(
             {
                 "user": user.pk,
@@ -305,8 +382,8 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
     return result
 
 
-def apply(user, token: str) -> list[DeviceView]:
-    """Apply a reviewed import in one transaction and return the created records."""
+def apply(user, token: str) -> ApplyResult:
+    """Apply a reviewed import in one transaction and report what it did to each record."""
     try:
         payload = signing.loads(
             token, salt=SIGNING_SALT, max_age=REVIEW_MAX_AGE_SECONDS
@@ -316,24 +393,38 @@ def apply(user, token: str) -> list[DeviceView]:
             "The review has expired. Review the import again."
         ) from exc
     except signing.BadSignature as exc:
-        raise ImportRejected("The review token is not valid.") from exc
+        raise ImportRejected(INVALID_TOKEN) from exc
     if not user.is_authenticated or payload["user"] != user.pk:
         raise ImportRejected("The review token belongs to a different user.")
-    if not user.has_perm("netbox_device_view.add_deviceview"):
-        raise ImportRejected("You do not have permission to add device views.")
+    try:
+        rows = [ReviewedRow.from_payload(row) for row in payload["rows"]]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ImportRejected(INVALID_TOKEN) from exc
+    for action in {row.action for row in rows} & ACTION_PERMISSIONS.keys():
+        if not _has_permission(user, action):
+            raise ImportRejected(_permission_denied(action))
     source = _importable_source(user, payload["source"])
-    rows = [ReviewedRow.from_payload(row) for row in payload["rows"]]
 
+    result = ApplyResult()
+    outcomes = {
+        Action.CREATE: result.created,
+        Action.REPLACE: result.updated,
+        Action.UNCHANGED: result.unchanged,
+    }
     try:
         with transaction.atomic():
-            return [_apply_row(user, source, row) for row in rows]
+            _lock_targets(rows)
+            for row in rows:
+                action, device_view = _apply_row(user, source, row)
+                outcomes[action].append(device_view)
+            return result
     except ImportRejected:
         # Drop events queued for the rolled-back records.
         clear_events.send(sender=DeviceView)
         raise
 
 
-def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
+def _apply_row(user, source, reviewed: ReviewedRow) -> tuple[Action, DeviceView]:
     try:
         source_file = _read_source_file(user, source, reviewed.datafile_id)
     except ValidationError as exc:
@@ -343,23 +434,65 @@ def _apply_row(user, source, reviewed: ReviewedRow) -> DeviceView:
     if source_file.sha256 != reviewed.sha256:
         raise ImportRejected(f"{reviewed.path}: the file changed after review.")
     try:
-        proposal = _propose(user, source_file, reviewed.device_type_id)
+        proposal = _propose(
+            user,
+            source_file,
+            reviewed.device_type_id,
+            replace=reviewed.action == Action.REPLACE,
+        )
     except ValidationError as exc:
         raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
     if proposal.fields["render_mode"] != reviewed.render_mode:
         raise ImportRejected(
-            f"{reviewed.path}: the render mode differs from the review."
+            f"{reviewed.path}: the render mode differs from the review. {REVIEW_AGAIN}"
         )
-    device_view = DeviceView(device_type=proposal.device_type, **proposal.fields)
+    # A replayed review finds the proposed fields already in place.
+    if proposal.action == Action.UNCHANGED:
+        permission = REPLAY_PERMISSIONS[reviewed.action]
+        if not _permits(user, permission, proposal.device_view):
+            raise ImportRejected(
+                f"{reviewed.path}: {_permission_denied(reviewed.action)}"
+            )
+        return Action.UNCHANGED, proposal.device_view
+    if proposal.baseline != reviewed.baseline:
+        raise ImportRejected(f"{reviewed.path}: {STALE_TARGET}")
+    return proposal.action, _write(user, reviewed.path, proposal)
+
+
+def _lock_targets(rows: list[ReviewedRow]) -> None:
+    """Lock the target device types, then their device views, each in primary-key order."""
+    device_type_ids = {row.device_type_id for row in rows}
+    # NO KEY UPDATE serializes imports but lets foreign-key inserts (devices, other views) run.
+    list(
+        DeviceType.objects.select_for_update(no_key=True)
+        .filter(pk__in=device_type_ids)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+    list(
+        DeviceView.objects.select_for_update()
+        .filter(device_type__in=device_type_ids)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+
+
+def _write(user, path: str, proposal: _Proposal) -> DeviceView:
+    """Create or update the device view with native validation, logging and permissions."""
+    if proposal.action == Action.CREATE:
+        device_view = DeviceView(device_type=proposal.device_type, **proposal.fields)
+    else:
+        device_view = proposal.device_view
+        device_view.snapshot()
+        for name, value in proposal.fields.items():
+            setattr(device_view, name, value)
     try:
         device_view.save()
     except IntegrityError as exc:
+        raise ImportRejected(f"{path}: {CONCURRENT_CREATE}") from exc
+    if not _permits(user, ACTION_PERMISSIONS[proposal.action], device_view):
         raise ImportRejected(
-            f"{reviewed.path}: a device view already exists for this device type."
-        ) from exc
-    if not DeviceView.objects.restrict(user, "add").filter(pk=device_view.pk).exists():
-        raise ImportRejected(
-            f"{reviewed.path}: the new device view violates your permissions."
+            f"{path}: the resulting device view violates your permissions."
         )
     return device_view
 
@@ -411,14 +544,93 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile:
     return _SourceFile(path=datafile.path, format=file_format, content=content)
 
 
-def _propose(user, source_file: _SourceFile, device_type_id) -> _Proposal:
+def _propose(
+    user, source_file: _SourceFile, device_type_id, *, replace: bool
+) -> _Proposal:
     """Validate one file for one target; raise ValidationError when it cannot be imported."""
-    device_type = _available_target(user, device_type_id)
-    if device_type is None:
-        raise ValidationError(TARGET_UNAVAILABLE)
-    fields = _proposed_fields(source_file)
-    DeviceView(device_type=device_type, **fields).full_clean(validate_unique=False)
-    return _Proposal(device_type=device_type, fields=fields)
+    device_type, device_view = _target(user, device_type_id)
+    if device_view is not None:
+        # A CSS import replaces the stored mode before full_clean, so check it here.
+        DeviceView._meta.get_field("render_mode").clean(
+            device_view.render_mode, device_view
+        )
+    fields = _proposed_fields(
+        source_file, device_view.render_mode if device_view else None
+    )
+    if device_view is None:
+        action = Action.CREATE
+        candidate = DeviceView(device_type=device_type, **fields)
+    else:
+        if fields == _imported_fields(device_view):
+            action = Action.UNCHANGED
+        else:
+            action = Action.REPLACE if replace else Action.SKIP
+        candidate = copy.copy(device_view)
+        for name, value in fields.items():
+            setattr(candidate, name, value)
+    candidate.full_clean(validate_unique=False)
+    if action == Action.CREATE and not _has_permission(user, action):
+        raise ValidationError(_permission_denied(action))
+    if action == Action.REPLACE and not _permits(user, "change", device_view):
+        raise ValidationError(_permission_denied(action))
+    return _Proposal(
+        device_type=device_type,
+        device_view=device_view,
+        action=action,
+        fields=fields,
+        baseline=_baseline(device_type, device_view),
+    )
+
+
+def _baseline(device_type: DeviceType, device_view: DeviceView | None) -> str:
+    """Return a digest of the target identity, its device view and its imported fields."""
+    state = {
+        "device_type": [
+            device_type.pk,
+            device_type.manufacturer.name,
+            device_type.model,
+        ],
+        "device_view": device_view and [device_view.pk, _imported_fields(device_view)],
+    }
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+
+
+def _has_permission(user, action) -> bool:
+    return user.has_perm(f"netbox_device_view.{ACTION_PERMISSIONS[action]}_deviceview")
+
+
+def _permits(user, permission: str, device_view: DeviceView) -> bool:
+    """Return True when the user's object permission constraints match the stored record."""
+    return (
+        DeviceView.objects.restrict(user, permission).filter(pk=device_view.pk).exists()
+    )
+
+
+def _permission_denied(action) -> str:
+    return (
+        f"You do not have permission to {REPLAY_PERMISSIONS[action]} this device view."
+    )
+
+
+def _imported_fields(device_view: DeviceView) -> dict[str, str]:
+    return {name: getattr(device_view, name) for name in IMPORTED_FIELDS}
+
+
+def _diff_lines(current: str, proposed: str) -> list[tuple[str, str]]:
+    """Return (kind, text) lines of a unified diff; the template escapes the text."""
+    kinds = {"+": "add", "-": "remove", "@": "hunk"}
+    lines = difflib.unified_diff(
+        current.splitlines(),
+        proposed.splitlines(),
+        "current",
+        "proposed",
+        lineterm="",
+    )
+    # The first two lines name the two sides; they are not changes.
+    return [
+        ("hunk" if index < 2 else kinds.get(line[:1], "context"), line)
+        for index, line in enumerate(lines)
+    ]
 
 
 def _file_format(path: str) -> Format | None:
@@ -453,35 +665,40 @@ def _match_paths(user, paths) -> dict[str, DeviceType]:
     return {path: by_key[key] for path, key in keys.items() if key in by_key}
 
 
-def _available_target(user, device_type_id) -> DeviceType | None:
-    """Return a permitted device type without a device view, else None."""
+def _target(user, device_type_id) -> tuple[DeviceType, DeviceView | None]:
+    """Return a permitted device type and its visible device view, if it has one."""
     device_type = (
         permitted_device_types(user)
         .select_related("manufacturer")
         .filter(pk=device_type_id)
         .first()
     )
-    # Hidden and visible existing device views both make the target unavailable.
-    if (
-        device_type is None
-        or DeviceView.objects.filter(device_type=device_type).exists()
-    ):
-        return None
-    return device_type
+    if device_type is None:
+        raise ValidationError(TARGET_UNAVAILABLE)
+    device_view = DeviceView.objects.filter(device_type=device_type).first()
+    # A hidden device view reads the same as any other unavailable target.
+    if device_view is not None and not _permits(user, "view", device_view):
+        raise ValidationError(TARGET_UNAVAILABLE)
+    return device_type, device_view
 
 
-def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
+def _proposed_fields(
+    source_file: _SourceFile, current_render_mode: str | None
+) -> dict[str, str]:
     try:
         text = source_file.content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ValidationError("The file is not valid UTF-8 text.") from exc
     if not text.strip():
         raise ValidationError("The file is empty.")
+    render_mode = RenderMode.CSS.value
     if source_file.format == Format.CSS:
         css = normalize_grid_template_area(CSS_NEWLINES.sub("\n", text))
         # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
         yaml_layout = ""
     else:
+        # A YAML layout supports every render mode, so a replacement keeps it.
+        render_mode = current_render_mode or render_mode
         try:
             yaml_layout, css = text, render_css(parse_yaml(text, strict=True))
         except LayoutParseError as exc:
@@ -493,5 +710,5 @@ def _proposed_fields(source_file: _SourceFile) -> dict[str, str]:
     return {
         "yaml_layout": yaml_layout,
         "grid_template_area": css,
-        "render_mode": RenderMode.CSS.value,
+        "render_mode": render_mode,
     }
