@@ -512,6 +512,11 @@ def _propose(
 ) -> _Proposal:
     """Validate one file for one target; raise ValidationError when it cannot be imported."""
     device_type, device_view = _target(user, device_type_id)
+    if device_view is not None:
+        # A CSS import replaces the stored mode before full_clean, so check it here.
+        DeviceView._meta.get_field("render_mode").clean(
+            device_view.render_mode, device_view
+        )
     fields = _proposed_fields(
         source_file, device_view.render_mode if device_view else None
     )

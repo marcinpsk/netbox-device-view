@@ -1675,11 +1675,20 @@ class ReplacementTests(DataSourceImportTestBase):
     def test_invalid_stored_render_mode_is_a_row_error(self):
         device_view = self.existing()
         DeviceView.objects.filter(pk=device_view.pk).update(render_mode="bogus")
-        response = self.replace()
-        self.assertEqual(response.status_code, 200)
-        review = response.context["review"]
-        self.assertIn("bogus", review.rows[0].error)
-        self.assertEqual(review.token, "")
+        self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
+        self.source.sync()
+        for path in (EXAMPLE_PATH, EXAMPLE_CSS_PATH):
+            for replace in (True, False):
+                with self.subTest(path=path, replace=replace):
+                    datafile = self.datafile(path)
+                    response = self.review(
+                        [(datafile, self.device_type)],
+                        replace=[datafile] if replace else [],
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    review = response.context["review"]
+                    self.assertIn("bogus", review.rows[0].error)
+                    self.assertEqual(review.token, "")
 
     def test_repeated_apply_of_one_review_is_unchanged(self):
         create = self.review_token([(self.datafile(), self.device_type)])
