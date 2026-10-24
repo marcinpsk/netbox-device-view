@@ -136,9 +136,9 @@ MAX_LABEL_LENGTH = 64
 MAX_KEY_LENGTH = 64
 MAX_CSS_CLASSES = 8
 _MAX_YAML_DEPTH = 32
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 # Appended to "module" in a CSS class, so a leading digit is valid.
-_VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
+VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
 _VIEW_NAMES = ("front", "rear")
 _FACES = {face.value: face for face in Face}
 _ROW_ENTRY_KEYS = ("elements", "sequence", "group", "spacer", "blank")
@@ -200,11 +200,19 @@ class _DepthLimitedLoader(yaml.SafeLoader):
             seen.add(key)
 
 
+def one_css_color(tokens: list[Any]) -> list[Any] | None:
+    """Return the token list of one CSS color without whitespace, or None."""
+    values = [token for token in tokens if token.type != "whitespace"]
+    if len(values) == 1 and tinycss2.color4.parse_color(values[0]) is not None:
+        return values
+    return None
+
+
 def _is_identifier(value: Any) -> bool:
     return (
         isinstance(value, str)
         and len(value) <= MAX_KEY_LENGTH
-        and _IDENTIFIER.fullmatch(value) is not None
+        and IDENTIFIER.fullmatch(value) is not None
     )
 
 
@@ -279,16 +287,12 @@ class _Rules:
         """Return a strict background as tinycss2 serializes its one color value."""
         if not self.strict or raw is None:
             return raw
-        tokens = []
+        color = None
         if isinstance(raw, str):
-            tokens = [
-                token
-                for token in tinycss2.parse_component_value_list(raw)
-                if token.type != "whitespace"
-            ]
-        if len(tokens) != 1 or tinycss2.color4.parse_color(tokens[0]) is None:
+            color = one_css_color(tinycss2.parse_component_value_list(raw))
+        if color is None:
             raise LayoutParseError(f"{where}: background must be one CSS color.")
-        return tinycss2.serialize(tokens)
+        return tinycss2.serialize(color)
 
     def css_classes(self, raw: Any, where: str) -> Any:
         if self.strict and not (
@@ -298,7 +302,7 @@ class _Rules:
         ):
             raise LayoutParseError(
                 f"{where}.css_classes: must be a list of at most {MAX_CSS_CLASSES} "
-                f"identifiers that match {_IDENTIFIER.pattern}, each at most "
+                f"identifiers that match {IDENTIFIER.pattern}, each at most "
                 f"{MAX_KEY_LENGTH} characters."
             )
         return raw
@@ -456,10 +460,10 @@ def _compile_variants(
     for variant_name, variant_data in raw_variants.items():
         where = f"variants.{variant_name}"
         if rules.strict and not (
-            isinstance(variant_name, str) and _VARIANT_NAME.fullmatch(variant_name)
+            isinstance(variant_name, str) and VARIANT_NAME.fullmatch(variant_name)
         ):
             raise LayoutParseError(
-                f"{where}: the variant name must match {_VARIANT_NAME.pattern}."
+                f"{where}: the variant name must match {VARIANT_NAME.pattern}."
             )
         rules.mapping(variant_data, "variant", where)
         rules.text(variant_data.get("match", "module"), f"{where}.match", ("module",))
@@ -1134,7 +1138,7 @@ def _check_elements(layout: NormalizedLayout) -> None:
 
 def _key_error(where: str, key: Any) -> str:
     return (
-        f"{where}: the element key {key!r:.80} must match {_IDENTIFIER.pattern} "
+        f"{where}: the element key {key!r:.80} must match {IDENTIFIER.pattern} "
         f"and have at most {MAX_KEY_LENGTH} characters."
     )
 

@@ -14,21 +14,25 @@ from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
+from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models.signals import post_save, pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils.text import slugify
+from extras.models import CustomField, Tag
 from users.models import ObjectPermission, User
 
 from netbox_device_view import datasource_import
+from netbox_device_view.layout import parse_yaml, render_css
 from netbox_device_view.models import DeviceView, RenderMode
+from netbox_device_view.utils import normalize_grid_template_area
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXAMPLE_YAML = EXAMPLES / "yaml" / "Cisco" / "C9300-24T.yaml"
@@ -41,6 +45,25 @@ REVIEW_URL = "plugins:netbox_device_view:deviceview_datasource_import_review"
 APPLY_URL = "plugins:netbox_device_view:deviceview_datasource_import_apply"
 
 RECORDED_EVENTS = []
+INJECTION = 'x" onmouseover="alert(1)'
+
+
+def injected_layouts():
+    """Return the example YAML with a quoted attribute injection in a base and a variant element."""
+    element = (
+        f"      - elements:\n          - {{key: mgmt0, css_classes: ['{INJECTION}']}}\n"
+    )
+    text = EXAMPLE_YAML.read_text()
+    layouts = {
+        "base": text.replace(
+            "views:\n  front:\n    rows:\n", "views:\n  front:\n    rows:\n" + element
+        ),
+        "variant": text.replace(
+            "    match: module\n    rows:\n", "    match: module\n    rows:\n" + element
+        ),
+    }
+    assert text not in layouts.values()
+    return layouts
 
 
 def record_events(events):
@@ -133,10 +156,23 @@ class DataSourceImportTestBase(TestCase):
         perm.users.add(self.user)
         perm.object_types.add(ObjectType.objects.get_for_model(model))
 
+    def compete_before_save(self, device_type):
+        """Create a device view for the type just before the import saves its own."""
+
+        def create_competing_view(sender, instance, **kwargs):
+            # bulk_create sends no signals, so this receiver runs once.
+            if instance.device_type_id == device_type.pk:
+                DeviceView.objects.bulk_create(
+                    [DeviceView(device_type=device_type, grid_template_area="x")]
+                )
+
+        pre_save.connect(create_competing_view, sender=DeviceView, weak=False)
+        self.addCleanup(pre_save.disconnect, create_competing_view, sender=DeviceView)
+
     def datafile(self, path=EXAMPLE_PATH):
         return self.source.datafiles.get(path=path)
 
-    def review(self, selections, source=None):
+    def review(self, selections, source=None, replace=()):
         data = {
             "source": (source or self.source).pk,
             "prefix": "examples/",
@@ -145,6 +181,8 @@ class DataSourceImportTestBase(TestCase):
         data["file"] = [datafile.pk for datafile, _ in selections]
         for datafile, device_type in selections:
             data[f"device_type_{datafile.pk}"] = device_type.pk
+        for datafile in replace:
+            data[f"replace_{datafile.pk}"] = "on"
         return self.client.post(reverse(REVIEW_URL), data)
 
     def match(self, datafiles):
@@ -157,6 +195,11 @@ class DataSourceImportTestBase(TestCase):
                 "file": [datafile.pk for datafile in datafiles],
             },
         )
+
+    def review_file(self, path, content):
+        self.write_file(path, content.encode())
+        self.source.sync()
+        return self.review([(self.datafile(path), self.device_type)])
 
     def review_token(self, selections):
         response = self.review(selections)
@@ -499,7 +542,7 @@ class SuggestionTests(DataSourceImportTestBase):
                 finally:
                     permissions.update(constraints=None)
 
-    def test_visible_existing_device_view_is_shown_and_not_preselected(self):
+    def test_visible_existing_device_view_is_shown_and_preselected(self):
         device_view = DeviceView.objects.create(
             device_type=self.device_type, grid_template_area="x"
         )
@@ -507,9 +550,11 @@ class SuggestionTests(DataSourceImportTestBase):
         row = response.context["rows"][0]
         self.assertEqual(row.state, datasource_import.TargetState.EXISTING)
         self.assertEqual(row.device_view, device_view)
-        self.assertFalse(row.is_selectable)
+        self.assertTrue(row.is_selectable)
         self.assertContains(response, device_view.get_absolute_url())
-        self.assert_preselected(self.match([self.datafile()]), self.datafile(), None)
+        self.assert_preselected(
+            self.match([self.datafile()]), self.datafile(), self.device_type
+        )
 
     def test_hidden_device_view_is_only_unavailable(self):
         device_view = DeviceView.objects.create(
@@ -576,13 +621,6 @@ class SuggestionTests(DataSourceImportTestBase):
 
 
 class StrictYamlImportTests(DataSourceImportTestBase):
-    INJECTION = 'x" onmouseover="alert(1)'
-
-    def review_yaml(self, path, content):
-        self.write_file(path, content.encode())
-        self.source.sync()
-        return self.review([(self.datafile(path), self.device_type)])
-
     def test_bundled_yaml_examples_pass_review_unchanged(self):
         selections = []
         for example in sorted(EXAMPLES.glob("yaml/*/*.yaml")):
@@ -607,27 +645,13 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         self.assertTrue(review.token)
 
     def test_quoted_attribute_injection_is_rejected_before_any_write(self):
-        base = EXAMPLE_YAML.read_text().replace(
-            "views:\n  front:\n    rows:\n",
-            "views:\n  front:\n    rows:\n"
-            "      - elements:\n"
-            f"          - {{key: mgmt0, css_classes: ['{self.INJECTION}']}}\n",
-        )
-        variant = EXAMPLE_YAML.read_text().replace(
-            "    match: module\n    rows:\n",
-            "    match: module\n    rows:\n"
-            "      - elements:\n"
-            f"          - {{key: mgmt0, css_classes: ['{self.INJECTION}']}}\n",
-        )
-        self.assertNotEqual(base, EXAMPLE_YAML.read_text())
-        self.assertNotEqual(variant, EXAMPLE_YAML.read_text())
-        for name, content in (("base", base), ("variant", variant)):
+        for name, content in injected_layouts().items():
             with self.subTest(name):
-                response = self.review_yaml(f"examples/{name}.yaml", content)
+                response = self.review_file(f"examples/{name}.yaml", content)
                 review = response.context["review"]
                 self.assertIn("css_classes", review.rows[0].error)
                 self.assertEqual(review.token, "")
-                self.assertNotContains(response, self.INJECTION)
+                self.assertNotContains(response, INJECTION)
                 self.assertNotContains(response, "Apply import")
         self.assertFalse(DeviceView.objects.exists())
         self.assertFalse(
@@ -637,7 +661,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         )
 
     def test_malformed_yaml_error_is_escaped(self):
-        response = self.review_yaml(
+        response = self.review_file(
             "examples/malformed.yaml", "views: [<script>alert(1)</script>"
         )
         error = response.context["review"].rows[0].error
@@ -648,7 +672,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
     def test_unbounded_sequence_is_rejected(self):
         content = EXAMPLE_YAML.read_text().replace("count: 12", "count: 1000000000", 1)
         started = time.monotonic()
-        review = self.review_yaml("examples/huge.yaml", content).context["review"]
+        review = self.review_file("examples/huge.yaml", content).context["review"]
         self.assertLess(time.monotonic() - started, 5)
         self.assertIn("10000 elements", review.rows[0].error)
 
@@ -677,7 +701,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
         )
         for name, (content, message) in contents.items():
             with self.subTest(name):
-                response = self.review_yaml(f"examples/{name}.yaml", content)
+                response = self.review_file(f"examples/{name}.yaml", content)
                 self.assertEqual(response.status_code, 200)
                 review = response.context["review"]
                 self.assertIn(message, review.rows[0].error)
@@ -745,17 +769,76 @@ class CssImportTests(DataSourceImportTestBase):
             '.deviceview.area {\n  grid-template-areas: "a b c";\n}\n',
         )
 
-    def test_imported_css_cannot_close_the_style_element(self):
-        raw = (
-            '.deviceview.area { grid-template-areas: "a<b"; }\n'
-            "</style><script>alert(1)</script>\n"
+    def test_css_line_endings_are_normalized(self):
+        expected = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        for name, newline in (("crlf", "\r\n"), ("cr", "\r"), ("form-feed", "\f")):
+            with self.subTest(name):
+                DeviceView.objects.all().delete()
+                path = f"examples/Cisco/{name}.css"
+                self.write_file(path, expected.replace("\n", newline).encode())
+                self.source.sync()
+                token = self.review_token([(self.datafile(path), self.device_type)])
+                self.assertEqual(self.apply(token).status_code, 200)
+                self.assertEqual(DeviceView.objects.get().grid_template_area, expected)
+
+    def test_unsafe_css_is_rejected_before_any_write(self):
+        base = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        unsafe = {
+            "html": base + "/* </style><script>alert(1)</script> */\n",
+            "parse-error": base + ".deviceview.area { background: #000;",
+            "at-rule": '@import "other.css";\n' + base,
+            "url": base.replace("{", "{ background: url(x.png);"),
+            "custom-property": base.replace("{", "{ --x: 1;"),
+            "nested-rule": base.replace("{", "{ .x { background: #000; }"),
+            "combinator": base.replace(".deviceview.area", ".deviceview .area"),
+            "attribute": base.replace(".area", ".area[title]"),
+            "pseudo-class": base.replace(".area", ".area:hover"),
+            "selector-list": base.replace(".area", ".area, .deviceview.area.dRear"),
+            "property": base.replace("{", "{ position: fixed;"),
+            "image": base.replace("{", "{ background: linear-gradient(red, blue);"),
+            "no-grid-area": ".deviceview.area { background: #000; }\n",
+            "escape": base.replace('"a b"', '"\\61  b"'),
+            "important": base.replace('";', '" !important;'),
+            "row-widths": base.replace('"a b"', '"a b" "c"'),
+            "sizing": base.replace("{", "{ grid-auto-rows: 20px;"),
+            "other-class": base.replace(".area", ".area.other"),
+            "type-selector": base.replace(".deviceview", "div.deviceview"),
+        }
+        for name, css in unsafe.items():
+            with self.subTest(name):
+                response = self.review_file(f"examples/Cisco/{name}.css", css)
+                self.assertEqual(response.status_code, 200)
+                review = response.context["review"]
+                self.assertIn("Invalid CSS layout", review.rows[0].error)
+                self.assertEqual(review.token, "")
+                self.assertNotContains(response, "Apply import")
+                self.assertNotContains(response, "<script>alert(1)")
+        self.assertFalse(DeviceView.objects.exists())
+        self.assertFalse(
+            ObjectChange.objects.filter(
+                changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+            ).exists()
         )
-        self.write_file("examples/Cisco/inject.css", raw.encode())
+
+    def test_css_with_a_byte_order_mark_is_accepted(self):
+        css = '.deviceview.area {\n  grid-template-areas: "a b";\n}\n'
+        self.write_file("examples/Cisco/bom.css", b"\xef\xbb\xbf" + css.encode())
         self.source.sync()
         self.apply(
             self.review_token(
-                [(self.datafile("examples/Cisco/inject.css"), self.device_type)]
+                [(self.datafile("examples/Cisco/bom.css"), self.device_type)]
             )
+        )
+        self.assertEqual(DeviceView.objects.get().grid_template_area, css)
+
+    def test_stored_css_cannot_close_the_style_element(self):
+        # The import rejects this CSS; a form, API or earlier record can still hold it.
+        DeviceView.objects.create(
+            device_type=self.device_type,
+            grid_template_area=(
+                '.deviceview.area { grid-template-areas: "a<b"; }\n'
+                "</style><script>alert(1)</script>\n"
+            ),
         )
         plugin_config = {
             **settings.PLUGINS_CONFIG["netbox_device_view"],
@@ -876,6 +959,8 @@ class ReviewTests(DataSourceImportTestBase):
         payload = signing.loads(token, salt=datasource_import.SIGNING_SALT)
         self.assertEqual(payload["user"], self.user.pk)
         self.assertEqual(payload["source"], self.source.pk)
+        baseline = payload["rows"][0].pop("baseline")
+        self.assertRegex(baseline, r"^[0-9a-f]{64}$")
         self.assertEqual(
             payload["rows"],
             [
@@ -905,24 +990,22 @@ class ReviewTests(DataSourceImportTestBase):
         self.assertTrue(response.context["target_form"].errors)
 
     def test_device_type_with_hidden_device_view_is_not_distinguished(self):
-        other = DeviceType.objects.create(
-            manufacturer=self.manufacturer, model="Other", slug="other"
+        hidden = DeviceView.objects.create(
+            device_type=self.device_type, grid_template_area="hidden-area"
         )
-        DeviceView.objects.create(device_type=self.device_type, grid_template_area="x")
         ObjectPermission.objects.filter(
             object_types=ObjectType.objects.get_for_model(DeviceView)
         ).update(constraints={"device_type__model": "Other"})
-        hidden_target = self.review([(self.datafile(), self.device_type)])
-        self.assertNotContains(hidden_target, "grid_template_area")
-        rows = hidden_target.context["review"].rows
-        self.assertEqual(
-            rows[0].error, "The device type is not available as an import target."
+        response = self.review(
+            [(self.datafile(), self.device_type)], replace=[self.datafile()]
         )
-        self.assertEqual(hidden_target.context["review"].token, "")
-
-        DeviceView.objects.create(device_type=other, grid_template_area="y")
-        visible_target = self.review([(self.datafile(), other)])
-        self.assertEqual(visible_target.context["review"].rows[0].error, rows[0].error)
+        self.assertNotContains(response, "grid_template_area")
+        self.assertNotContains(response, "hidden-area")
+        self.assertNotContains(response, hidden.get_absolute_url())
+        row = response.context["review"].rows[0]
+        self.assertEqual(row.error, datasource_import.TARGET_UNAVAILABLE)
+        self.assertIsNone(row.action)
+        self.assertEqual(response.context["review"].token, "")
 
     def test_invalid_yaml_is_reported_without_token(self):
         self.write_file("examples/broken.yaml", b"version: 1\nviews: [not closed")
@@ -1061,19 +1144,12 @@ class ApplyTests(DataSourceImportTestBase):
     def test_concurrent_device_view_for_the_target_is_rejected(self):
         token = self.review_token([(self.datafile(), self.device_type)])
 
-        def create_competing_view(sender, instance, **kwargs):
-            # bulk_create sends no signals, so this receiver runs once.
-            DeviceView.objects.bulk_create(
-                [DeviceView(device_type=instance.device_type, grid_template_area="x")]
-            )
-
-        pre_save.connect(create_competing_view, sender=DeviceView)
-        self.addCleanup(pre_save.disconnect, create_competing_view, sender=DeviceView)
+        self.compete_before_save(self.device_type)
         response = self.apply(token)
         self.assert_rejected(response)
         self.assertContains(
             response,
-            "a device view already exists for this device type",
+            datasource_import.CONCURRENT_CREATE,
             status_code=400,
         )
 
@@ -1092,8 +1168,12 @@ class ApplyTests(DataSourceImportTestBase):
             response, datasource_import.FILE_UNAVAILABLE, status_code=400
         )
 
-    def test_pages_require_add_permission(self):
+    def test_pages_require_add_or_change_permission(self):
         ObjectPermission.objects.filter(actions=["add"]).delete()
+        list_page = self.client.get(
+            reverse("plugins:netbox_device_view:deviceview_list")
+        )
+        self.assertNotContains(list_page, reverse(START_URL))
         self.assertEqual(self.client.get(reverse(START_URL)).status_code, 403)
         self.assertEqual(self.client.post(reverse(REVIEW_URL)).status_code, 403)
         self.assertEqual(self.client.post(reverse(APPLY_URL)).status_code, 403)
@@ -1172,6 +1252,65 @@ class BulkImportTests(DataSourceImportTestBase):
                 action="create",
             ).count(),
             3,
+        )
+
+    def test_mixed_bulk_create_and_update_end_to_end(self):
+        self.grant(DeviceView, "change")
+        css_target = DeviceType.objects.get(model="C9300-48P")
+        old_yaml = (EXAMPLES.parent / self.BULK_PATHS[2]).read_text()
+        yaml_record = DeviceView.objects.create(
+            device_type=css_target,
+            yaml_layout=old_yaml,
+            grid_template_area=render_css(parse_yaml(old_yaml)),
+            render_mode=RenderMode.SVG,
+        )
+        css_record = DeviceView.objects.create(
+            device_type=self.device_type,
+            grid_template_area=normalize_grid_template_area(EXAMPLE_CSS.read_text()),
+        )
+        datafiles = [self.datafile(path) for path in self.BULK_PATHS]
+        skipped = self.review_page(datafiles)
+        self.assertEqual(
+            [row.action for row in skipped.context["review"].rows],
+            [
+                datasource_import.Action.SKIP,
+                datasource_import.Action.SKIP,
+                datasource_import.Action.CREATE,
+            ],
+        )
+
+        fields = submitted(skipped, REVIEW_URL)
+        for datafile in datafiles[:2]:
+            fields[f"replace_{datafile.pk}"] = ["on"]
+        review = self.client.post(reverse(REVIEW_URL), fields)
+        rows = review.context["review"].rows
+        self.assertEqual(
+            [(row.action, row.render_mode_label) for row in rows],
+            [
+                (
+                    datasource_import.Action.REPLACE,
+                    f"{RenderMode.SVG.label} → {RenderMode.CSS.label}",
+                ),
+                (datasource_import.Action.REPLACE, RenderMode.CSS.label),
+                (datasource_import.Action.CREATE, RenderMode.CSS.label),
+            ],
+        )
+        result = self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
+        self.assertContains(result, "Created: 1")
+        self.assertContains(result, "Updated: 2")
+        yaml_record.refresh_from_db()
+        css_record.refresh_from_db()
+        self.assertEqual(
+            (yaml_record.yaml_layout, yaml_record.render_mode), ("", RenderMode.CSS)
+        )
+        self.assertEqual(css_record.yaml_layout, EXAMPLE_YAML.read_text())
+        self.assertEqual(DeviceView.objects.count(), 3)
+        changes = ObjectChange.objects.filter(
+            changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+        )
+        self.assertEqual(
+            sorted(changes.values_list("action", flat=True)),
+            ["create", "update", "update"],
         )
 
     def test_result_links_only_visible_device_views(self):
@@ -1358,6 +1497,518 @@ class BulkImportTests(DataSourceImportTestBase):
             list(DeviceView.objects.values_list("device_type", flat=True)),
             [self.device_type.pk],
         )
+
+
+class ReplacementTestBase(DataSourceImportTestBase):
+    OLD_YAML = (
+        EXAMPLE_YAML.read_text()
+        .replace("Cisco Catalyst 9300-24T", "Old model")
+        .replace("blank: 14", "blank: 13")
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.grant(DeviceView, "change")
+
+    def existing(self, **fields):
+        fields = {
+            "yaml_layout": self.OLD_YAML,
+            "grid_template_area": render_css(parse_yaml(self.OLD_YAML)),
+            "render_mode": RenderMode.SVG,
+            **fields,
+        }
+        return DeviceView.objects.create(device_type=self.device_type, **fields)
+
+    def device_view_changes(self):
+        return ObjectChange.objects.filter(
+            changed_object_type=ObjectType.objects.get_for_model(DeviceView)
+        )
+
+    def replace(self, path=EXAMPLE_PATH):
+        """Review a replacement of the existing device view as a browser would."""
+        response = self.review(
+            [(self.datafile(path), self.device_type)], replace=[self.datafile(path)]
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def apply_page(self, review):
+        return self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
+
+    def tab(self):
+        return self.client.get(
+            reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
+        )
+
+
+class ReplacementTests(ReplacementTestBase):
+    def test_existing_target_defaults_to_skip(self):
+        device_view = self.existing()
+        match = self.match([self.datafile()])
+        fields = submitted(match, REVIEW_URL)
+        self.assertEqual(
+            fields[f"device_type_{self.datafile().pk}"], [str(self.device_type.pk)]
+        )
+        self.assertNotIn(f"replace_{self.datafile().pk}", fields)
+
+        response = self.client.post(reverse(REVIEW_URL), fields)
+        review = response.context["review"]
+        row = review.rows[0]
+        self.assertEqual(row.action, datasource_import.Action.SKIP)
+        self.assertEqual(row.error, "")
+        self.assertEqual(
+            [change.name for change in row.changes],
+            ["yaml_layout", "grid_template_area"],
+        )
+        self.assertContains(response, "Old model")
+        self.assertEqual(review.token, "")
+        self.assertNotContains(response, "Apply import")
+        self.assertContains(response, "Nothing to apply")
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+
+    def test_yaml_replacement_keeps_render_mode_and_unrelated_fields(self):
+        owner = CustomField.objects.create(name="owner", type="text")
+        owner.object_types.set([ObjectType.objects.get_for_model(DeviceView)])
+        tag = Tag.objects.create(name="Core", slug="core")
+        device_view = self.existing(custom_field_data={"owner": "ops"})
+        device_view.tags.add(tag)
+        created = device_view.created
+
+        review = self.replace()
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.action, datasource_import.Action.REPLACE)
+        self.assertEqual(row.render_mode_label, RenderMode.SVG.label)
+        self.assertEqual(
+            [change.name for change in row.changes],
+            ["yaml_layout", "grid_template_area"],
+        )
+        # The template reads the diff several times; it is computed once per row.
+        self.assertIs(row.changes, row.changes)
+        lines = row.changes[0].lines
+        self.assertEqual(lines[:2], [("hunk", "--- current"), ("hunk", "+++ proposed")])
+        self.assertIn(("remove", '-  description: "Old model"'), lines)
+        self.assertIn(("add", '+  description: "Cisco Catalyst 9300-24T"'), lines)
+        self.assertContains(review, "-  description: &quot;Old model&quot;")
+        self.assertContains(
+            review, "+  description: &quot;Cisco Catalyst 9300-24T&quot;"
+        )
+        self.assertContains(review, "every device of that type")
+        self.assertNotContains(review, "sw1")
+
+        result = self.apply_page(review)
+        self.assertEqual(result.status_code, 200)
+        self.assertContains(result, "Updated: 1")
+        self.assertContains(result, device_view.get_absolute_url())
+        updated = DeviceView.objects.get(pk=device_view.pk)
+        self.assertEqual(updated.yaml_layout, EXAMPLE_YAML.read_text())
+        self.assertEqual(
+            updated.grid_template_area,
+            render_css(parse_yaml(EXAMPLE_YAML.read_text())),
+        )
+        self.assertEqual(updated.render_mode, RenderMode.SVG)
+        self.assertEqual(list(updated.tags.all()), [tag])
+        self.assertEqual(updated.custom_field_data, {"owner": "ops"})
+        self.assertEqual(updated.created, created)
+        change = self.device_view_changes().get()
+        self.assertEqual(change.action, "update")
+        self.assertEqual(change.prechange_data["yaml_layout"], self.OLD_YAML)
+        self.assertEqual(change.postchange_data["yaml_layout"], updated.yaml_layout)
+        self.assertTrue(self.tab().context["use_svg"])
+
+    def test_css_replacement_clears_yaml_and_selects_css(self):
+        self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
+        self.source.sync()
+        device_view = self.existing()
+
+        review = self.replace(EXAMPLE_CSS_PATH)
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.action, datasource_import.Action.REPLACE)
+        transition = f"{RenderMode.SVG.label} → {RenderMode.CSS.label}"
+        self.assertEqual(row.render_mode_label, transition)
+        self.assertContains(review, transition)
+        self.assertEqual(
+            [change.name for change in row.changes],
+            ["yaml_layout", "grid_template_area", "render_mode"],
+        )
+
+        self.assertContains(self.apply_page(review), "Updated: 1")
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, "")
+        self.assertEqual(device_view.render_mode, RenderMode.CSS)
+        self.assertEqual(
+            device_view.grid_template_area,
+            normalize_grid_template_area(EXAMPLE_CSS.read_text()),
+        )
+        self.assertFalse(self.tab().context["use_svg"])
+
+    def test_yaml_replacement_of_a_css_record_keeps_css_rendering(self):
+        device_view = self.existing(
+            yaml_layout="",
+            grid_template_area=normalize_grid_template_area(EXAMPLE_CSS.read_text()),
+            render_mode=RenderMode.CSS,
+        )
+        review = self.replace()
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.render_mode_label, RenderMode.CSS.label)
+        self.assertContains(self.apply_page(review), "Updated: 1")
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, EXAMPLE_YAML.read_text())
+        self.assertEqual(device_view.render_mode, RenderMode.CSS)
+
+    def test_identical_fields_are_unchanged_and_write_no_change(self):
+        self.apply(self.review_token([(self.datafile(), self.device_type)]))
+        device_view = DeviceView.objects.get()
+        last_updated = device_view.last_updated
+        for replace in ([], [self.datafile()]):
+            with self.subTest(replace=bool(replace)):
+                review = self.review(
+                    [(self.datafile(), self.device_type)], replace=replace
+                )
+                row = review.context["review"].rows[0]
+                self.assertEqual(row.action, datasource_import.Action.UNCHANGED)
+                self.assertEqual(row.changes, [])
+                self.assertContains(review, "already has these fields")
+                result = self.apply_page(review)
+                self.assertContains(result, "Unchanged: 1")
+                self.assertContains(result, device_view.get_absolute_url())
+        self.assertEqual(self.device_view_changes().count(), 1)
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.last_updated, last_updated)
+
+    def test_identical_row_with_replace_needs_no_change_permission(self):
+        self.apply(self.review_token([(self.datafile(), self.device_type)]))
+        ObjectPermission.objects.filter(actions=["change"]).delete()
+        review = self.replace()
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.error, "")
+        self.assertEqual(row.action, datasource_import.Action.UNCHANGED)
+        self.assertContains(self.apply_page(review), "Unchanged: 1")
+
+    def test_invalid_stored_render_mode_is_a_row_error(self):
+        device_view = self.existing()
+        DeviceView.objects.filter(pk=device_view.pk).update(render_mode="bogus")
+        self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
+        self.source.sync()
+        for path in (EXAMPLE_PATH, EXAMPLE_CSS_PATH):
+            for replace in (True, False):
+                with self.subTest(path=path, replace=replace):
+                    datafile = self.datafile(path)
+                    response = self.review(
+                        [(datafile, self.device_type)],
+                        replace=[datafile] if replace else [],
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    review = response.context["review"]
+                    self.assertIn("bogus", review.rows[0].error)
+                    self.assertEqual(review.token, "")
+
+    def test_repeated_apply_of_one_review_is_unchanged(self):
+        create = self.review_token([(self.datafile(), self.device_type)])
+        self.assertContains(self.apply(create), "Created: 1")
+        self.assertContains(self.apply(create), "Unchanged: 1")
+
+        DeviceView.objects.filter().update(yaml_layout=self.OLD_YAML)
+        replace = self.replace()
+        self.assertContains(self.apply_page(replace), "Updated: 1")
+        self.assertContains(self.apply_page(replace), "Unchanged: 1")
+        self.assertEqual(
+            list(
+                self.device_view_changes()
+                .order_by("time")
+                .values_list("action", flat=True)
+            ),
+            ["create", "update"],
+        )
+
+    def test_replace_requires_change_permission(self):
+        self.existing()
+        ObjectPermission.objects.filter(actions=["change"]).delete()
+        row = self.replace().context["review"].rows[0]
+        self.assertEqual(
+            row.error, "You do not have permission to change this device view."
+        )
+
+    def test_change_constraint_is_checked_on_the_existing_record(self):
+        self.existing()
+        ObjectPermission.objects.filter(actions=["change"]).update(
+            constraints={"render_mode": RenderMode.CSS}
+        )
+        review = self.replace()
+        self.assertEqual(
+            review.context["review"].rows[0].error,
+            "You do not have permission to change this device view.",
+        )
+        self.assertEqual(review.context["review"].token, "")
+
+    def test_change_constraint_is_checked_on_the_proposed_record(self):
+        self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
+        self.source.sync()
+        device_view = self.existing()
+        ObjectPermission.objects.filter(actions=["change"]).update(
+            constraints={"render_mode": RenderMode.SVG}
+        )
+        response = self.apply_page(self.replace(EXAMPLE_CSS_PATH))
+        self.assertContains(response, "No records were changed", status_code=400)
+        self.assertContains(response, "violates your permissions", status_code=400)
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+        self.assertFalse(self.device_view_changes().exists())
+
+    def test_change_permission_removed_after_review_rejects_apply(self):
+        self.existing()
+        review = self.replace()
+        ObjectPermission.objects.filter(actions=["change"]).delete()
+        response = self.apply_page(review)
+        self.assertContains(
+            response,
+            "You do not have permission to change this device view.",
+            status_code=400,
+        )
+        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
+
+    def test_change_only_user_can_replace_but_not_create(self):
+        self.existing()
+        ObjectPermission.objects.filter(actions=["add"]).delete()
+        list_page = self.client.get(
+            reverse("plugins:netbox_device_view:deviceview_list")
+        )
+        self.assertContains(list_page, reverse(START_URL))
+        self.assertEqual(self.client.get(reverse(START_URL)).status_code, 200)
+        self.assertContains(self.apply_page(self.replace()), "Updated: 1")
+
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        row = self.review([(self.datafile(), other)]).context["review"].rows[0]
+        self.assertEqual(
+            row.error, "You do not have permission to add this device view."
+        )
+
+    def test_quoted_attribute_injection_is_rejected_on_replacement(self):
+        device_view = self.existing()
+        for name, content in injected_layouts().items():
+            with self.subTest(name):
+                path = f"examples/{name}.yaml"
+                self.write_file(path, content.encode())
+                self.source.sync()
+                response = self.replace(path)
+                review = response.context["review"]
+                self.assertIn("css_classes", review.rows[0].error)
+                self.assertEqual(review.token, "")
+                self.assertNotContains(response, INJECTION)
+                self.assertNotContains(response, "Apply import")
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+        self.assertFalse(self.device_view_changes().exists())
+
+    def test_current_fields_in_the_diff_are_escaped(self):
+        self.existing(
+            yaml_layout="",
+            grid_template_area="</pre><script>alert(1)</script>",
+            render_mode=RenderMode.CSS,
+        )
+        response = self.replace()
+        self.assertNotContains(response, "<script>alert(1)")
+        self.assertContains(
+            response, "-&lt;/pre&gt;&lt;script&gt;alert(1)&lt;/script&gt;"
+        )
+
+    def test_rejected_batch_leaves_the_replaced_target_unchanged(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        manual = "examples/yaml/Cisco/Manual.yaml"
+        self.write_file(manual, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        device_view = self.existing()
+        review = self.review(
+            [(self.datafile(), self.device_type), (self.datafile(manual), other)],
+            replace=[self.datafile()],
+        )
+        self.assertEqual(
+            [row.action for row in review.context["review"].rows],
+            [datasource_import.Action.REPLACE, datasource_import.Action.CREATE],
+        )
+        self.write_file(manual, EXAMPLE_YAML.read_bytes() + b"\n# edited\n")
+        self.source.sync()
+        rejected = self.apply_page(review)
+        self.assertContains(rejected, "No records were changed", status_code=400)
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+        self.assertEqual(list(DeviceView.objects.all()), [device_view])
+        self.assertFalse(self.device_view_changes().exists())
+        again = submitted(rejected, REVIEW_URL)
+        self.assertEqual(again[f"replace_{self.datafile().pk}"], ["on"])
+        self.assertNotIn(f"replace_{self.datafile(manual).pk}", again)
+
+
+class DriftTests(ReplacementTestBase):
+    """Apply rejects a review whose source, file, target or permissions changed."""
+
+    def assert_stale(self, response):
+        self.assertContains(response, "No records were changed", status_code=400)
+        self.assertContains(response, "Review the import again", status_code=400)
+
+    def test_apply_needs_a_usable_source(self):
+        changes = {
+            "deleted": lambda source: DataSource.objects.filter(pk=source.pk).delete(),
+            "disabled": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                enabled=False
+            ),
+            "syncing": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.SYNCING
+            ),
+            "failed": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.FAILED
+            ),
+            "new": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.NEW
+            ),
+        }
+        for name, change in changes.items():
+            with self.subTest(name), transaction.atomic():
+                token = self.review_token([(self.datafile(), self.device_type)])
+                change(self.source)
+                response = self.apply(token)
+                self.assertContains(
+                    response,
+                    "The Data Source is not available for import.",
+                    status_code=400,
+                )
+                self.assertFalse(DeviceView.objects.exists())
+                transaction.set_rollback(True)
+
+    def test_deleted_file_after_review_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        (self.repo / EXAMPLE_PATH).unlink()
+        self.source.sync()
+        response = self.apply(token)
+        self.assertContains(
+            response, datasource_import.FILE_UNAVAILABLE, status_code=400
+        )
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_add_permission_removed_after_review_rejects_apply(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        ObjectPermission.objects.filter(actions=["add"]).delete()
+        response = self.apply(token)
+        self.assertContains(
+            response,
+            "You do not have permission to add this device view.",
+            status_code=400,
+        )
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_edit_after_review_is_not_overwritten(self):
+        device_view = self.existing()
+        review = self.replace()
+        edited = self.OLD_YAML.replace("blank: 13", "blank: 12")
+        DeviceView.objects.filter(pk=device_view.pk).update(yaml_layout=edited)
+        self.assert_stale(self.apply_page(review))
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, edited)
+        self.assertFalse(self.device_view_changes().exists())
+
+    def test_render_mode_change_after_review_is_drift(self):
+        device_view = self.existing()
+        review = self.replace()
+        DeviceView.objects.filter(pk=device_view.pk).update(render_mode=RenderMode.CSS)
+        self.assertContains(
+            self.apply_page(review), "No records were changed", status_code=400
+        )
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+
+    def test_delete_after_review_is_drift(self):
+        # CSS rendering keeps the render-mode check equal, so the baseline check decides.
+        self.existing(render_mode=RenderMode.CSS)
+        review = self.replace()
+        DeviceView.objects.all().delete()
+        response = self.apply_page(review)
+        self.assert_stale(response)
+        self.assertContains(response, datasource_import.STALE_TARGET, status_code=400)
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_device_view_moved_to_another_type_after_review_is_drift(self):
+        device_view = self.existing()
+        review = self.replace()
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        DeviceView.objects.filter(pk=device_view.pk).update(device_type=other)
+        DeviceView.objects.create(
+            device_type=self.device_type,
+            yaml_layout=self.OLD_YAML,
+            grid_template_area=device_view.grid_template_area,
+            render_mode=RenderMode.SVG,
+        )
+        self.assert_stale(self.apply_page(review))
+        self.assertEqual(
+            set(DeviceView.objects.values_list("yaml_layout", flat=True)),
+            {self.OLD_YAML},
+        )
+
+    def test_renamed_device_type_after_review_is_drift(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        DeviceType.objects.filter(pk=self.device_type.pk).update(model="Renamed")
+        self.assert_stale(self.apply(token))
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_create_after_review_is_drift(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.existing()
+        self.assert_stale(self.apply(token))
+        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
+
+    def test_replay_needs_the_reviewed_permission(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.assertContains(self.apply(token), "Created: 1")
+        ObjectPermission.objects.filter(actions=["add"]).update(
+            constraints={"render_mode": RenderMode.SVG}
+        )
+        response = self.apply(token)
+        self.assertContains(
+            response,
+            "You do not have permission to add this device view.",
+            status_code=400,
+        )
+
+    def test_replay_after_the_record_changed_again_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.assertContains(self.apply(token), "Created: 1")
+        DeviceView.objects.update(yaml_layout=self.OLD_YAML)
+        self.assert_stale(self.apply(token))
+        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
+
+    def test_constraint_conflict_reports_no_partial_success(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        manual = "examples/yaml/Cisco/Manual.yaml"
+        self.write_file(manual, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        token = self.review_token(
+            [(self.datafile(), self.device_type), (self.datafile(manual), other)]
+        )
+
+        self.compete_before_save(other)
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertContains(
+            response, datasource_import.CONCURRENT_CREATE, status_code=400
+        )
+        self.assertNotContains(response, "Created", status_code=400)
+
+    def test_token_without_a_baseline_is_not_valid(self):
+        payload = signing.loads(
+            self.review_token([(self.datafile(), self.device_type)]),
+            salt=datasource_import.SIGNING_SALT,
+        )
+        for row in payload["rows"]:
+            del row["baseline"]
+        token = signing.dumps(payload, salt=datasource_import.SIGNING_SALT)
+        self.assert_rejected(self.apply(token))
 
 
 class MigrationTests(TestCase):

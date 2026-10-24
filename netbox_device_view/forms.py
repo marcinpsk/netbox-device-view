@@ -60,7 +60,7 @@ class DataSourceImportSourceForm(forms.Form):
 
 
 class DataSourceImportTargetForm(forms.Form):
-    """One device type selector for each selected DataFile."""
+    """One device type selector and one Replace choice for each selected DataFile."""
 
     def __init__(self, *args, user, datafiles, catalog_rows=(), **kwargs):
         super().__init__(*args, **kwargs)
@@ -70,6 +70,9 @@ class DataSourceImportTargetForm(forms.Form):
                 queryset=datasource_import.permitted_device_types(user),
                 label=_("Device type"),
             )
+            self.fields[self.replace_name(datafile.pk)] = forms.BooleanField(
+                required=False, label=_("Replace an existing device view")
+            )
         for row in catalog_rows:
             if row.is_selectable:
                 self.initial[self.field_name(row.datafile.pk)] = row.suggestion.pk
@@ -78,9 +81,17 @@ class DataSourceImportTargetForm(forms.Form):
     def field_name(datafile_id):
         return f"device_type_{datafile_id}"
 
+    @staticmethod
+    def replace_name(datafile_id):
+        return f"replace_{datafile_id}"
+
     def rows(self):
         return [
-            (datafile, self[self.field_name(datafile.pk)])
+            (
+                datafile,
+                self[self.field_name(datafile.pk)],
+                self[self.replace_name(datafile.pk)],
+            )
             for datafile in self.datafiles
         ]
 
@@ -89,6 +100,7 @@ class DataSourceImportTargetForm(forms.Form):
             datasource_import.Selection(
                 datafile_id=datafile.pk,
                 device_type_id=self.cleaned_data[self.field_name(datafile.pk)].pk,
+                replace=self.cleaned_data[self.replace_name(datafile.pk)],
             )
             for datafile in self.datafiles
         ]

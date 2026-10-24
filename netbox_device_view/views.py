@@ -1,5 +1,3 @@
-from typing import ClassVar
-
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -49,8 +47,14 @@ class DeviceViewView(generic.ObjectView):
 class DataSourceImport(ObjectAction):
     name = "datasource_import"
     label = _("Import from Data Source")
-    permissions_required: ClassVar[set[str]] = {"add"}
     template_name = "netbox_device_view/buttons/datasource_import.html"
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # permissions_required needs every permission; the import needs add or change.
+        if not datasource_import.can_import(context["request"].user):
+            return ""
+        return super().render(context, obj, **kwargs)
 
 
 class DeviceViewListView(generic.ObjectListView):
@@ -116,8 +120,8 @@ def _selected_datafiles(user, source_form, data):
 
 
 class DataSourceImportPermissionMixin(ContentTypePermissionRequiredMixin):
-    def get_required_permission(self):
-        return "netbox_device_view.add_deviceview"
+    def has_permission(self):
+        return datasource_import.can_import(self.request.user)
 
 
 class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
@@ -219,7 +223,7 @@ class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View)
 
     def post(self, request):
         try:
-            created = datasource_import.apply(
+            result = datasource_import.apply(
                 request.user, request.POST.get("token", "")
             )
         except datasource_import.ImportRejected as exc:
@@ -231,15 +235,21 @@ class DeviceViewDataSourceImportApplyView(DataSourceImportPermissionMixin, View)
             )
         visible = set(
             models.DeviceView.objects.restrict(request.user, "view")
-            .filter(pk__in=[device_view.pk for device_view in created])
+            .filter(pk__in=[device_view.pk for device_view in result.device_views])
             .values_list("pk", flat=True)
+        )
+        outcomes = (
+            (_("Created"), result.created),
+            (_("Updated"), result.updated),
+            (_("Unchanged"), result.unchanged),
         )
         return render(
             request,
             "netbox_device_view/datasource_import_result.html",
             {
-                "created": [
-                    (device_view, device_view.pk in visible) for device_view in created
+                "outcomes": [
+                    (label, [(dv, dv.pk in visible) for dv in device_views])
+                    for label, device_views in outcomes
                 ]
             },
         )
