@@ -52,14 +52,16 @@ The prefix matches whole path components: `examples/` includes `examples/yaml/Ci
 
 The catalog shows only these files.
 
-Use the path `Manufacturer/Model.<suffix>` to get a device type suggestion. The import suggests a device type only when:
+Use the path `Manufacturer/Model.<suffix>` or `Manufacturer/PartNumber.<suffix>` to get a device type suggestion. The parent directory must be exactly the name of a manufacturer. The import then compares the file name without its suffix with the device types of that manufacturer:
 
-- the parent directory is exactly the name of a manufacturer, and
-- the file name without its suffix is exactly the model of a device type of that manufacturer.
+1. When the file name is exactly the model of a device type, the import suggests that device type.
+2. Otherwise, when the file name is exactly the part number of one device type, the import suggests that device type. When several device types have that part number, the import suggests no device type.
 
-The comparison does not change case or punctuation. For all other files, you select the device type manually.
+The import compares only with the device types that you can view. An empty part number never matches. The comparison does not change case or punctuation. For all other files, you select the device type manually.
 
-This repository has a YAML and a CSS layout for some models, for example `examples/yaml/Cisco/C9300-24T.yaml` and `examples/Cisco/C9300-24T.css`. With the prefix `examples/`, both files match the same device type, and the catalog marks them as ambiguous. You can use one of them, but you must then select its device type manually. To see only the YAML layouts, use the prefix `examples/yaml/`.
+The [devicetype-library](https://github.com/netbox-community/devicetype-library) names many files after the part number. For example, `Cisco/C8300-1N1S-6T.yaml` matches the device type with the model `Catalyst 8300-1N1S-6T` because its part number is `C8300-1N1S-6T`. A layout repository that uses these file names gets suggestions for these device types.
+
+This repository has a YAML and a CSS layout for some models, for example `examples/yaml/Cisco/C9300-24T.yaml` and `examples/Cisco/C9300-24T.css`. With the prefix `examples/`, both files match the same device type, and the catalog marks them as ambiguous. This also applies when one file matches by model and another file matches by part number. You can use one of them, but you must then select its device type manually. To see only the YAML layouts, use the prefix `examples/yaml/`.
 
 ---
 

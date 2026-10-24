@@ -13,7 +13,7 @@ import difflib
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import PurePosixPath
@@ -642,7 +642,10 @@ def _file_format(path: str) -> Format | None:
 
 
 def _match_paths(user, paths) -> dict[str, DeviceType]:
-    """Map each "<Manufacturer>/<Model>.<ext>" path to the visible device type it names exactly."""
+    """Map each "<Manufacturer>/<stem>.<ext>" path to the visible device type it names exactly.
+
+    The stem names a device type by its model, else by a part number of one device type only.
+    """
     keys = {}
     for path in paths:
         parts = PurePosixPath(path).parts
@@ -650,19 +653,29 @@ def _match_paths(user, paths) -> dict[str, DeviceType]:
             keys[path] = (parts[-2], PurePosixPath(parts[-1]).stem)
     if not keys:
         return {}
+    stems = {stem for _, stem in keys.values()}
     device_types = (
         permitted_device_types(user)
         .filter(
+            Q(model__in=stems) | Q(part_number__in=stems),
             manufacturer__name__in={manufacturer for manufacturer, _ in keys.values()},
-            model__in={model for _, model in keys.values()},
         )
         .select_related("manufacturer")
     )
-    by_key = {
-        (device_type.manufacturer.name, device_type.model): device_type
-        for device_type in device_types
-    }
-    return {path: by_key[key] for path, key in keys.items() if key in by_key}
+    by_model = {}
+    by_part_number = defaultdict(list)
+    for device_type in device_types:
+        manufacturer = device_type.manufacturer.name
+        by_model[manufacturer, device_type.model] = device_type
+        if device_type.part_number:
+            by_part_number[manufacturer, device_type.part_number].append(device_type)
+    matches = {}
+    for path, key in keys.items():
+        if key in by_model:
+            matches[path] = by_model[key]
+        elif len(by_part_number.get(key, ())) == 1:
+            matches[path] = by_part_number[key][0]
+    return matches
 
 
 def _target(user, device_type_id) -> tuple[DeviceType, DeviceView | None]:
