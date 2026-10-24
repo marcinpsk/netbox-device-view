@@ -14,12 +14,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
+from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models.signals import post_save, pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
@@ -154,6 +155,19 @@ class DataSourceImportTestBase(TestCase):
         )
         perm.users.add(self.user)
         perm.object_types.add(ObjectType.objects.get_for_model(model))
+
+    def compete_before_save(self, device_type):
+        """Create a device view for the type just before the import saves its own."""
+
+        def create_competing_view(sender, instance, **kwargs):
+            # bulk_create sends no signals, so this receiver runs once.
+            if instance.device_type_id == device_type.pk:
+                DeviceView.objects.bulk_create(
+                    [DeviceView(device_type=device_type, grid_template_area="x")]
+                )
+
+        pre_save.connect(create_competing_view, sender=DeviceView, weak=False)
+        self.addCleanup(pre_save.disconnect, create_competing_view, sender=DeviceView)
 
     def datafile(self, path=EXAMPLE_PATH):
         return self.source.datafiles.get(path=path)
@@ -945,6 +959,8 @@ class ReviewTests(DataSourceImportTestBase):
         payload = signing.loads(token, salt=datasource_import.SIGNING_SALT)
         self.assertEqual(payload["user"], self.user.pk)
         self.assertEqual(payload["source"], self.source.pk)
+        baseline = payload["rows"][0].pop("baseline")
+        self.assertRegex(baseline, r"^[0-9a-f]{64}$")
         self.assertEqual(
             payload["rows"],
             [
@@ -1128,19 +1144,12 @@ class ApplyTests(DataSourceImportTestBase):
     def test_concurrent_device_view_for_the_target_is_rejected(self):
         token = self.review_token([(self.datafile(), self.device_type)])
 
-        def create_competing_view(sender, instance, **kwargs):
-            # bulk_create sends no signals, so this receiver runs once.
-            DeviceView.objects.bulk_create(
-                [DeviceView(device_type=instance.device_type, grid_template_area="x")]
-            )
-
-        pre_save.connect(create_competing_view, sender=DeviceView)
-        self.addCleanup(pre_save.disconnect, create_competing_view, sender=DeviceView)
+        self.compete_before_save(self.device_type)
         response = self.apply(token)
         self.assert_rejected(response)
         self.assertContains(
             response,
-            "a device view already exists for this device type",
+            datasource_import.CONCURRENT_CREATE,
             status_code=400,
         )
 
@@ -1490,7 +1499,7 @@ class BulkImportTests(DataSourceImportTestBase):
         )
 
 
-class ReplacementTests(DataSourceImportTestBase):
+class ReplacementTestBase(DataSourceImportTestBase):
     OLD_YAML = (
         EXAMPLE_YAML.read_text()
         .replace("Cisco Catalyst 9300-24T", "Old model")
@@ -1515,6 +1524,24 @@ class ReplacementTests(DataSourceImportTestBase):
             changed_object_type=ObjectType.objects.get_for_model(DeviceView)
         )
 
+    def replace(self, path=EXAMPLE_PATH):
+        """Review a replacement of the existing device view as a browser would."""
+        response = self.review(
+            [(self.datafile(path), self.device_type)], replace=[self.datafile(path)]
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def apply_page(self, review):
+        return self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
+
+    def tab(self):
+        return self.client.get(
+            reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
+        )
+
+
+class ReplacementTests(ReplacementTestBase):
     def test_existing_target_defaults_to_skip(self):
         device_view = self.existing()
         match = self.match([self.datafile()])
@@ -1539,22 +1566,6 @@ class ReplacementTests(DataSourceImportTestBase):
         self.assertContains(response, "Nothing to apply")
         device_view.refresh_from_db()
         self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
-
-    def replace(self, path=EXAMPLE_PATH):
-        """Review a replacement of the existing device view as a browser would."""
-        response = self.review(
-            [(self.datafile(path), self.device_type)], replace=[self.datafile(path)]
-        )
-        self.assertEqual(response.status_code, 200)
-        return response
-
-    def apply_page(self, review):
-        return self.client.post(reverse(APPLY_URL), submitted(review, APPLY_URL))
-
-    def tab(self):
-        return self.client.get(
-            reverse("dcim:device_deviceview", kwargs={"pk": self.device.pk})
-        )
 
     def test_yaml_replacement_keeps_render_mode_and_unrelated_fields(self):
         owner = CustomField.objects.create(name="owner", type="text")
@@ -1710,15 +1721,6 @@ class ReplacementTests(DataSourceImportTestBase):
             ["create", "update"],
         )
 
-    def test_create_token_is_rejected_when_another_view_was_created(self):
-        token = self.review_token([(self.datafile(), self.device_type)])
-        self.existing()
-        response = self.apply(token)
-        self.assertContains(
-            response, datasource_import.EXISTING_DEVICE_VIEW, status_code=400
-        )
-        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
-
     def test_replace_requires_change_permission(self):
         self.existing()
         ObjectPermission.objects.filter(actions=["change"]).delete()
@@ -1839,6 +1841,174 @@ class ReplacementTests(DataSourceImportTestBase):
         again = submitted(rejected, REVIEW_URL)
         self.assertEqual(again[f"replace_{self.datafile().pk}"], ["on"])
         self.assertNotIn(f"replace_{self.datafile(manual).pk}", again)
+
+
+class DriftTests(ReplacementTestBase):
+    """Apply rejects a review whose source, file, target or permissions changed."""
+
+    def assert_stale(self, response):
+        self.assertContains(response, "No records were changed", status_code=400)
+        self.assertContains(response, "Review the import again", status_code=400)
+
+    def test_apply_needs_a_usable_source(self):
+        changes = {
+            "deleted": lambda source: DataSource.objects.filter(pk=source.pk).delete(),
+            "disabled": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                enabled=False
+            ),
+            "syncing": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.SYNCING
+            ),
+            "failed": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.FAILED
+            ),
+            "new": lambda source: DataSource.objects.filter(pk=source.pk).update(
+                status=DataSourceStatusChoices.NEW
+            ),
+        }
+        for name, change in changes.items():
+            with self.subTest(name), transaction.atomic():
+                token = self.review_token([(self.datafile(), self.device_type)])
+                change(self.source)
+                response = self.apply(token)
+                self.assertContains(
+                    response,
+                    "The Data Source is not available for import.",
+                    status_code=400,
+                )
+                self.assertFalse(DeviceView.objects.exists())
+                transaction.set_rollback(True)
+
+    def test_deleted_file_after_review_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        (self.repo / EXAMPLE_PATH).unlink()
+        self.source.sync()
+        response = self.apply(token)
+        self.assertContains(
+            response, datasource_import.FILE_UNAVAILABLE, status_code=400
+        )
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_add_permission_removed_after_review_rejects_apply(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        ObjectPermission.objects.filter(actions=["add"]).delete()
+        response = self.apply(token)
+        self.assertContains(
+            response,
+            "You do not have permission to add this device view.",
+            status_code=400,
+        )
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_edit_after_review_is_not_overwritten(self):
+        device_view = self.existing()
+        review = self.replace()
+        edited = self.OLD_YAML.replace("blank: 13", "blank: 12")
+        DeviceView.objects.filter(pk=device_view.pk).update(yaml_layout=edited)
+        self.assert_stale(self.apply_page(review))
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, edited)
+        self.assertFalse(self.device_view_changes().exists())
+
+    def test_render_mode_change_after_review_is_drift(self):
+        device_view = self.existing()
+        review = self.replace()
+        DeviceView.objects.filter(pk=device_view.pk).update(render_mode=RenderMode.CSS)
+        self.assertContains(
+            self.apply_page(review), "No records were changed", status_code=400
+        )
+        device_view.refresh_from_db()
+        self.assertEqual(device_view.yaml_layout, self.OLD_YAML)
+
+    def test_delete_after_review_is_drift(self):
+        # CSS rendering keeps the render-mode check equal, so the baseline check decides.
+        self.existing(render_mode=RenderMode.CSS)
+        review = self.replace()
+        DeviceView.objects.all().delete()
+        response = self.apply_page(review)
+        self.assert_stale(response)
+        self.assertContains(response, datasource_import.STALE_TARGET, status_code=400)
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_device_view_moved_to_another_type_after_review_is_drift(self):
+        device_view = self.existing()
+        review = self.replace()
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        DeviceView.objects.filter(pk=device_view.pk).update(device_type=other)
+        DeviceView.objects.create(
+            device_type=self.device_type,
+            yaml_layout=self.OLD_YAML,
+            grid_template_area=device_view.grid_template_area,
+            render_mode=RenderMode.SVG,
+        )
+        self.assert_stale(self.apply_page(review))
+        self.assertEqual(
+            set(DeviceView.objects.values_list("yaml_layout", flat=True)),
+            {self.OLD_YAML},
+        )
+
+    def test_renamed_device_type_after_review_is_drift(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        DeviceType.objects.filter(pk=self.device_type.pk).update(model="Renamed")
+        self.assert_stale(self.apply(token))
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_create_after_review_is_drift(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.existing()
+        self.assert_stale(self.apply(token))
+        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
+
+    def test_replay_needs_the_reviewed_permission(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.assertContains(self.apply(token), "Created: 1")
+        ObjectPermission.objects.filter(actions=["add"]).update(
+            constraints={"render_mode": RenderMode.SVG}
+        )
+        response = self.apply(token)
+        self.assertContains(
+            response,
+            "You do not have permission to add this device view.",
+            status_code=400,
+        )
+
+    def test_replay_after_the_record_changed_again_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.assertContains(self.apply(token), "Created: 1")
+        DeviceView.objects.update(yaml_layout=self.OLD_YAML)
+        self.assert_stale(self.apply(token))
+        self.assertEqual(DeviceView.objects.get().yaml_layout, self.OLD_YAML)
+
+    def test_constraint_conflict_reports_no_partial_success(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        manual = "examples/yaml/Cisco/Manual.yaml"
+        self.write_file(manual, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        token = self.review_token(
+            [(self.datafile(), self.device_type), (self.datafile(manual), other)]
+        )
+
+        self.compete_before_save(other)
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertContains(
+            response, datasource_import.CONCURRENT_CREATE, status_code=400
+        )
+        self.assertNotContains(response, "Created", status_code=400)
+
+    def test_token_without_a_baseline_is_not_valid(self):
+        payload = signing.loads(
+            self.review_token([(self.datafile(), self.device_type)]),
+            salt=datasource_import.SIGNING_SALT,
+        )
+        for row in payload["rows"]:
+            del row["baseline"]
+        token = signing.dumps(payload, salt=datasource_import.SIGNING_SALT)
+        self.assert_rejected(self.apply(token))
 
 
 class MigrationTests(TestCase):
