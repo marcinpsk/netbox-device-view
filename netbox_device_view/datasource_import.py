@@ -14,6 +14,7 @@ import hashlib
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import PurePosixPath
 
 from core.choices import DataSourceStatusChoices
@@ -163,7 +164,7 @@ class ReviewRow:
     def is_skipped(self):
         return self.action == Action.SKIP
 
-    @property
+    @cached_property
     def changes(self) -> list[FieldChange]:
         """Return a line diff for each imported field that differs from the current record."""
         return [

@@ -1572,6 +1572,8 @@ class ReplacementTests(DataSourceImportTestBase):
             [change.name for change in row.changes],
             ["yaml_layout", "grid_template_area"],
         )
+        # The template reads the diff several times; it is computed once per row.
+        self.assertIs(row.changes, row.changes)
         lines = row.changes[0].lines
         self.assertEqual(lines[:2], [("hunk", "--- current"), ("hunk", "+++ proposed")])
         self.assertIn(("remove", '-  description: "Old model"'), lines)
