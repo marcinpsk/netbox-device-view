@@ -542,6 +542,104 @@ class SuggestionTests(DataSourceImportTestBase):
                 finally:
                     permissions.update(constraints=None)
 
+    def create_device_type(self, model, part_number):
+        return DeviceType.objects.create(
+            manufacturer=self.manufacturer,
+            model=model,
+            slug=slugify(model),
+            part_number=part_number,
+        )
+
+    def write_layouts(self, *paths):
+        for path in paths:
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+
+    def test_part_number_match_is_suggested(self):
+        device_type = self.create_device_type("Catalyst 8300-1N1S-6T", "C8300-1N1S-6T")
+        Manufacturer.objects.create(name="Generic", slug="generic")
+        path = "examples/Cisco/C8300-1N1S-6T.yaml"
+        unmatched = [
+            "examples/Cisco/c8300-1n1s-6t.yaml",
+            "examples/Cisco/C8300_1N1S_6T.yaml",
+            "examples/Generic/C8300-1N1S-6T.yaml",
+        ]
+        self.write_layouts(path, *unmatched)
+        rows = self.rows()
+        self.assertEqual(rows[path].suggestion, device_type)
+        self.assertEqual(rows[path].state, datasource_import.TargetState.NO_DEVICE_VIEW)
+        self.assertEqual(rows[path].problems, [])
+        self.assertTrue(rows[path].is_selectable)
+        for other_path in unmatched:
+            with self.subTest(path=other_path):
+                self.assertIsNone(rows[other_path].suggestion)
+                self.assertEqual(
+                    rows[other_path].problems, [datasource_import.NO_MATCH]
+                )
+        datafile = self.datafile(path)
+        self.assert_preselected(self.match([datafile]), datafile, device_type)
+
+    def test_model_match_wins_over_part_number_match(self):
+        datafile = self.datafile()
+        # First one device type has the part number, then two have it.
+        for model in ("Catalyst 9300-24T", "Catalyst 9300-24T-E"):
+            self.create_device_type(model, "C9300-24T")
+            with self.subTest(model=model):
+                row = self.rows()[EXAMPLE_PATH]
+                self.assertEqual(row.suggestion, self.device_type)
+                self.assertEqual(row.problems, [])
+                self.assert_preselected(
+                    self.match([datafile]), datafile, self.device_type
+                )
+
+    def test_part_number_of_several_device_types_is_not_suggested(self):
+        device_type = self.create_device_type("Catalyst 8300-1N1S-6T", "C8300-1N1S-6T")
+        self.create_device_type("Catalyst 8300-1N1S-6T-E", "C8300-1N1S-6T")
+        path = "examples/Cisco/C8300-1N1S-6T.yaml"
+        self.write_layouts(path)
+        row = self.rows()[path]
+        self.assertIsNone(row.suggestion)
+        self.assertEqual(row.problems, [datasource_import.NO_MATCH])
+        self.assertFalse(row.is_selectable)
+        datafile = self.datafile(path)
+        self.assert_preselected(self.match([datafile]), datafile, None)
+        self.review_token([(datafile, device_type)])
+
+    def test_part_number_and_model_files_of_one_device_type_are_ambiguous(self):
+        device_type = self.create_device_type("Catalyst 8300-1N1S-6T", "C8300-1N1S-6T")
+        paths = [
+            "examples/Cisco/C8300-1N1S-6T.yaml",
+            "examples/Cisco/Catalyst 8300-1N1S-6T.yaml",
+        ]
+        self.write_layouts(*paths)
+        rows = self.rows()
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(rows[path].suggestion, device_type)
+                self.assertEqual(
+                    rows[path].problems, [datasource_import.AMBIGUOUS_MATCH]
+                )
+                self.assertFalse(rows[path].is_selectable)
+
+    def test_hidden_device_type_with_the_part_number_is_not_suggested(self):
+        self.create_device_type("Hidden 8300", "C8300-1N1S-6T")
+        path = "examples/Cisco/C8300-1N1S-6T.yaml"
+        self.write_layouts(path)
+        ObjectPermission.objects.filter(
+            object_types=ObjectType.objects.get_for_model(DeviceType)
+        ).update(constraints={"model__in": ["C9300-24T", "Catalyst 8300-1N1S-6T"]})
+        response = self.catalog()
+        row = {row.datafile.path: row for row in response.context["rows"]}[path]
+        self.assertIsNone(row.suggestion)
+        self.assertEqual(row.problems, [datasource_import.NO_MATCH])
+        self.assertNotContains(response, "Hidden 8300")
+
+        # The hidden device type does not make the visible one ambiguous.
+        visible = self.create_device_type("Catalyst 8300-1N1S-6T", "C8300-1N1S-6T")
+        row = self.rows()[path]
+        self.assertEqual(row.suggestion, visible)
+        self.assertEqual(row.problems, [])
+
     def test_visible_existing_device_view_is_shown_and_preselected(self):
         device_view = DeviceView.objects.create(
             device_type=self.device_type, grid_template_area="x"
