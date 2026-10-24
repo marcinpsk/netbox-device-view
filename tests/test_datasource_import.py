@@ -20,7 +20,7 @@ from django.conf import settings
 from django.core import signing
 from django.core.management import call_command
 from django.db import connection
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_init, post_save, pre_save
 from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -167,6 +167,17 @@ class DataSourceImportTestBase(TestCase):
 
     def apply(self, token):
         return self.client.post(reverse(APPLY_URL), {"token": token})
+
+    def delete_when_read(self, datafile):
+        """Delete the DataFile after the import reads its row and before it loads the content."""
+
+        def delete(sender, instance, **kwargs):
+            if instance.pk == datafile.pk and "data" in instance.get_deferred_fields():
+                post_init.disconnect(delete, sender=DataFile)
+                DataFile.objects.filter(pk=datafile.pk).delete()
+
+        post_init.connect(delete, sender=DataFile, weak=False)
+        self.addCleanup(post_init.disconnect, delete, sender=DataFile)
 
     def assert_rejected(self, response):
         self.assertEqual(response.status_code, 400)
@@ -843,6 +854,17 @@ class CssImportTests(DataSourceImportTestBase):
 
 
 class ReviewTests(DataSourceImportTestBase):
+    def test_file_deleted_while_review_reads_it_is_a_row_error(self):
+        datafile = self.datafile()
+        self.delete_when_read(datafile)
+        response = self.review([(datafile, self.device_type)])
+        self.assertEqual(response.status_code, 200)
+        review = response.context["review"]
+        self.assertEqual(
+            [row.error for row in review.rows], [datasource_import.FILE_UNAVAILABLE]
+        )
+        self.assertEqual(review.token, "")
+
     def test_review_is_read_only_and_token_holds_no_content(self):
         datafile = self.datafile()
         token = self.review_token([(datafile, self.device_type)])
@@ -1057,6 +1079,15 @@ class ApplyTests(DataSourceImportTestBase):
         self.write_file(EXAMPLE_PATH, EXAMPLE_YAML.read_bytes() + b"\n# edited\n")
         self.source.sync()
         self.assert_rejected(self.apply(token))
+
+    def test_file_deleted_while_apply_reads_it_is_rejected(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.delete_when_read(self.datafile())
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertContains(
+            response, datasource_import.FILE_UNAVAILABLE, status_code=400
+        )
 
     def test_pages_require_add_permission(self):
         ObjectPermission.objects.filter(actions=["add"]).delete()

@@ -397,8 +397,11 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile:
         raise ValidationError(FILE_UNAVAILABLE)
     if datafile.stored_bytes > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)
-    # The deferred content loads in a second query, and a sync can replace it first.
-    content = bytes(datafile.data)
+    # The deferred content loads in a second query, and a sync can replace or delete it first.
+    try:
+        content = bytes(datafile.data)
+    except DataFile.DoesNotExist:
+        raise ValidationError(FILE_UNAVAILABLE) from None
     if len(content) > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)
     return _SourceFile(path=datafile.path, format=file_format, content=content)
