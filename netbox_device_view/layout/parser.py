@@ -227,24 +227,26 @@ class _Rules:
     elements_left: int = MAX_EXPANDED_ELEMENTS
     cells_left: int = MAX_RENDERED_CELLS
 
-    def optional_mapping(self, raw: Any, kind: str, where: str) -> Any:
-        if not self.strict:
-            return raw or {}
+    def optional_mapping(self, raw: Any, kind: str, where: str) -> dict[str, Any]:
         return self.mapping({} if raw is None else raw, kind, where)
 
-    def named_mapping(self, raw: Any, where: str) -> Any:
+    def named_mapping(self, raw: Any, where: str) -> dict[Any, Any]:
         """Return a mapping whose keys are names, such as views or variants."""
-        if self.strict and raw is not None and not isinstance(raw, dict):
+        if isinstance(raw, dict):
+            return raw
+        if self.strict and raw is not None:
             raise LayoutParseError(f"{where}: must be a mapping.")
-        return raw or {}
+        return {}
 
-    def mapping(self, raw: Any, kind: str, where: str) -> Any:
-        if self.strict:
-            if not isinstance(raw, dict):
-                raise LayoutParseError(f"{where}: must be a mapping.")
-            unknown = sorted(str(key) for key in raw if key not in _KEYS[kind])
-            if unknown:
-                raise LayoutParseError(f"{where}: unknown key {', '.join(unknown)}.")
+    def mapping(self, raw: Any, kind: str, where: str) -> dict[str, Any]:
+        """Return ``raw`` as a mapping; lenient mode reads a non-mapping as empty."""
+        if not self.strict:
+            return raw if isinstance(raw, dict) else {}
+        if not isinstance(raw, dict):
+            raise LayoutParseError(f"{where}: must be a mapping.")
+        unknown = sorted(str(key) for key in raw if key not in _KEYS[kind])
+        if unknown:
+            raise LayoutParseError(f"{where}: unknown key {', '.join(unknown)}.")
         return raw
 
     def one_of(self, raw: Any, keys: tuple[str, ...], where: str) -> None:
@@ -379,7 +381,7 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
         raise LayoutParseError("Layout must be a YAML mapping at the top level.")
     if strict:
         _reject_recursive_aliases(data)
-    rules.mapping(data, "layout", "layout")
+    data = rules.mapping(data, "layout", "layout")
 
     version = data.get("version", 1)
     if rules.integer(version, "version", 1) != SUPPORTED_VERSION:
@@ -435,7 +437,7 @@ def _compile_views(
     for view_name, view_data in raw_views.items():
         where = f"views.{view_name}"
         rules.text(view_name, f"{where} (view name)", _VIEW_NAMES)
-        rules.mapping(view_data, "view", where)
+        view_data = rules.mapping(view_data, "view", where)
         face = _parse_face(view_name)
         view_bg = rules.background(view_data.get("background"), where) or global_bg
         view_canvas = _parse_canvas(
@@ -471,7 +473,7 @@ def _compile_variants(
             raise LayoutParseError(
                 f"{where}: the variant name must match {VARIANT_NAME.pattern}."
             )
-        rules.mapping(variant_data, "variant", where)
+        variant_data = rules.mapping(variant_data, "variant", where)
         rules.text(variant_data.get("match", "module"), f"{where}.match", ("module",))
         variant_view_name = rules.text(
             variant_data.get("view", "front"), f"{where}.view", _VIEW_NAMES
@@ -507,9 +509,7 @@ def _parse_canvas(
     parent: CanvasConfig | None = None,
 ) -> CanvasConfig:
     """Merge canvas config from raw dict, inheriting from parent if given."""
-    rules.mapping(raw, "canvas", where)
-    if not isinstance(raw, dict):
-        raw = {}
+    raw = rules.mapping(raw, "canvas", where)
     p = parent or CanvasConfig()
     canvas = CanvasConfig(
         columns=rules.integer(raw.get("columns", p.columns), f"{where}.columns", 1),
@@ -541,8 +541,6 @@ def _compile_view(
     rules: _Rules,
 ) -> LayoutView:
     """Compile a single view, handling copy_from."""
-    if not isinstance(view_data, dict):
-        view_data = {}
     where = f"views.{view_name}"
 
     # Handle copy_from
@@ -818,7 +816,7 @@ def _expand_sequence(
     """
     if not isinstance(seq, dict):
         raise LayoutParseError("'sequence' must be a mapping.")
-    rules.mapping(seq, "sequence", where)
+    seq = rules.mapping(seq, "sequence", where)
 
     kind_str = rules.text(seq.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
@@ -922,7 +920,7 @@ def _expand_group(
     """
     if not isinstance(group, dict):
         raise LayoutParseError("'group' must be a mapping.")
-    rules.mapping(group, "group", where)
+    group = rules.mapping(group, "group", where)
 
     spacer_width = rules.integer(group.get("spacer", 1), f"{where}.spacer")
     sections = rules.items(group.get("sections", []), f"{where}.sections")
@@ -1044,7 +1042,7 @@ def _expand_element(
     default_col: int = 1,
 ) -> list[PlacedElement]:
     """Compile a single explicit element dict."""
-    rules.mapping(raw, "element", where)
+    raw = rules.mapping(raw, "element", where)
     rules.take(1)
     kind_str = rules.text(raw.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
