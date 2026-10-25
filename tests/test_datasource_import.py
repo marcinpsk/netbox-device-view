@@ -898,6 +898,8 @@ class CssImportTests(DataSourceImportTestBase):
             "escape": base.replace('"a b"', '"\\61  b"'),
             "important": base.replace('";', '" !important;'),
             "row-widths": base.replace('"a b"', '"a b" "c"'),
+            "number-row": base.replace('"a b"', "1"),
+            "percentage-row": base.replace('"a b"', '"a b" 5%'),
             "sizing": base.replace("{", "{ grid-auto-rows: 20px;"),
             "other-class": base.replace(".area", ".area.other"),
             "type-selector": base.replace(".deviceview", "div.deviceview"),

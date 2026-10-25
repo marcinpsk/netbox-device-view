@@ -173,7 +173,19 @@ def test_rejected_declarations(declaration, match):
 
 @pytest.mark.parametrize(
     "areas",
-    ['"p1 p2" "p3"', '""', '"  "', "none", "", '"1p"', '"pé"', '"p1 .x"', '"p1" none'],
+    [
+        '"p1 p2" "p3"',
+        '""',
+        '"  "',
+        "none",
+        "",
+        '"1p"',
+        '"pé"',
+        '"p1 .x"',
+        '"p1" none',
+        "1",
+        '"p1" 5%',
+    ],
 )
 def test_invalid_grid_areas_are_rejected(areas):
     rejected(BASE.replace('"p1 p2" "p3 ."', areas), "grid-template-areas")

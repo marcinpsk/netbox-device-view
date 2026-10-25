@@ -114,16 +114,13 @@ def _check_grid_areas(values: list[Any]) -> bool:
     if not values:
         raise LayoutParseError("grid-template-areas: the value is empty.")
     for token in values:
-        cells = [
-            cell for cell in _CSS_WHITESPACE.split(getattr(token, "value", "")) if cell
-        ]
-        if (
-            token.type != "string"
-            or not cells
-            or not all(
-                IDENTIFIER.fullmatch(cell) or _EMPTY_CELL.fullmatch(cell)
-                for cell in cells
-            )
+        cells = (
+            [cell for cell in _CSS_WHITESPACE.split(token.value) if cell]
+            if token.type == "string"
+            else []
+        )
+        if not cells or not all(
+            IDENTIFIER.fullmatch(cell) or _EMPTY_CELL.fullmatch(cell) for cell in cells
         ):
             raise LayoutParseError(
                 "grid-template-areas: each row must be a string of area "
