@@ -79,9 +79,18 @@ class DeviceViewEditView(generic.ObjectEditView):
     template_name = "netbox_device_view/deviceview_edit.html"
 
 
+# The largest PostgreSQL bigint; a larger value makes the id comparison skip the index.
+MAX_PK = 2**63 - 1
+
+
 def _parse_pk(value):
     """Return value as a primary key, or None; isdigit() alone also accepts "²"."""
-    if value.isascii() and value.isdigit() and len(value) <= 19:
+    if (
+        value.isascii()
+        and value.isdigit()
+        and len(value) <= 19
+        and int(value) <= MAX_PK
+    ):
         return int(value)
     return None
 

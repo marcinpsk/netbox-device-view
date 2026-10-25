@@ -1150,6 +1150,22 @@ class ReviewTests(DataSourceImportTestBase):
                 )
                 self.assertEqual(response.status_code, 302)
 
+    def test_file_selection_above_bigint_is_not_queried(self):
+        # PostgreSQL compares a bigint id with a larger value as numeric, without the index.
+        value = str(2**63)
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post(
+                reverse(REVIEW_URL),
+                {
+                    "source": self.source.pk,
+                    "prefix": "examples/",
+                    "step": "match",
+                    "file": [value],
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse([q["sql"] for q in queries if value in q["sql"]])
+
     def test_two_files_for_one_device_type_are_rejected_until_one_is_kept(self):
         other_path = "examples/yaml/Cisco/Other.yaml"
         self.write_file(other_path, EXAMPLE_YAML.read_bytes())
