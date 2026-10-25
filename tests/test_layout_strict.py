@@ -17,6 +17,7 @@ from netbox_device_view.layout.parser import (
     MAX_CSS_CLASSES,
     MAX_EXPANDED_ELEMENTS,
     MAX_KEY_LENGTH,
+    MAX_PAINTED_CELLS,
     MAX_RENDERED_CELLS,
     LayoutParseError,
     parse,
@@ -380,6 +381,36 @@ class TestReviewFindings:
             d["variants"] = {f"V{i}": {"elements": []} for i in range(40)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_RENDERED_CELLS} cells"):
+            strict(layout(change))
+
+    def test_painted_cells_are_bounded(self):
+        # Each element paints its whole span, so full-canvas elements multiply the cost.
+        def change(d):
+            d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
+            d["variants"] = {}
+            del front(d)["rows"]
+            front(d)["elements"] = [
+                {
+                    "kind": "port",
+                    "key": f"p{i}",
+                    "span": {"rows": MAX_CANVAS_ROWS, "cols": 64},
+                }
+                for i in range(MAX_PAINTED_CELLS // (64 * MAX_CANVAS_ROWS) + 1)
+            ]
+
+        with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
+            strict(layout(change))
+
+    def test_base_elements_are_charged_in_every_variant(self):
+        # Each variant renders the base elements again, also those outside the canvas.
+        def change(d):
+            d["canvas"] = {"columns": 1, "rows": 1}
+            front(d)["rows"] = [
+                {"sequence": {"kind": "interface", "prefix": "eth", "count": 1000}}
+            ]
+            d["variants"] = {f"V{i}": {"elements": []} for i in range(100)}
+
+        with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
             strict(layout(change))
 
     def test_canvas_rows_are_bounded(self):

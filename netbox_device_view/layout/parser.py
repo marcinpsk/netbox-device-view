@@ -97,6 +97,7 @@ from .model import (
     NormalizedLayout,
     PlacedElement,
 )
+from .renderers.css_grid import painted_area
 
 # ── Schema version supported by this parser ──────────────────────────────────
 SUPPORTED_VERSION = 1
@@ -131,6 +132,8 @@ MAX_CANVAS_ROWS = 64
 MAX_EXPANDED_ELEMENTS = 10000
 # Every view and variant renders its whole canvas grid again.
 MAX_RENDERED_CELLS = 4 * MAX_CANVAS_CELLS
+# Each element costs its painted cells, at least one, in every render that includes it.
+MAX_PAINTED_CELLS = 4 * MAX_RENDERED_CELLS
 MAX_CELL_SIZE = 100
 MAX_LABEL_LENGTH = 64
 MAX_KEY_LENGTH = 64
@@ -1137,6 +1140,36 @@ def _check_elements(layout: NormalizedLayout) -> None:
         for where, elements in element_sets:
             for el in elements:
                 _check_element(el, where)
+    _check_painted_cells(layout)
+
+
+def _check_painted_cells(layout: NormalizedLayout) -> None:
+    """Bound the cells that the CSS renderer paints over all views and variants."""
+    painted = 0
+    for view_name, view in layout.views.items():
+        cost = {id(el): _painted_cells(el, view.canvas) for el in view.elements}
+        painted += sum(cost.values())
+        # A variant renders the base elements, and its own elements replace them by key.
+        base = {el.key: cost[id(el)] for el in view.elements}
+        base_total = sum(base.values())
+        for elements in view.variants.values():
+            keys = {el.key for el in elements}
+            painted += base_total - sum(base.get(key, 0) for key in keys)
+            painted += sum(
+                _painted_cells(el, view.canvas)
+                for el in {el.key: el for el in elements}.values()
+            )
+        if painted > MAX_PAINTED_CELLS:
+            raise LayoutParseError(
+                f"views.{view_name}: the views and variants paint more than "
+                f"{MAX_PAINTED_CELLS} grid cells in total."
+            )
+
+
+def _painted_cells(el: PlacedElement, canvas: CanvasConfig) -> int:
+    """Return the cells the renderer writes for ``el``, at least one."""
+    rows, cols = painted_area(el, canvas)
+    return len(rows) * len(cols) or 1
 
 
 def _key_error(where: str, key: Any) -> str:

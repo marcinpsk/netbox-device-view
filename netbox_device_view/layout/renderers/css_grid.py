@@ -149,19 +149,10 @@ def _elements_to_grid_template_areas(
     sorted_elements = sorted(elements, key=lambda e: (e.row, e.col))
 
     for el in sorted_elements:
-        r_start = el.row - 1  # convert to 0-based
-        c_start = el.col - 1
-        r_end = r_start + el.row_span
-        c_end = c_start + el.col_span
-
-        # Clamp to canvas bounds
-        r_end = min(r_end, rows)
-        c_end = min(c_end, cols)
-
-        for r in range(r_start, r_end):
-            for c in range(c_start, c_end):
-                if 0 <= r < rows and 0 <= c < cols:
-                    grid[r][c] = el.key
+        row_range, col_range = painted_area(el, canvas)
+        for r in row_range:
+            for c in col_range:
+                grid[r][c] = el.key
 
     # Replace remaining "." placeholders with unique generated names
     # CSS grid-template-areas requires that named areas form a contiguous
@@ -169,6 +160,13 @@ def _elements_to_grid_template_areas(
     # browsers handle it.  We leave them as "." for simplicity.
 
     return [" ".join(row) for row in grid]
+
+
+def painted_area(el: PlacedElement, canvas: CanvasConfig) -> tuple[range, range]:
+    """Return the 0-based rows and columns that ``el`` paints, clamped to ``canvas``."""
+    rows = range(max(el.row - 1, 0), min(el.row - 1 + el.row_span, canvas.rows))
+    cols = range(max(el.col - 1, 0), min(el.col - 1 + el.col_span, canvas.columns))
+    return rows, cols
 
 
 def _is_patch_panel_canvas(canvas: CanvasConfig) -> bool:
