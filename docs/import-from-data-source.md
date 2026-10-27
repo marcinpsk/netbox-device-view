@@ -142,7 +142,7 @@ If a file has the same layout as the device view, the result is **Unchanged**. T
 
 ## What the import checks
 
-- **Content:** YAML layouts must pass the [YAML layout](layout-yaml.md) validation. CSS layouts can contain only the grid rules that the plugin renders:
+- **Content:** YAML layouts must pass the [YAML layout](layout-yaml.md) validation. Each element of a view or a variant must be fully inside the canvas of its view. CSS layouts can contain only the grid rules that the plugin renders:
     - selectors: one compound class selector with `.deviceview.area`, and optionally one module class and `.dFront` or `.dRear`;
     - `grid-template-areas`: strings of area names or dots, with the same number of cells in each row;
     - `grid-auto-rows` and `grid-auto-columns`: the value `auto` only;
