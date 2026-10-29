@@ -142,10 +142,53 @@ class DefinitionPageTests(TransferTestCase):
         # NetBox 4.5+ shows object.owner (a users.Owner) in the page header.
         self.assertNotContains(detail, 'title="Owner"')
 
-    def test_the_detail_page_shows_the_offline_uploads(self):
-        detail = self.client.get(reverse(DETAIL_URL, args=[self.visual.pk]))
+    def test_every_page_names_the_offline_uploads_the_same_way(self):
+        revision = DefinitionRevision.objects.get()
 
-        self.assertContains(detail, "Offline uploads")
+        pages = [
+            self.client.get(reverse(LIST_URL)),
+            self.client.get(reverse(DETAIL_URL, args=[self.visual.pk])),
+            self.client.get(reverse(REVISION_URL, args=[revision.pk])),
+        ]
+        edit = self.client.get(reverse(EDIT_URL, args=[self.visual.pk]))
+
+        for page in pages:
+            self.assertContains(page, "Offline uploads")
+        self.assertContains(edit, "Leave empty for the offline uploads.")
+
+
+class KeyOwnerFilterTests(TransferTestCase):
+    def setUp(self):
+        super().setUp()
+        self.owned = VisualDefinition.objects.create(
+            key="acme/owned", kind="device", key_owner=self.source
+        )
+
+    def listed_keys(self, query):
+        response = self.client.get(reverse(LIST_URL), query)
+        return [row.record.key for row in response.context["table"].page.object_list]
+
+    def api_keys(self, query):
+        response = self.api().get(reverse(API_LIST), query)
+        return [item["key"] for item in response.json()["results"]]
+
+    def test_the_list_filters_by_the_key_owner(self):
+        self.assertEqual(
+            self.listed_keys({"key_owner_id": self.source.pk}), ["acme/owned"]
+        )
+        self.assertEqual(self.listed_keys({"key_owner_id": "null"}), ["acme/sw-24"])
+
+    def test_the_api_filters_by_the_key_owner(self):
+        self.assertEqual(
+            self.api_keys({"key_owner_id": self.source.pk}), ["acme/owned"]
+        )
+        self.assertEqual(self.api_keys({"key_owner_id": "null"}), ["acme/sw-24"])
+
+    def test_the_filter_form_offers_the_offline_uploads(self):
+        response = self.client.get(reverse(LIST_URL))
+
+        self.assertContains(response, 'name="key_owner_id"')
+        self.assertContains(response, 'data-null-option="Offline uploads"')
 
 
 class TransferPermissionTests(TransferTestCase):
