@@ -1,0 +1,65 @@
+{% extends 'generic/_base.html' %}
+{% load form_helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Import an Artwork Bundle" %}{% endblock %}
+
+{% block content %}
+  <div class="row">
+    <div class="col col-md-10 col-lg-8">
+      <p class="text-muted">
+        {% trans "The import validates the whole bundle and stores each visual definition as a candidate revision. It does not change any device view." %}
+      </p>
+      {% if issues %}
+        <div class="card mb-3 border-danger">
+          <h2 class="card-header text-danger">{% trans "The bundle was not imported" %}</h2>
+          <ul class="list-group list-group-flush">
+            {% for issue in issues %}
+              <li class="list-group-item font-monospace text-break">{{ issue }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+      {% if results %}
+        <div class="card mb-3">
+          <h2 class="card-header">{% trans "Imported revisions" %}</h2>
+          <table class="table table-hover attr-table mb-0">
+            <thead>
+              <tr>
+                <th>{% trans "Definition key" %}</th>
+                <th>{% trans "Digest" %}</th>
+                <th>{% trans "Result" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for result in results %}
+                <tr>
+                  <td><a href="{{ result.revision.get_absolute_url }}">{{ result.revision.definition.key }}</a></td>
+                  <td class="font-monospace text-break">{{ result.revision.digest }}</td>
+                  <td>
+                    {% if result.created %}
+                      <span class="badge text-bg-success">{% trans "Imported" %}</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">{% trans "Already imported" %}</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+      <form method="post" enctype="multipart/form-data" class="card">
+        {% csrf_token %}
+        <h2 class="card-header">{% trans "Bundle" %}</h2>
+        <div class="card-body">
+          {% render_field form.bundle %}
+          <div class="text-end">
+            <a href="{% url 'plugins:netbox_device_view:definitionrevision_list' %}" class="btn btn-outline-secondary">{% trans "Artwork revisions" %}</a>
+            <button type="submit" class="btn btn-primary">{% trans "Import" %}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

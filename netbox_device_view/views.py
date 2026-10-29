@@ -15,6 +15,7 @@ from netbox.object_actions import (
     AddObject,
     BulkExport,
     BulkImport,
+    DeleteObject,
     ObjectAction,
 )
 from netbox.views import generic
@@ -29,6 +30,8 @@ from utilities.views import (
 from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
+from .artwork import importing as artwork_importing
+from .artwork.errors import ArtworkError
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -339,3 +342,61 @@ class DeviceDeviceView(generic.ObjectView):
         return get_object_or_404(
             Device.objects.restrict(self.request.user, "view"), pk=kwargs.get("pk")
         )
+
+
+class ImportArtworkBundle(ObjectAction):
+    name = "import"
+    label = _("Import bundle")
+    template_name = "netbox_device_view/buttons/artwork_import.html"
+    permissions_required = frozenset({"add"})
+
+
+class DefinitionRevisionListView(generic.ObjectListView):
+    queryset = models.DefinitionRevision.objects.select_related("definition")
+    table = tables.DefinitionRevisionTable
+    actions = (ImportArtworkBundle,)
+
+
+class DefinitionRevisionView(generic.ObjectView):
+    queryset = models.DefinitionRevision.objects.select_related("definition")
+    actions = (DeleteObject,)
+
+    def get_extra_context(self, request, instance):
+        return {
+            "files": instance.files.select_related("blob"),
+            "imports": instance.imports.all(),
+        }
+
+
+class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
+    queryset = models.DefinitionRevision.objects.all()
+
+
+class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
+    """Upload an offline artwork bundle and import its definitions as candidate revisions."""
+
+    template_name = "netbox_device_view/artwork_import.html"
+
+    def get_required_permission(self):
+        return artwork_importing.PERMISSION
+
+    def get(self, request):
+        return render(
+            request, self.template_name, {"form": forms.ArtworkBundleImportForm()}
+        )
+
+    def post(self, request):
+        form = forms.ArtworkBundleImportForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return render(request, self.template_name, {"form": form}, status=400)
+        upload = form.cleaned_data["bundle"]
+        try:
+            results = artwork_importing.import_bundle(request.user, upload.name, upload)
+        except ArtworkError as exc:
+            return render(
+                request,
+                self.template_name,
+                {"form": form, "issues": exc.issues},
+                status=400,
+            )
+        return render(request, self.template_name, {"form": form, "results": results})

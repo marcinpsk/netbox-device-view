@@ -132,3 +132,10 @@ class DataSourceImportTargetForm(forms.Form):
             )
             for datafile in self.datafiles
         ]
+
+
+class ArtworkBundleImportForm(forms.Form):
+    bundle = forms.FileField(
+        label=_("Bundle"),
+        help_text=_("A .zip file with one directory per visual definition."),
+    )

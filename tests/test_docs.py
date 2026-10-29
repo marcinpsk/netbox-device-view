@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
+from netbox_device_view.artwork import limits
 from netbox_device_view.forms import DataSourceImportSourceForm
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
 
@@ -33,3 +34,26 @@ def test_requirements_state_the_minimum_netbox_version():
     major, minor, _ = NetBoxDeviceViewConfig.min_version.split(".")
     for path in ("README.md", "docs/installation.md"):
         assert f"- NetBox {major}.{minor}+ " in (ROOT / path).read_text(), path
+
+
+MIB = 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"| Bundle file | {limits.MAX_BUNDLE_BYTES // MIB} MiB compressed |",
+        f"| Bundle content | {limits.MAX_EXPANDED_BYTES // MIB} MiB expanded |",
+        f"| Compression ratio | {limits.MAX_COMPRESSION_RATIO}:1 per member |",
+        f"| Definitions | {limits.MAX_DEFINITIONS} per bundle |",
+        f"| Files | {limits.MAX_FILES_PER_DEFINITION} per definition |",
+        f"| Manifest | {limits.MAX_MANIFEST_BYTES // 1024} KiB |",
+        f"| SVG file | {limits.MAX_SVG_BYTES // MIB} MiB |",
+        f"| SVG elements | {limits.MAX_SVG_ELEMENTS} per file |",
+        f"| SVG nesting | {limits.MAX_SVG_DEPTH} levels |",
+        f"| `use` expansion | {limits.MAX_USE_EXPANSION_NODES} nodes, {limits.MAX_USE_DEPTH} levels |",
+        f"| `viewBox` size | {limits.MIN_VIEWBOX_SIZE} to {limits.MAX_VIEWBOX_SIZE} mm |",
+    ],
+)
+def test_artwork_page_states_the_code_limits(statement):
+    assert statement in (ROOT / "docs" / "artwork-bundles.md").read_text()
