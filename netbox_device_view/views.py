@@ -402,6 +402,7 @@ class VisualDefinitionListView(generic.ObjectListView):
     )
     table = tables.VisualDefinitionTable
     filterset = filtersets.VisualDefinitionFilterSet
+    filterset_form = forms.VisualDefinitionFilterForm
     actions = ()
 
 

@@ -43,7 +43,7 @@ def can_import(user) -> bool:
 
 def _key_owner_name(visual: VisualDefinition) -> str:
     if visual.key_owner is None:
-        return "the offline uploads"
+        return f"the {VisualDefinition.OFFLINE_UPLOADS}"
     return f"the Data Source {visual.key_owner.name}"
 
 
