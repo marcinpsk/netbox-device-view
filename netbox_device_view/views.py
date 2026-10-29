@@ -1,6 +1,6 @@
 import secrets
 
-from core.models import ObjectChange
+from core.models import DataSource, ObjectChange
 from core.tables import ObjectChangeTable
 from dcim.models import Device
 from django.contrib import messages
@@ -539,7 +539,10 @@ class ArtworkSourceImportView(
                 if source
                 else None
             ),
-            "can_sync": request.user.has_perm("core.sync_datasource"),
+            "can_sync": source is not None
+            and DataSource.objects.restrict(request.user, "sync")
+            .filter(pk=source.pk)
+            .exists(),
             "sync_url": source and self._sync_url(request, source, form),
             "can_view_list": _can_view_list(request.user),
             **extra,

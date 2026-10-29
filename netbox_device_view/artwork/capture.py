@@ -12,6 +12,8 @@ from django.db.models import (
     Count,
     Exists,
     F,
+    Func,
+    IntegerField,
     OuterRef,
     Q,
     Subquery,
@@ -21,9 +23,9 @@ from django.db.models import (
 )
 
 from ..models import SourceSyncRun
-from .bundle import MAX_MEMBERS, is_safe_path
+from .bundle import is_safe_path
 from .errors import ArtworkError, Issue
-from .limits import MAX_EXPANDED_BYTES, MAX_SVG_BYTES
+from .limits import MAX_EXPANDED_BYTES, MAX_MEMBERS, MAX_SVG_BYTES
 
 SOURCE = "data source"
 NOT_SYNCED = (
@@ -56,10 +58,16 @@ def _files(user, source: DataSource, prefix: str):
     within_limits = Q(
         file_count__lte=MAX_MEMBERS,
         total_size__lte=MAX_EXPANDED_BYTES,
-        size__lte=MAX_SVG_BYTES,
+        data_size__lte=MAX_SVG_BYTES,
     )
     return (
         DataFile.objects.filter(source=source, path__startswith=prefix)
+        # The size column can disagree with the data, so the limits use the stored bytes.
+        .annotate(
+            data_size=Func(
+                F("data"), function="octet_length", output_field=IntegerField()
+            )
+        )
         .annotate(
             status=F("source__status"),
             synced=F("source__last_synced"),
@@ -67,7 +75,7 @@ def _files(user, source: DataSource, prefix: str):
             run_finished=Subquery(newest_run.values("finished")[:1]),
             viewable=Exists(viewable),
             file_count=Window(Count("pk")),
-            total_size=Window(Sum("size")),
+            total_size=Window(Sum("data_size")),
         )
         # Only input within the limits reaches Python with its bytes.
         .annotate(
@@ -81,6 +89,7 @@ def _files(user, source: DataSource, prefix: str):
         .values(
             "path",
             "size",
+            "data_size",
             "hash",
             "payload",
             "status",
@@ -114,7 +123,7 @@ def _source_issues(row) -> list[Issue]:
 def _file_issues(row) -> list[str]:
     if not is_safe_path(row["path"]):
         return ["not a safe relative path."]
-    if row["size"] > MAX_SVG_BYTES:
+    if row["data_size"] > MAX_SVG_BYTES:
         return [f"larger than {MAX_SVG_BYTES} bytes."]
     data = bytes(row["payload"])
     if len(data) != row["size"] or hashlib.sha256(data).hexdigest() != row["hash"]:
@@ -122,7 +131,7 @@ def _file_issues(row) -> list[str]:
     return []
 
 
-def capture(user, source: DataSource, prefix: str) -> Capture:
+def read_source_files(user, source: DataSource, prefix: str) -> Capture:
     """Return the files below the prefix, or raise ArtworkError when they are not one coherent sync."""
     rows = list(_files(user, source, prefix))
     if not rows:
