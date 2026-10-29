@@ -257,7 +257,8 @@ class UploadTests(ArtworkTestCase):
     def device_view_card(self, url):
         content = self.client.get(url).content.decode()
         start = content.index('<div class="card-body htmx-container">')
-        return content[start : content.index("</footer>", start)]
+        # End before the footer: its clock changes between the two requests.
+        return content[start : content.index("<footer", start)]
 
 
 class ApiTests(ArtworkTestCase):
