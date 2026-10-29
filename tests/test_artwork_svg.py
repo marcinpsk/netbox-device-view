@@ -52,6 +52,7 @@ def test_minimal_face():
         view_box=(0.0, 0.0, 100.0, 50.0),
         connector_ids=frozenset(),
         bay_ids=frozenset(),
+        id_lines={},
     )
 
 
@@ -677,6 +678,14 @@ def test_realistic_face():
         view_box=(0.0, 0.0, 482.6, 44.45),
         connector_ids=frozenset({"con-eth1", "con-eth2", "con-console", "con-power"}),
         bay_ids=frozenset({"bay-psu1", "bay-fan"}),
+        id_lines={
+            "con-eth1": 24,
+            "con-eth2": 25,
+            "con-console": 26,
+            "bay-psu1": 34,  # libxml2 gives the line where the start tag ends
+            "bay-fan": 36,
+            "con-power": 37,
+        },
     )
 
 
@@ -701,3 +710,23 @@ def test_a_long_invalid_number_fails_in_linear_time(attribute):
 )
 def test_deeply_nested_css_blocks_fail_with_an_issue(attribute):
     rejected(svg(f'<rect {attribute}{"(" * 5000}" width="1" height="1"/>'), "")
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        "fill:" + "/*)*/f(" * 3000 + "0",
+        "fill:'" + ")" * 50 + "'" + "f(" * 3000,
+        "fill:" + "[(" * 3000,
+    ],
+)
+def test_css_nesting_cannot_hide_behind_comments_strings_or_mixed_brackets(style):
+    rejected(svg(f'<rect style="{style}" width="1" height="1"/>'), "")
+
+
+def test_an_unlisted_marker_id_keeps_its_line():
+    face = parse_face(
+        PATH,
+        svg('<rect width="1" height="1"/>\n<rect id="con-x" width="1" height="1"/>'),
+    )
+    assert face.id_lines["con-x"] == 3

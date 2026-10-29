@@ -22,9 +22,10 @@ artwork/
 │       └── installed.svg
 ```
 
-- A definition directory contains only `manifest.yaml` and the face files that the manifest names. Other files fail the import.
+- A definition directory contains only `manifest.yaml` and the face files that the manifest names. Other files fail the import. Two faces cannot name the same file.
 - Every file must be inside a definition directory. A definition directory cannot be inside another one.
 - A definition key can occur in only one directory of a bundle.
+- Archive members are stored or deflated, and not encrypted. The manifest and the SVG files are UTF-8.
 - If one definition fails, the import stores nothing.
 
 ---
@@ -73,7 +74,7 @@ Rules:
 - The licence is checked with the `license-expression` library. A licence reference (`LicenseRef-...`) is not accepted.
 - URLs use `https` and have no user name or password.
 - No string can contain control characters or format characters.
-- YAML anchors, aliases, duplicate keys and tags other than the core YAML types fail the import.
+- YAML anchors, aliases, explicit tags (for example `!!str`), duplicate keys and values other than strings, integers, booleans, lists and mappings fail the import.
 
 ---
 
@@ -108,7 +109,7 @@ The import stops at these limits before it does more work:
 | `use` expansion | 50000 nodes, 8 levels |
 | `viewBox` size | 1 to 5000 mm |
 
-Each error names the file and, where one applies, the line.
+Each error names the file and, where one applies, the line. The import shows at most 50 errors.
 
 ---
 
@@ -133,7 +134,7 @@ curl -X POST \
   https://netbox.example.com/api/plugins/device_view/artwork-bundles/
 ```
 
-The response is `201` with the revisions and a `created` flag for each one, or `200` when all revisions were known. A bundle that fails gives `400` with `errors`, each with `path`, `line` and `message`. The UI and the API use the same validation and import code.
+The response is `201` with the revisions and a `created` flag for each one, or `200` when all revisions were known. For a known revision that you cannot view, the response shows only its key and digest. A bundle that fails gives `400` with `errors`, each with `path`, `line` and `message`. The UI and the API use the same validation and import code.
 
 `GET /api/plugins/device_view/artwork-revisions/` lists the revisions with their manifest, files and import records.
 
