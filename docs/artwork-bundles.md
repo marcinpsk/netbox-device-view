@@ -190,6 +190,8 @@ A transfer gives a definition key to another source: a Data Source or the offlin
 
 In the UI, go to **Plugins → Visual Definitions**, open the definition and click **Edit**. Select the new **Key owner**, or clear the field for the offline uploads, and click **Save**.
 
+To find the keys of one source, filter the list by **Key owner**. With the API, use `?key_owner_id=<id>`, or `?key_owner_id=null` for the offline uploads.
+
 With the REST API, send the Data Source ID, or `null` for the offline uploads:
 
 ```bash

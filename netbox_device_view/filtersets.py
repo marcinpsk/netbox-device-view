@@ -1,4 +1,5 @@
 import django_filters
+from core.models import DataSource
 from dcim.models import DeviceType, Manufacturer
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -67,6 +68,12 @@ class DefinitionRevisionFilterSet(ChangeLoggedModelFilterSet):
 @register_filterset
 class VisualDefinitionFilterSet(ChangeLoggedModelFilterSet):
     q = django_filters.CharFilter(method="search", label=_("Search"))
+    # "null" selects the offline uploads.
+    key_owner_id = django_filters.ModelMultipleChoiceFilter(
+        field_name="key_owner",
+        queryset=DataSource.objects.all(),
+        label=_("Key owner (ID)"),
+    )
 
     class Meta:
         model = VisualDefinition
