@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from .limits import MAX_ISSUES
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -18,5 +20,5 @@ class ArtworkError(ValueError):
     """Input that the import rejects, with every issue found before it stopped."""
 
     def __init__(self, issues: list[Issue]):
-        self.issues = list(issues)
+        self.issues = list(issues)[:MAX_ISSUES]
         super().__init__("\n".join(map(str, self.issues)))

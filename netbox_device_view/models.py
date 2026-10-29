@@ -6,6 +6,7 @@ from netbox.models import ChangeLoggedModel, NetBoxModel
 from utilities.querysets import RestrictedQuerySet
 
 from .artwork.manifest import FACES
+from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .layout.parser import LayoutParseError, parse
 
 
@@ -94,16 +95,19 @@ class ImmutableMixin:
         super().save(*args, **kwargs)
 
 
-class DefinitionKind(models.TextChoices):
-    DEVICE = "device", "Device"
-    MODULE = "module", "Module"
-
-
 class VisualDefinition(models.Model):
     """The stable definition key that all revisions of one definition share."""
 
-    key = models.CharField(max_length=128, unique=True)
-    kind = models.CharField(max_length=10, choices=DefinitionKind.choices)
+    key = models.CharField(
+        max_length=MANIFEST_SCHEMA["properties"]["key"]["maxLength"], unique=True
+    )
+    kind = models.CharField(
+        max_length=10,
+        choices=[
+            (kind, kind.title())
+            for kind in MANIFEST_SCHEMA["properties"]["kind"]["enum"]
+        ],
+    )
 
     objects = RestrictedQuerySet.as_manager()
 
@@ -147,9 +151,11 @@ class ArtworkBlob(ImmutableMixin, models.Model):
     extension = models.CharField(max_length=8)
     created = models.DateTimeField(auto_now_add=True)
 
+    ROOT = "artwork"
+
     @property
     def name(self):
-        return f"artwork/{self.digest[:2]}/{self.digest}.{self.extension}"
+        return f"{self.ROOT}/{self.digest[:2]}/{self.digest}.{self.extension}"
 
 
 class RevisionFile(ImmutableMixin, models.Model):

@@ -174,3 +174,30 @@ def test_rules_beyond_the_schema(text, message):
 def test_a_face_that_the_manifest_does_not_declare():
     found = issues(replace("  rear: {file: rear.svg}\n", ""))
     assert found[0].message == "connectors.con-psu.face: The face rear is not in faces."
+
+
+@pytest.mark.parametrize(
+    "text, line",
+    [
+        (replace("title: ACME SW-24", "title: ACME\x00"), None),
+        (replace("schema: 1", "schema: !!int x"), 1),
+        (replace("schema: 1", "schema: !!bool garbage"), 1),
+        (replace("schema: 1", "schema: !!int 1"), 1),
+    ],
+)
+def test_malformed_scalars_and_explicit_tags_fail_with_an_issue(text, line):
+    found = issues(text)
+    if line is not None:
+        assert found[0].line == line
+
+
+@pytest.mark.parametrize("value", ['" "', '""'])
+def test_a_blank_licence_fails(value):
+    found = issues(replace("license: MIT", f"license: {value}"))
+    assert found[0].line == 13
+
+
+def test_two_faces_cannot_name_one_file():
+    found = issues(replace("rear: {file: rear.svg}", "rear: {file: front.svg}"))
+    assert "faces.rear.file" in found[0].message
+    assert found[0].line == 17
