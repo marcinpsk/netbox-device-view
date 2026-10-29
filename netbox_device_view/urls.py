@@ -49,6 +49,27 @@ urlpatterns = (
         kwargs={"model": models.DeviceView},
     ),
     path(
+        "artwork-definitions/",
+        views.VisualDefinitionListView.as_view(),
+        name="visualdefinition_list",
+    ),
+    path(
+        "artwork-definitions/<int:pk>/",
+        views.VisualDefinitionView.as_view(),
+        name="visualdefinition",
+    ),
+    path(
+        "artwork-definitions/<int:pk>/edit/",
+        views.VisualDefinitionEditView.as_view(),
+        name="visualdefinition_edit",
+    ),
+    path(
+        "artwork-definitions/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="visualdefinition_changelog",
+        kwargs={"model": models.VisualDefinition},
+    ),
+    path(
         "artwork-revisions/",
         views.DefinitionRevisionListView.as_view(),
         name="definitionrevision_list",

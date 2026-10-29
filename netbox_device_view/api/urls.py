@@ -7,6 +7,7 @@ app_name = "netbox_device_view"
 
 router = NetBoxRouter()
 router.register("device-view", views.DeviceViewViewSet)
+router.register("artwork-definitions", views.VisualDefinitionViewSet)
 router.register("artwork-revisions", views.DefinitionRevisionViewSet)
 
 urlpatterns = router.urls + [

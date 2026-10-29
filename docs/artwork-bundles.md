@@ -121,7 +121,7 @@ A revision is identified by its digest: the SHA-256 of the lines `<path>\0<file 
 
 Each import record keeps the provenance: the time, the user, the bundle file name or the Data Source name, and the directory. For a Data Source it also keeps the time of the last sync. NetBox does not record the Git commit of a sync, so the provenance shows no commit, and the digest identifies the content. A stored revision cannot be changed. You can delete it.
 
-The source that first imports a definition key owns the key. Each Data Source is one source, and all bundle uploads together are one source. An import of a key from another source fails. A Data Source that owns a key with revisions cannot be deleted.
+The source that first imports a definition key owns the key. Each Data Source is one source, and all bundle uploads together are one source. An import of a key from another source fails. A Data Source that owns a key with revisions cannot be deleted. To move a key to another source, [transfer the key](#transfer-a-definition-key).
 
 ---
 
@@ -184,9 +184,35 @@ The plugin lets only one sync of a Data Source run at a time. A second sync that
 
 ---
 
+## Transfer a definition key
+
+A transfer gives a definition key to another source: a Data Source or the offline uploads. After the transfer, only the new owner can import revisions of the key. An import from the old owner fails. The existing revisions and their provenance do not change.
+
+In the UI, go to **Plugins → Visual Definitions**, open the definition and click **Edit**. Select the new **Key owner**, or clear the field for the offline uploads, and click **Save**.
+
+With the REST API, send the Data Source ID, or `null` for the offline uploads:
+
+```bash
+curl -X PATCH \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key_owner": 3}' \
+  https://netbox.example.com/api/plugins/device_view/artwork-definitions/12/
+```
+
+A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, "key_owner": 3}]` transfers several keys with the same checks. The key and the kind cannot be changed. An import creates a definition, so the API cannot create or delete one. The changelog of the definition records each transfer. An import that runs during a transfer waits for it and then uses the new owner.
+
+### Permissions
+
+- A transfer needs the **change** permission on **Visual definition**. Constraints of that permission apply before and after the change.
+- The new owner must be a Data Source that you can view.
+- The definition pages and the API need the **view** permission on **Visual definition**.
+
+---
+
 ## NetBox Branching
 
-The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import in an active branch changes main at once. A branch merge does not change the catalogue.
+The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
 ---
 
