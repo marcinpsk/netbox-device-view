@@ -24,6 +24,11 @@ menu_items = (
         buttons=deviceview_buttons,
     ),
     PluginMenuItem(
+        link="plugins:netbox_device_view:visualdefinition_list",
+        link_text="Visual Definitions",
+        permissions=["netbox_device_view.view_visualdefinition"],
+    ),
+    PluginMenuItem(
         link="plugins:netbox_device_view:definitionrevision_list",
         link_text="Artwork Revisions",
         permissions=["netbox_device_view.view_definitionrevision"],
