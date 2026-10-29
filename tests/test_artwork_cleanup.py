@@ -11,6 +11,7 @@ from pathlib import Path
 
 from core.choices import JobIntervalChoices, JobStatusChoices
 from core.models import Job
+from django.core.files.storage import default_storage
 from django.db import connection, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -134,3 +135,20 @@ class CleanupLockTests(MediaMixin, TransactionTestCase):
         self.assertEqual(results["removed"], 0)
         self.assertTrue(ArtworkBlob.objects.filter(digest=blob.digest).exists())
         self.assertTrue(self.path(blob).exists())
+
+
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.InMemoryStorage"},
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"
+        },
+    }
+)
+class OtherStorageCleanupTests(TestCase):
+    def test_cleanup_works_without_a_filesystem_and_without_an_artwork_root(self):
+        self.assertEqual(cleanup(), 0)
+        blob = store_blob(b"<svg>memory</svg>", "svg")
+        ArtworkBlob.objects.filter(digest=blob.digest).delete()
+        self.assertEqual(cleanup(now=timezone.now() + timedelta(days=2)), 1)
+        self.assertFalse(default_storage.exists(blob.name))

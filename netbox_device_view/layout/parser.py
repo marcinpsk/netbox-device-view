@@ -174,7 +174,7 @@ _MERGE_TAG = "tag:yaml.org,2002:merge"
 _MERGE_KEY = object()
 
 
-class _DepthLimitedLoader(yaml.SafeLoader):
+class DepthLimitedLoader(yaml.SafeLoader):
     """A SafeLoader that stops at deep nesting before the scanner and composer slow down."""
 
     depth = 0
@@ -391,7 +391,7 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     Raises LayoutParseError on schema violations.
     """
     rules = _Rules(strict=strict)
-    loader = _DepthLimitedLoader if strict else yaml.SafeLoader
+    loader = DepthLimitedLoader if strict else yaml.SafeLoader
     try:
         data = yaml.load(yaml_text, Loader=loader)
     except LayoutParseError:

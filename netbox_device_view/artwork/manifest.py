@@ -13,26 +13,22 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from license_expression import ExpressionError, get_spdx_licensing
 
-from ..layout.parser import LayoutParseError, _DepthLimitedLoader
+from ..layout.parser import DepthLimitedLoader, LayoutParseError
 from .errors import ArtworkError, Issue
-from .limits import MAX_ISSUES, MAX_MANIFEST_BYTES
+from .limits import MAX_MANIFEST_BYTES
 
 SCHEMA = json.loads((Path(__file__).with_name("manifest.schema.json")).read_text())
 _VALIDATOR = jsonschema.Draft202012Validator(SCHEMA)
 _LICENSING = get_spdx_licensing()
 # Physical faces in display order, from the schema.
-FACES = tuple(
-    SCHEMA["properties"]["connectors"]["additionalProperties"]["properties"]["face"][
-        "enum"
-    ]
-)
+FACES = tuple(SCHEMA["$defs"]["face_name"]["enum"])
 _URL = URLValidator(schemes=["https"])
 _CORE_TAGS = {
     f"tag:yaml.org,2002:{name}"
     for name in ("str", "int", "bool", "null", "float", "seq", "map")
 }
-# Unicode categories that no manifest string may contain.
-_REJECTED_CATEGORIES = {"Cc", "Cf", "Cs", "Co"}
+# Unicode categories that no manifest string or bundle path may contain.
+UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
 MODULE_TOKEN = "{module}"
 
 
@@ -53,14 +49,17 @@ class _LoadError(Exception):
         self.line = line
 
 
-class _ManifestLoader(_DepthLimitedLoader):
-    """The layout loader, without anchors and aliases, with a line for each error."""
+class _ManifestLoader(DepthLimitedLoader):
+    """The layout loader without anchors, aliases and explicit tags, with a line for each error."""
 
     def compose_node(self, parent, index):
         event = self.peek_event()
         line = event.start_mark.line + 1
         if isinstance(event, yaml.AliasEvent) or event.anchor is not None:
             raise _LoadError("YAML anchors and aliases are not allowed.", line)
+        # An explicit tag can make the constructor raise; implicit tags resolve safely.
+        if getattr(event, "tag", None) not in (None, "!"):
+            raise _LoadError(f"The explicit YAML tag {event.tag} is not allowed.", line)
         try:
             node = super().compose_node(parent, index)
         except LayoutParseError as exc:
@@ -98,20 +97,22 @@ def _load(path: str, data: bytes) -> tuple[Any, dict]:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ArtworkError([Issue(path, None, "The manifest is not UTF-8.")]) from exc
-    loader = _ManifestLoader(text)
     try:
-        node = loader.get_single_node()
-        if node is None:
-            raise _LoadError("The manifest is empty.", 1)
-        return loader.construct_document(node), _line_map(node)
+        # The reader rejects characters such as NUL when the loader is created.
+        loader = _ManifestLoader(text)
+        try:
+            node = loader.get_single_node()
+            if node is None:
+                raise _LoadError("The manifest is empty.", 1)
+            return loader.construct_document(node), _line_map(node)
+        finally:
+            loader.dispose()
     except _LoadError as exc:
         raise ArtworkError([Issue(path, exc.line, str(exc))]) from exc
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         line = mark.line + 1 if mark else None
         raise ArtworkError([Issue(path, line, f"Invalid YAML: {exc}")]) from exc
-    finally:
-        loader.dispose()
 
 
 def _strings(value, at=()):
@@ -144,7 +145,8 @@ def _line(lines: dict, at) -> int | None:
 def _licence_and_url_issues(manifest: dict) -> list[tuple[tuple, str]]:
     issues = []
     try:
-        _LICENSING.parse(manifest["license"], validate=True, strict=True)
+        if _LICENSING.parse(manifest["license"], validate=True, strict=True) is None:
+            issues.append((("license",), "The licence expression is empty."))
     except ExpressionError as exc:
         issues.append((("license",), f"Not a valid SPDX licence expression: {exc}"))
     for index, reference in enumerate(manifest["hardware"]["references"]):
@@ -160,7 +162,15 @@ def _licence_and_url_issues(manifest: dict) -> list[tuple[tuple, str]]:
 
 
 def _face_issues(manifest: dict) -> list[tuple[tuple, str]]:
+    files = {}
+    for name, face in manifest["faces"].items():
+        files.setdefault(face["file"], []).append(name)
     return [
+        (("faces", name, "file"), f"The faces {' and '.join(names)} name one file.")
+        for names in files.values()
+        if len(names) > 1
+        for name in names[1:]
+    ] + [
         ((kind, key, "face"), f"The face {item['face']} is not in faces.")
         for kind in ("connectors", "bays")
         for key, item in manifest.get(kind, {}).items()
@@ -233,7 +243,7 @@ def parse_manifest(path: str, data: bytes) -> Manifest:
     found = [
         (at, "Text must not contain control or format characters.")
         for at, value in _strings(manifest)
-        if any(unicodedata.category(char) in _REJECTED_CATEGORIES for char in value)
+        if any(unicodedata.category(char) in UNSAFE_CATEGORIES for char in value)
     ]
     if not found:
         found = [
@@ -248,7 +258,7 @@ def parse_manifest(path: str, data: bytes) -> Manifest:
         raise ArtworkError(
             [
                 Issue(path, _line(lines, at), f"{_where(at) or 'manifest'}: {message}")
-                for at, message in found[:MAX_ISSUES]
+                for at, message in found
             ]
         )
     return Manifest(_with_defaults(manifest), lines)

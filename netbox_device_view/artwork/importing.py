@@ -12,12 +12,11 @@ from ..models import (
     RevisionImport,
     VisualDefinition,
 )
-from .bundle import MANIFEST_NAME, Definition, read_bundle
+from .bundle import Definition, read_bundle
 from .errors import ArtworkError, Issue
 from .storage import lock_digest, store_blob
 
 PERMISSION = "netbox_device_view.add_definitionrevision"
-MAX_NAME_LENGTH = 255
 
 
 @dataclass(frozen=True)
@@ -31,14 +30,14 @@ def can_import(user) -> bool:
 
 
 def _definition(item: Definition) -> VisualDefinition:
-    kind = item.manifest["kind"]
+    kind = item.manifest.data["kind"]
     visual, _ = VisualDefinition.objects.get_or_create(
-        key=item.manifest["key"], defaults={"kind": kind}
+        key=item.manifest.data["key"], defaults={"kind": kind}
     )
     if visual.kind != kind:
-        path = f"{item.directory}/{MANIFEST_NAME}" if item.directory else MANIFEST_NAME
+        message = f"The key {visual.key} is a {visual.kind} definition."
         raise ArtworkError(
-            [Issue(path, None, f"The key {visual.key} is a {visual.kind} definition.")]
+            [Issue(item.manifest_path, item.manifest.line("kind"), message)]
         )
     return visual
 
@@ -46,7 +45,7 @@ def _definition(item: Definition) -> VisualDefinition:
 def _import(user, bundle_name: str, item: Definition) -> ImportedRevision:
     revision, created = DefinitionRevision.objects.get_or_create(
         digest=item.digest,
-        defaults={"definition": _definition(item), "manifest": item.manifest},
+        defaults={"definition": _definition(item), "manifest": item.manifest.data},
     )
     # Each import writes a missing or damaged blob again, also for a known revision.
     blobs = {
@@ -62,7 +61,7 @@ def _import(user, bundle_name: str, item: Definition) -> ImportedRevision:
         revision=revision,
         user=user,
         user_name=user.get_username(),
-        bundle_name=bundle_name[:MAX_NAME_LENGTH],
+        bundle_name=bundle_name,
         path=item.directory,
     )
     return ImportedRevision(revision, created)
@@ -72,7 +71,9 @@ def import_bundle(user, bundle_name: str, fileobj) -> list[ImportedRevision]:
     """Validate the whole bundle, then import every definition in one transaction."""
     if not can_import(user):
         raise PermissionDenied
-    definitions = sorted(read_bundle(fileobj), key=lambda item: item.manifest["key"])
+    definitions = sorted(
+        read_bundle(fileobj), key=lambda item: item.manifest.data["key"]
+    )
     with transaction.atomic():
         # One lock order for all imports: every digest, sorted, before any write.
         for digest in sorted(

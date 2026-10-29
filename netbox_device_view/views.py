@@ -2,7 +2,7 @@ from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -344,17 +344,27 @@ class DeviceDeviceView(generic.ObjectView):
         )
 
 
-class ImportArtworkBundle(ObjectAction):
+class BundleImport(ObjectAction):
     name = "import"
     label = _("Import bundle")
     template_name = "netbox_device_view/buttons/artwork_import.html"
     permissions_required = frozenset({"add"})
 
 
+def _first_import(field):
+    return Subquery(
+        models.RevisionImport.objects.filter(revision=OuterRef("pk"))
+        .order_by("created", "pk")
+        .values(field)[:1]
+    )
+
+
 class DefinitionRevisionListView(generic.ObjectListView):
-    queryset = models.DefinitionRevision.objects.select_related("definition")
+    queryset = models.DefinitionRevision.objects.select_related("definition").annotate(
+        imported_by=_first_import("user_name"), bundle_name=_first_import("bundle_name")
+    )
     table = tables.DefinitionRevisionTable
-    actions = (ImportArtworkBundle,)
+    actions = (BundleImport,)
 
 
 class DefinitionRevisionView(generic.ObjectView):

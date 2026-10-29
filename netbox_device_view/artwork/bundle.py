@@ -17,10 +17,9 @@ from .limits import (
     MAX_DEFINITIONS,
     MAX_EXPANDED_BYTES,
     MAX_FILES_PER_DEFINITION,
-    MAX_ISSUES,
     MAX_SVG_BYTES,
 )
-from .manifest import Manifest, parse_manifest
+from .manifest import UNSAFE_CATEGORIES, Manifest, parse_manifest
 from .svg import Face, parse_face
 
 MANIFEST_NAME = "manifest.yaml"
@@ -28,7 +27,6 @@ BUNDLE = "bundle"
 MAX_MEMBERS = MAX_DEFINITIONS * MAX_FILES_PER_DEFINITION
 MAX_PATH_LENGTH = 255
 _ALLOWED_TYPES = {0, stat.S_IFREG, stat.S_IFDIR}
-_UNSAFE_CATEGORIES = {"Cc", "Cf", "Cs", "Co"}
 
 
 def revision_digest(file_digests: dict[str, str]) -> str:
@@ -42,8 +40,12 @@ class Definition:
     """One validated definition directory, with paths relative to the directory."""
 
     directory: str
-    manifest: dict
+    manifest: Manifest
     files: dict[str, bytes]
+
+    @property
+    def manifest_path(self) -> str:
+        return _join(self.directory, MANIFEST_NAME)
 
     @cached_property
     def file_digests(self) -> dict[str, str]:
@@ -63,7 +65,7 @@ def _is_safe_path(name: str) -> bool:
         and all(part not in ("", ".", "..") for part in parts)
         and "\\" not in name
         and ":" not in name
-        and not any(unicodedata.category(char) in _UNSAFE_CATEGORIES for char in name)
+        and not any(unicodedata.category(char) in UNSAFE_CATEGORIES for char in name)
     )
 
 
@@ -116,7 +118,7 @@ def _archive_issues(infos: list[zipfile.ZipInfo]) -> list[Issue]:
 
 
 def _raise(issues: list[Issue]):
-    raise ArtworkError(issues[:MAX_ISSUES])
+    raise ArtworkError(issues)
 
 
 def read_zip(fileobj) -> list[tuple[str, bytes]]:
@@ -129,6 +131,8 @@ def read_zip(fileobj) -> list[tuple[str, bytes]]:
         archive = zipfile.ZipFile(fileobj)
     except zipfile.BadZipFile:
         _raise([Issue(BUNDLE, None, "not a zip file.")])
+    except NotImplementedError as exc:
+        _raise([Issue(BUNDLE, None, f"unsupported zip feature ({exc}).")])
     with archive:
         infos = archive.infolist()
         if issues := _archive_issues(infos):
@@ -147,6 +151,10 @@ def read_zip(fileobj) -> list[tuple[str, bytes]]:
                 entries.append((info.filename, data))
             except (zipfile.BadZipFile, zlib.error, EOFError) as exc:
                 _raise([Issue(info.filename, None, f"damaged archive member ({exc}).")])
+            except NotImplementedError as exc:
+                _raise(
+                    [Issue(info.filename, None, f"unsupported zip feature ({exc}).")]
+                )
     return entries
 
 
@@ -214,7 +222,7 @@ def _key_issues(
             issues.extend(
                 Issue(
                     _join(directory, file),
-                    None,
+                    face.id_lines[key],
                     f"{key}: the manifest does not list this {noun}.",
                 )
                 for key in sorted(getattr(face, attribute))
@@ -223,8 +231,7 @@ def _key_issues(
     return issues
 
 
-def _read_definition(directory: str, files: dict[str, bytes]) -> tuple[Definition, int]:
-    """Return the definition and the manifest line of its key."""
+def _read_definition(directory: str, files: dict[str, bytes]) -> Definition:
     if len(files) > MAX_FILES_PER_DEFINITION:
         _raise(
             [
@@ -261,7 +268,7 @@ def _read_definition(directory: str, files: dict[str, bytes]) -> tuple[Definitio
         issues = _key_issues(directory, manifest, faces)
     if issues:
         _raise(issues)
-    return Definition(directory, manifest.data, files), manifest.line("key")
+    return Definition(directory, manifest, files)
 
 
 def read_definitions(entries: Iterable[tuple[str, bytes]]) -> list[Definition]:
@@ -280,16 +287,16 @@ def read_definitions(entries: Iterable[tuple[str, bytes]]) -> list[Definition]:
     definitions, owners = [], {}
     for directory, files in grouped.items():
         try:
-            definition, key_line = _read_definition(directory, files)
+            definition = _read_definition(directory, files)
         except ArtworkError as exc:
             issues.extend(exc.issues)
             continue
-        key = definition.manifest["key"]
+        key = definition.manifest.data["key"]
         if key in owners:
             issues.append(
                 Issue(
                     _join(directory, MANIFEST_NAME),
-                    key_line,
+                    definition.manifest.line("key"),
                     f"the key {key} is also in {_join(owners[key], MANIFEST_NAME)}.",
                 )
             )

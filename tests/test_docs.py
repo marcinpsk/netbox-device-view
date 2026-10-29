@@ -53,6 +53,7 @@ MIB = 1024 * 1024
         f"| SVG nesting | {limits.MAX_SVG_DEPTH} levels |",
         f"| `use` expansion | {limits.MAX_USE_EXPANSION_NODES} nodes, {limits.MAX_USE_DEPTH} levels |",
         f"| `viewBox` size | {limits.MIN_VIEWBOX_SIZE} to {limits.MAX_VIEWBOX_SIZE} mm |",
+        f"The import shows at most {limits.MAX_ISSUES} errors.",
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):

@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 from .. import models
 from ..filtersets import DeviceViewFilterSet
 from ..artwork import importing
-from ..artwork.errors import ArtworkError
+from ..artwork.errors import ArtworkError, Issue
 from .rendered_layout import compose_rendered_layout
 from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
 
@@ -79,34 +79,38 @@ class ArtworkBundleUploadView(APIView):
 
     def post(self, request):
         upload = request.FILES.get("bundle")
-        if upload is None:
-            return Response(
-                {
-                    "errors": [
-                        {
-                            "path": "bundle",
-                            "line": None,
-                            "message": "Upload a .zip file as bundle.",
-                        }
-                    ]
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         try:
+            if upload is None:
+                raise ArtworkError(
+                    [Issue("bundle", None, "Upload a .zip file as bundle.")]
+                )
             results = importing.import_bundle(request.user, upload.name, upload)
         except ArtworkError as exc:
             return Response(
                 {"errors": [vars(issue) for issue in exc.issues]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        visible = set(
+            models.DefinitionRevision.objects.restrict(request.user, "view")
+            .filter(pk__in=[result.revision.pk for result in results])
+            .values_list("pk", flat=True)
+        )
         context = {"request": request}
         body = {
             "revisions": [
                 {
                     "created": result.created,
-                    "revision": DefinitionRevisionSerializer(
-                        result.revision, context=context
-                    ).data,
+                    # Without view permission, a known revision shows no earlier provenance.
+                    "revision": (
+                        DefinitionRevisionSerializer(
+                            result.revision, context=context
+                        ).data
+                        if result.revision.pk in visible
+                        else {
+                            "key": result.revision.definition.key,
+                            "digest": result.revision.digest,
+                        }
+                    ),
                 }
                 for result in results
             ]

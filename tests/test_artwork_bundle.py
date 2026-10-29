@@ -59,7 +59,7 @@ def test_a_valid_bundle_gives_one_definition_per_directory():
         **definition("artwork/ACME/NM-2X", MODULE_FILES),
     }
     definitions = read_bundle(io.BytesIO(bundle(entries)))
-    assert [(d.directory, d.manifest["key"]) for d in definitions] == [
+    assert [(d.directory, d.manifest.data["key"]) for d in definitions] == [
         ("artwork/ACME/NM-2X", "acme/nm-2x"),
         (DEVICE_DIR, "acme/sw-24"),
     ]
@@ -229,11 +229,12 @@ def test_connector_and_bay_keys_must_match_the_svg_of_their_face():
     )
     assert f"{manifest}:32: bays.bay-nm: no element has this id in front.svg." in found
     assert (
-        f"{DEVICE_DIR}/front.svg: con-eth9: the manifest does not list this connector."
+        f"{DEVICE_DIR}/front.svg:3: con-eth9: the manifest does not list this connector."
         in found
     )
     assert (
-        f"{DEVICE_DIR}/front.svg: bay-xx: the manifest does not list this bay." in found
+        f"{DEVICE_DIR}/front.svg:4: bay-xx: the manifest does not list this bay."
+        in found
     )
 
 
@@ -290,3 +291,25 @@ def test_a_member_that_inflates_past_its_declared_size_is_read_with_bounded_memo
         tracemalloc.stop()
     assert entries == [(f"{DEVICE_DIR}/front.svg", b"A")]
     assert peak < 4 * 1024 * 1024
+
+
+def test_unsupported_zip_features_fail_with_an_issue():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(f"{DEVICE_DIR}/front.svg", FRONT_SVG)
+        # Bit 5 marks compressed patched data, which zipfile does not support.
+        archive.filelist[0].flag_bits |= 0x20
+    assert_rejected(buffer.getvalue(), "unsupported zip feature")
+
+
+def test_an_unlisted_svg_id_names_its_line():
+    svg = FRONT_SVG.replace(
+        "</svg>", '<rect id="con-spare" width="1" height="1"/>\n</svg>'
+    )
+    found = messages(
+        bundle(definition(DEVICE_DIR, dict(DEVICE_FILES, **{"front.svg": svg})))
+    )
+    assert (
+        f"{DEVICE_DIR}/front.svg:5: con-spare: the manifest does not list this connector."
+        in found
+    )
