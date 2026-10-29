@@ -12,10 +12,18 @@ from rest_framework.views import APIView
 from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
-from ..filtersets import DefinitionRevisionFilterSet, DeviceViewFilterSet
+from ..filtersets import (
+    DefinitionRevisionFilterSet,
+    DeviceViewFilterSet,
+    VisualDefinitionFilterSet,
+)
 from ..forms import ArtworkSourceImportForm
 from .rendered_layout import compose_rendered_layout
-from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
+from .serializers import (
+    DefinitionRevisionSerializer,
+    DeviceViewSerializer,
+    VisualDefinitionSerializer,
+)
 
 
 class DeviceViewViewSet(NetBoxModelViewSet):
@@ -67,6 +75,15 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
     ).prefetch_related("files__blob", "imports")
     serializer_class = DefinitionRevisionSerializer
     filterset_class = DefinitionRevisionFilterSet
+
+
+class VisualDefinitionViewSet(NetBoxModelViewSet):
+    """Read definitions and transfer their keys; an import creates a definition."""
+
+    queryset = models.VisualDefinition.objects.select_related("key_owner")
+    serializer_class = VisualDefinitionSerializer
+    filterset_class = VisualDefinitionFilterSet
+    http_method_names = ("get", "put", "patch", "head", "options")
 
 
 def _error_response(exc: ArtworkError):

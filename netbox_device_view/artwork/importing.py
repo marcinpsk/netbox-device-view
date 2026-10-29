@@ -41,24 +41,26 @@ def can_import(user) -> bool:
     return user.has_perm(PERMISSION)
 
 
-def _owner_name(visual: VisualDefinition) -> str:
-    if visual.owner is None:
+def _key_owner_name(visual: VisualDefinition) -> str:
+    if visual.key_owner is None:
         return "the offline uploads"
-    return f"the Data Source {visual.owner.name}"
+    return f"the Data Source {visual.key_owner.name}"
 
 
-def _definition(item: Definition, owner: DataSource | None) -> VisualDefinition:
+def _definition(item: Definition, key_owner: DataSource | None) -> VisualDefinition:
     kind = item.manifest.data["kind"]
-    visual, _ = VisualDefinition.objects.select_related("owner").get_or_create(
-        key=item.manifest.data["key"], defaults={"kind": kind, "owner": owner}
+    # The row lock makes an import wait for a transfer and then see the new owner.
+    # No select_related: after the wait, PostgreSQL re-reads only the locked row.
+    visual, _ = VisualDefinition.objects.select_for_update().get_or_create(
+        key=item.manifest.data["key"], defaults={"kind": kind, "key_owner": key_owner}
     )
     if visual.kind != kind:
         message = f"The key {visual.key} is a {visual.kind} definition."
         raise ArtworkError(
             [Issue(item.manifest_path, item.manifest.line("kind"), message)]
         )
-    if visual.owner_id != (owner.pk if owner else None):
-        message = f"The key {visual.key} belongs to {_owner_name(visual)}."
+    if visual.key_owner_id != (key_owner.pk if key_owner else None):
+        message = f"The key {visual.key} belongs to {_key_owner_name(visual)}."
         raise ArtworkError(
             [Issue(item.manifest_path, item.manifest.line("key"), message)]
         )

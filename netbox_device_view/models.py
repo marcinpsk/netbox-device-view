@@ -3,7 +3,6 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
 from netbox.models import ChangeLoggedModel, NetBoxModel
-from utilities.querysets import RestrictedQuerySet
 
 from .artwork.manifest import FACES
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
@@ -95,7 +94,7 @@ class ImmutableMixin:
         super().save(*args, **kwargs)
 
 
-class VisualDefinition(models.Model):
+class VisualDefinition(ChangeLoggedModel):
     """The stable definition key that all revisions of one definition share."""
 
     key = models.CharField(
@@ -108,8 +107,8 @@ class VisualDefinition(models.Model):
             for kind in MANIFEST_SCHEMA["properties"]["kind"]["enum"]
         ],
     )
-    # The source that first imported the key; null means the offline uploads.
-    owner = models.ForeignKey(
+    # The only source that can import the key; null means the offline uploads.
+    key_owner = models.ForeignKey(
         to="core.DataSource",
         on_delete=models.CASCADE,
         null=True,
@@ -117,13 +116,14 @@ class VisualDefinition(models.Model):
         related_name="+",
     )
 
-    objects = RestrictedQuerySet.as_manager()
-
     class Meta:
         ordering = ("key",)
 
     def __str__(self):
         return self.key
+
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:visualdefinition", args=[self.pk])
 
 
 class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
