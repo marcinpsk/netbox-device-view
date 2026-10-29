@@ -7,6 +7,7 @@ from netbox.forms import (
     NetBoxModelForm,
     NetBoxModelImportForm,
 )
+from netbox.forms.mixins import ChangelogMessageMixin
 from utilities.forms.fields import (
     CSVModelChoiceField,
     DynamicModelChoiceField,
@@ -16,7 +17,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet
 
 from . import datasource_import
-from .models import DeviceView
+from .models import DeviceView, VisualDefinition
 from .utils import normalize_grid_template_area
 
 
@@ -165,3 +166,19 @@ class ArtworkSourceImportForm(forms.Form):
 
     def clean_prefix(self):
         return datasource_import.normalize_prefix(self.cleaned_data["prefix"])
+
+
+class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
+    key_owner = DynamicModelChoiceField(
+        queryset=DataSource.objects.all(),
+        required=False,
+        label=_("Key owner"),
+        help_text=_(
+            "The only source that can import revisions of this key. Leave empty for"
+            " the offline uploads."
+        ),
+    )
+
+    class Meta:
+        model = VisualDefinition
+        fields = ("key_owner",)
