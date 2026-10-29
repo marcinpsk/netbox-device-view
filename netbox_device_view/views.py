@@ -351,6 +351,13 @@ class BundleImport(ObjectAction):
     permissions_required = frozenset({"add"})
 
 
+class SourceImport(ObjectAction):
+    name = "source_import"
+    label = _("Import from Data Source")
+    template_name = "netbox_device_view/buttons/artwork_import.html"
+    permissions_required = frozenset({"add"})
+
+
 def _first_import(field):
     return Subquery(
         models.RevisionImport.objects.filter(revision=OuterRef("pk"))
@@ -361,21 +368,21 @@ def _first_import(field):
 
 class DefinitionRevisionListView(generic.ObjectListView):
     queryset = models.DefinitionRevision.objects.select_related("definition").annotate(
-        imported_by=_first_import("user_name"), bundle_name=_first_import("bundle_name")
+        imported_by=_first_import("user_name"), source_name=_first_import("source_name")
     )
     table = tables.DefinitionRevisionTable
     filterset = filtersets.DefinitionRevisionFilterSet
-    actions = (BundleImport,)
+    actions = (BundleImport, SourceImport)
 
 
 class DefinitionRevisionView(generic.ObjectView):
-    queryset = models.DefinitionRevision.objects.select_related("definition")
+    queryset = models.DefinitionRevision.objects.select_related("definition__owner")
     actions = (DeleteObject,)
 
     def get_extra_context(self, request, instance):
         return {
             "files": instance.files.select_related("blob"),
-            "imports": instance.imports.all(),
+            "imports": instance.imports.select_related("data_source"),
         }
 
 
@@ -411,3 +418,59 @@ class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
                 status=400,
             )
         return render(request, self.template_name, {"form": form, "results": results})
+
+
+class ArtworkSourceImportView(ContentTypePermissionRequiredMixin, View):
+    """Import the definitions below a prefix of a synchronized Data Source as candidate revisions."""
+
+    template_name = "netbox_device_view/artwork_source_import.html"
+
+    def get_required_permission(self):
+        return artwork_importing.PERMISSION
+
+    def _render(self, request, form, status=200, **extra):
+        value = str(form["data_source"].value() or "")
+        queryset = form.fields["data_source"].queryset
+        source = queryset.filter(pk=value).first() if value.isdigit() else None
+        context = {
+            "form": form,
+            "source": source,
+            "sync_run": (
+                models.SourceSyncRun.objects.filter(source=source).first()
+                if source
+                else None
+            ),
+            "can_sync": request.user.has_perm("core.sync_datasource"),
+            "sync_url": source and self._sync_url(request, source, form),
+            **extra,
+        }
+        return render(request, self.template_name, context, status=status)
+
+    @staticmethod
+    def _sync_url(request, source, form):
+        """Return NetBox's own sync URL; it comes back to this page with the same choice."""
+        here = urlencode(
+            {"data_source": source.pk, "prefix": form["prefix"].value() or ""}
+        )
+        back = urlencode({"return_url": f"{request.path}?{here}"})
+        return f"{reverse('core:datasource_sync', kwargs={'pk': source.pk})}?{back}"
+
+    def get(self, request):
+        form = forms.ArtworkSourceImportForm(
+            initial=request.GET.dict(), user=request.user
+        )
+        return self._render(request, form)
+
+    def post(self, request):
+        form = forms.ArtworkSourceImportForm(request.POST, user=request.user)
+        if not form.is_valid():
+            return self._render(request, form, status=400)
+        try:
+            results = artwork_importing.import_from_source(
+                request.user,
+                form.cleaned_data["data_source"],
+                form.cleaned_data["prefix"],
+            )
+        except ArtworkError as exc:
+            return self._render(request, form, status=400, issues=exc.issues)
+        return self._render(request, form, results=results)

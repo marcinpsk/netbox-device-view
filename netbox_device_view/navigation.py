@@ -34,6 +34,12 @@ menu_items = (
                 icon_class="mdi mdi-upload",
                 permissions=[PERMISSION],
             ),
+            PluginMenuButton(
+                link="plugins:netbox_device_view:definitionrevision_source_import",
+                title="Import from Data Source",
+                icon_class="mdi mdi-database-import",
+                permissions=[PERMISSION],
+            ),
         ],
     ),
 )

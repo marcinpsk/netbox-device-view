@@ -1,3 +1,4 @@
+from core.api.serializers import DataSourceSerializer
 from netbox.api.serializers import BaseModelSerializer, NetBoxModelSerializer
 from rest_framework import serializers
 
@@ -31,9 +32,18 @@ class RevisionFileSerializer(serializers.ModelSerializer):
 
 
 class RevisionImportSerializer(serializers.ModelSerializer):
+    data_source = DataSourceSerializer(nested=True, read_only=True)
+
     class Meta:
         model = RevisionImport
-        fields = ("created", "user_name", "bundle_name", "path")
+        fields = (
+            "created",
+            "user_name",
+            "source_name",
+            "data_source",
+            "last_synced",
+            "path",
+        )
 
 
 class DefinitionRevisionSerializer(BaseModelSerializer):

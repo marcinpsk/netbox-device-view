@@ -11,6 +11,7 @@
         <table class="table table-hover attr-table">
           <tr><th scope="row">{% trans "Definition key" %}</th><td class="font-monospace">{{ object.definition.key }}</td></tr>
           <tr><th scope="row">{% trans "Kind" %}</th><td>{{ object.definition.get_kind_display }}</td></tr>
+          <tr><th scope="row">{% trans "Key owner" %}</th><td>{% if object.definition.owner %}{{ object.definition.owner|linkify }}{% else %}{% trans "Offline uploads" %}{% endif %}</td></tr>
           <tr><th scope="row">{% trans "Title" %}</th><td>{{ manifest.title }}</td></tr>
           <tr><th scope="row">{% trans "Digest" %}</th><td class="font-monospace text-break">{{ object.digest }}</td></tr>
           <tr><th scope="row">{% trans "Imported" %}</th><td>{{ object.created|isodatetime }}</td></tr>
@@ -74,15 +75,18 @@
         <h2 class="card-header">{% trans "Provenance" %}</h2>
         <table class="table table-hover mb-0">
           <thead>
-            <tr><th>{% trans "Imported" %}</th><th>{% trans "User" %}</th><th>{% trans "Bundle" %}</th><th>{% trans "Directory" %}</th></tr>
+            <tr><th>{% trans "Imported" %}</th><th>{% trans "User" %}</th><th>{% trans "Source" %}</th><th>{% trans "Directory" %}</th><th>{% trans "Source synced" %}</th></tr>
           </thead>
           <tbody>
             {% for event in imports %}
               <tr>
                 <td>{{ event.created|isodatetime }}</td>
                 <td>{{ event.user_name }}</td>
-                <td class="text-break">{{ event.bundle_name }}</td>
+                <td class="text-break">
+                  {% if event.data_source %}<a href="{{ event.data_source.get_absolute_url }}">{{ event.source_name }}</a>{% else %}{{ event.source_name }}{% endif %}
+                </td>
                 <td class="font-monospace text-break">{{ event.path|placeholder }}</td>
+                <td>{{ event.last_synced|isodatetime|placeholder }}</td>
               </tr>
             {% endfor %}
           </tbody>

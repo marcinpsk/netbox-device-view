@@ -20,4 +20,9 @@ urlpatterns = router.urls + [
         views.ArtworkBundleUploadView.as_view(),
         name="artwork_bundle_upload",
     ),
+    path(
+        "artwork-source-imports/",
+        views.ArtworkSourceImportView.as_view(),
+        name="artwork_source_import",
+    ),
 ]

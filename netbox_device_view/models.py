@@ -108,6 +108,14 @@ class VisualDefinition(models.Model):
             for kind in MANIFEST_SCHEMA["properties"]["kind"]["enum"]
         ],
     )
+    # The source that first imported the key; null means the offline uploads.
+    owner = models.ForeignKey(
+        to="core.DataSource",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     objects = RestrictedQuerySet.as_manager()
 
@@ -191,8 +199,27 @@ class RevisionImport(ImmutableMixin, models.Model):
         related_name="+",
     )
     user_name = models.CharField(max_length=150)
-    bundle_name = models.CharField(max_length=255)
+    # The bundle file name, or the name of the Data Source at import time.
+    source_name = models.CharField(max_length=255)
+    data_source = models.ForeignKey(
+        to="core.DataSource",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    last_synced = models.DateTimeField(null=True, blank=True)
     path = models.CharField(max_length=255)
 
     class Meta:
         ordering = ("revision", "-created", "pk")
+
+
+class SourceSyncRun(models.Model):
+    """The latest guarded sync of a Data Source; capture needs it finished."""
+
+    source = models.OneToOneField(
+        to="core.DataSource", on_delete=models.CASCADE, related_name="+"
+    )
+    started = models.DateTimeField()
+    finished = models.DateTimeField(null=True, blank=True)

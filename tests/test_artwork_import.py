@@ -114,7 +114,7 @@ class UploadTests(ArtworkTestCase):
                 self.assertEqual(stored.read_bytes(), content.encode())
         event = revision.imports.get()
         self.assertEqual(
-            (event.user, event.user_name, event.bundle_name, event.path),
+            (event.user, event.user_name, event.source_name, event.path),
             (self.user, "importer", "sw24.zip", DEVICE_DIR),
         )
 
@@ -177,7 +177,7 @@ class UploadTests(ArtworkTestCase):
         self.assertContains(response, "Already imported")
         revision = DefinitionRevision.objects.get()
         self.assertEqual(
-            list(revision.imports.values_list("bundle_name", "path")),
+            list(revision.imports.values_list("source_name", "path")),
             [("again.zip", "other/place"), ("sw24.zip", DEVICE_DIR)],
         )
         self.assertEqual(ArtworkBlob.objects.count(), 3)
@@ -292,7 +292,7 @@ class ApiTests(ArtworkTestCase):
             sorted(f["path"] for f in detail["files"]), sorted(DEVICE_FILES)
         )
         self.assertEqual(
-            [i["bundle_name"] for i in detail["imports"]], ["api.zip", "api.zip"]
+            [i["source_name"] for i in detail["imports"]], ["api.zip", "api.zip"]
         )
 
     def test_a_reimport_does_not_show_provenance_the_user_cannot_view(self):

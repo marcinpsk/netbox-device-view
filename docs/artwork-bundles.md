@@ -109,6 +109,7 @@ The import stops at these limits before it does more work:
 | SVG nesting | 32 levels |
 | `use` expansion | 50000 nodes, 8 levels |
 | `viewBox` size | 1 to 5000 mm |
+| Data Source files | 32000 and 200 MiB below the prefix |
 
 Each error names the file and, where one applies, the line. The import shows at most 50 errors.
 
@@ -118,7 +119,9 @@ Each error names the file and, where one applies, the line. The import shows at 
 
 A revision is identified by its digest: the SHA-256 of the lines `<path>\0<file SHA-256>\n`, sorted by path. The paths are relative to the definition directory. Thus the same files give the same revision in every directory and every bundle. An import of known content adds an import record to the existing revision and stores no new revision.
 
-Each import record keeps the provenance: the time, the user, the bundle file name and the directory in the bundle. A stored revision cannot be changed. You can delete it.
+Each import record keeps the provenance: the time, the user, the bundle file name or the Data Source name, and the directory. For a Data Source it also keeps the time of the last sync. NetBox does not record the Git commit of a sync, so the provenance shows no commit, and the digest identifies the content. A stored revision cannot be changed. You can delete it.
+
+The source that first imports a definition key owns the key. Each Data Source is one source, and all bundle uploads together are one source. An import of a key from another source fails. A Data Source that owns a key with revisions cannot be deleted.
 
 ---
 
@@ -144,6 +147,40 @@ The response is `201` with the revisions and a `created` flag for each one, or `
 - An import needs the **add** permission on **Definition revision**. Constraints of that permission apply to the imported revisions.
 - The revision pages and the API need the **view** permission. A delete needs the **delete** permission.
 - The permission to view a device does not give any of these permissions.
+
+---
+
+## Import from a Data Source
+
+A NetBox Data Source, for example a Git repository, can supply the same files as a bundle. A sync only fetches the files into NetBox. It does not change a revision. An import reads the synchronized files and stores each definition as a candidate revision, with the same validation as a bundle. The same files give the same revision as a bundle.
+
+In the UI, go to **Plugins → Artwork Revisions** and click **Import from Data Source**. Select the Data Source and the directory prefix. Every file below the prefix must be in a definition directory, so select the directory that holds the definitions. Click **Check for updates** to start the NetBox sync of the source, then click **Import** when the sync has completed.
+
+With the REST API, send the Data Source ID and the prefix:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"data_source": 3, "prefix": "artwork/"}' \
+  https://netbox.example.com/api/plugins/device_view/artwork-source-imports/
+```
+
+The response is the same as for a bundle.
+
+The import reads all files below the prefix in one database query. It fails when:
+
+- the Data Source status is not **Completed**,
+- a sync of the source has not finished,
+- a stored file does not match its recorded SHA-256,
+- a file that a manifest names is missing.
+
+The plugin lets only one sync of a Data Source run at a time. A second sync that starts during a sync fails, and NetBox sets the source status to **Failed**. Check for updates again after the first sync completes. A sync that ran before you installed the plugin does not count: check for updates once before the first import.
+
+### Permissions
+
+- An import needs the **add** permission on **Definition revision**, and the **view** permission on the Data Source and on every Data File below the prefix.
+- **Check for updates** needs the NetBox **sync** permission on the Data Source.
 
 ---
 
