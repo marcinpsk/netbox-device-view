@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
 from .artwork.manifest import FACES
@@ -96,6 +97,9 @@ class ImmutableMixin:
 
 class VisualDefinition(ChangeLoggedModel):
     """The stable definition key that all revisions of one definition share."""
+
+    # The source that a null key_owner stands for.
+    OFFLINE_UPLOADS = _("offline uploads")
 
     key = models.CharField(
         max_length=MANIFEST_SCHEMA["properties"]["key"]["maxLength"], unique=True

@@ -1,5 +1,6 @@
 import django_tables2 as tables
 from django.utils.html import mark_safe
+from django.utils.text import capfirst
 from netbox.tables import NetBoxTable, columns
 
 from .models import DefinitionRevision, DeviceView, VisualDefinition
@@ -62,7 +63,9 @@ class VisualDefinitionTable(NetBoxTable):
     key = tables.Column(verbose_name="Definition key", linkify=True)
     kind = columns.ChoiceFieldColumn(verbose_name="Kind")
     key_owner = tables.Column(
-        verbose_name="Key owner", linkify=True, default="Offline uploads"
+        verbose_name="Key owner",
+        linkify=True,
+        default=capfirst(VisualDefinition.OFFLINE_UPLOADS),
     )
     revision_count = tables.Column(verbose_name="Revisions")
     actions = columns.ActionsColumn(actions=("edit", "changelog"))
