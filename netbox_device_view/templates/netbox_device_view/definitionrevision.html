@@ -1,0 +1,94 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+{% load i18n %}
+
+{% block content %}
+  {% with manifest=object.manifest %}
+  <div class="row">
+    <div class="col col-12 col-md-6">
+      <div class="card">
+        <h2 class="card-header">{% trans "Definition revision" %}</h2>
+        <table class="table table-hover attr-table">
+          <tr><th scope="row">{% trans "Definition key" %}</th><td class="font-monospace">{{ object.definition.key }}</td></tr>
+          <tr><th scope="row">{% trans "Kind" %}</th><td>{{ object.definition.get_kind_display }}</td></tr>
+          <tr><th scope="row">{% trans "Title" %}</th><td>{{ manifest.title }}</td></tr>
+          <tr><th scope="row">{% trans "Digest" %}</th><td class="font-monospace text-break">{{ object.digest }}</td></tr>
+          <tr><th scope="row">{% trans "Imported" %}</th><td>{{ object.created|isodatetime }}</td></tr>
+          <tr><th scope="row">{% trans "Faces" %}</th><td>{{ object.face_names|join:", " }}</td></tr>
+          <tr><th scope="row">{% trans "Connectors" %}</th><td>{{ manifest.connectors|length }}</td></tr>
+          <tr><th scope="row">{% trans "Module bays" %}</th><td>{{ manifest.bays|length }}</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h2 class="card-header">{% trans "Licensing" %}</h2>
+        <table class="table table-hover attr-table">
+          <tr><th scope="row">{% trans "Licence" %}</th><td class="font-monospace">{{ manifest.license }}</td></tr>
+          <tr><th scope="row">{% trans "Authors" %}</th><td>{{ manifest.authors|join:", " }}</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="col col-12 col-md-6">
+      <div class="card">
+        <h2 class="card-header">{% trans "Hardware" %}</h2>
+        <table class="table table-hover attr-table">
+          <tr><th scope="row">{% trans "Manufacturer" %}</th><td>{{ manifest.hardware.manufacturer }}</td></tr>
+          <tr><th scope="row">{% trans "SKU" %}</th><td>{{ manifest.hardware.sku }}</td></tr>
+        </table>
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr><th>{% trans "Reference" %}</th><th>{% trans "Edition" %}</th><th>{% trans "Figure" %}</th></tr>
+          </thead>
+          <tbody>
+            {% for reference in manifest.hardware.references %}
+              <tr>
+                <td><a href="{{ reference.url }}" rel="noopener noreferrer" target="_blank">{{ reference.title }}</a></td>
+                <td>{{ reference.edition }}</td>
+                <td>{{ reference.figure|placeholder }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col col-12">
+      <div class="card">
+        <h2 class="card-header">{% trans "Files" %}</h2>
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr><th>{% trans "Path" %}</th><th>{% trans "Size" %}</th><th>{% trans "SHA-256" %}</th></tr>
+          </thead>
+          <tbody>
+            {% for file in files %}
+              <tr>
+                <td class="font-monospace">{{ file.path }}</td>
+                <td>{{ file.blob.size|filesizeformat }}</td>
+                <td class="font-monospace text-break">{{ file.blob.digest }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2 class="card-header">{% trans "Provenance" %}</h2>
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr><th>{% trans "Imported" %}</th><th>{% trans "User" %}</th><th>{% trans "Bundle" %}</th><th>{% trans "Directory" %}</th></tr>
+          </thead>
+          <tbody>
+            {% for event in imports %}
+              <tr>
+                <td>{{ event.created|isodatetime }}</td>
+                <td>{{ event.user_name }}</td>
+                <td class="text-break">{{ event.bundle_name }}</td>
+                <td class="font-monospace text-break">{{ event.path|placeholder }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endwith %}
+{% endblock %}

@@ -48,4 +48,30 @@ urlpatterns = (
         name="deviceview_changelog",
         kwargs={"model": models.DeviceView},
     ),
+    path(
+        "artwork-revisions/",
+        views.DefinitionRevisionListView.as_view(),
+        name="definitionrevision_list",
+    ),
+    path(
+        "artwork-revisions/import/",
+        views.ArtworkBundleImportView.as_view(),
+        name="definitionrevision_import",
+    ),
+    path(
+        "artwork-revisions/<int:pk>/",
+        views.DefinitionRevisionView.as_view(),
+        name="definitionrevision",
+    ),
+    path(
+        "artwork-revisions/<int:pk>/delete/",
+        views.DefinitionRevisionDeleteView.as_view(),
+        name="definitionrevision_delete",
+    ),
+    path(
+        "artwork-revisions/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="definitionrevision_changelog",
+        kwargs={"model": models.DefinitionRevision},
+    ),
 )

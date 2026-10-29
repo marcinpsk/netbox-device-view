@@ -21,4 +21,17 @@ menu_items = (
         link_text="Device Views",
         buttons=deviceview_buttons,
     ),
+    PluginMenuItem(
+        link="plugins:netbox_device_view:definitionrevision_list",
+        link_text="Artwork Revisions",
+        permissions=["netbox_device_view.view_definitionrevision"],
+        buttons=[
+            PluginMenuButton(
+                link="plugins:netbox_device_view:definitionrevision_import",
+                title="Import bundle",
+                icon_class="mdi mdi-upload",
+                permissions=["netbox_device_view.add_definitionrevision"],
+            ),
+        ],
+    ),
 )
