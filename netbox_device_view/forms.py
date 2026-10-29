@@ -1,3 +1,4 @@
+from core.models import DataSource
 from dcim.models import DeviceType, Manufacturer
 from django import forms
 from django.utils.translation import gettext_lazy as _
@@ -139,3 +140,28 @@ class ArtworkBundleImportForm(forms.Form):
         label=_("Bundle"),
         help_text=_("A .zip file with one directory per visual definition."),
     )
+
+
+class ArtworkSourceImportForm(forms.Form):
+    data_source = forms.ModelChoiceField(
+        queryset=None,
+        label=_("Data Source"),
+        help_text=_("Only enabled Data Sources are listed."),
+    )
+    prefix = forms.CharField(
+        required=False,
+        label=_("Directory prefix"),
+        help_text=_(
+            "Path relative to the source root. Every file below it must belong to a"
+            " definition directory."
+        ),
+    )
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["data_source"].queryset = DataSource.objects.restrict(
+            user, "view"
+        ).filter(enabled=True)
+
+    def clean_prefix(self):
+        return datasource_import.normalize_prefix(self.cleaned_data["prefix"])

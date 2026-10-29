@@ -59,6 +59,11 @@ urlpatterns = (
         name="definitionrevision_import",
     ),
     path(
+        "artwork-revisions/import-from-source/",
+        views.ArtworkSourceImportView.as_view(),
+        name="definitionrevision_source_import",
+    ),
+    path(
         "artwork-revisions/<int:pk>/",
         views.DefinitionRevisionView.as_view(),
         name="definitionrevision",
