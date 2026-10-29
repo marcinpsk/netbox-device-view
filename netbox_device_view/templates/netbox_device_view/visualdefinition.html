@@ -1,0 +1,41 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+{% load i18n %}
+
+{% block content %}
+  <div class="row">
+    <div class="col col-12 col-md-6">
+      <div class="card">
+        <h2 class="card-header">{% trans "Visual definition" %}</h2>
+        <table class="table table-hover attr-table">
+          <tr><th scope="row">{% trans "Definition key" %}</th><td class="font-monospace">{{ object.key }}</td></tr>
+          <tr><th scope="row">{% trans "Kind" %}</th><td>{{ object.get_kind_display }}</td></tr>
+          <tr><th scope="row">{% trans "Key owner" %}</th><td>{% if object.key_owner %}{{ object.key_owner|linkify }}{% else %}{% trans "Offline uploads" %}{% endif %}</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col col-12">
+      <div class="card">
+        <h2 class="card-header">{% trans "Revisions" %}</h2>
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr><th>{% trans "Digest" %}</th><th>{% trans "Title" %}</th><th>{% trans "Imported" %}</th></tr>
+          </thead>
+          <tbody>
+            {% for revision in revisions %}
+              <tr>
+                <td class="font-monospace"><a href="{{ revision.get_absolute_url }}" title="{{ revision.digest }}">{{ revision.digest|truncatechars:13 }}</a></td>
+                <td>{{ revision.manifest.title }}</td>
+                <td>{{ revision.created|isodatetime }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3" class="text-muted">{% trans "None" %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}
