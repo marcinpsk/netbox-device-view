@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox.filtersets import ChangeLoggedModelFilterSet, NetBoxModelFilterSet
 from utilities.filtersets import register_filterset
 
-from .models import DefinitionRevision, DeviceView
+from .models import DefinitionRevision, DeviceView, VisualDefinition
 
 
 @register_filterset
@@ -62,3 +62,17 @@ class DefinitionRevisionFilterSet(ChangeLoggedModelFilterSet):
             | Q(manifest__title__icontains=value)
             | Q(manifest__hardware__sku__icontains=value)
         )
+
+
+@register_filterset
+class VisualDefinitionFilterSet(ChangeLoggedModelFilterSet):
+    q = django_filters.CharFilter(method="search", label=_("Search"))
+
+    class Meta:
+        model = VisualDefinition
+        fields = ("id", "key", "kind")
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(key__icontains=value)
