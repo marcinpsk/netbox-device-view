@@ -210,3 +210,15 @@ def test_two_faces_cannot_name_one_file():
 def test_implicit_numbers_that_cannot_be_built_fail_with_an_issue(digits):
     found = issues(replace("schema: 1", f"schema: {digits}"))
     assert found[0].line == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        replace("title: ACME SW-24", 'title: "\\U00110000"'),
+        "%YAML " + "1" * 4301 + ".1\n---\n" + DEVICE_MANIFEST,
+        "%YAML 1." + "1" * 4301 + "\n---\n" + DEVICE_MANIFEST,
+    ],
+)
+def test_values_the_yaml_scanner_cannot_convert_fail_with_an_issue(text):
+    assert issues(text)[0].line is not None
