@@ -368,6 +368,7 @@ class DefinitionRevisionListView(generic.ObjectListView):
         imported_by=_first_import("user_name"), bundle_name=_first_import("bundle_name")
     )
     table = tables.DefinitionRevisionTable
+    filterset = filtersets.DefinitionRevisionFilterSet
     actions = (BundleImport,)
 
 
