@@ -121,6 +121,11 @@ def _load(path: str, data: bytes) -> tuple[Any, dict]:
             if node is None:
                 raise _LoadError("The manifest is empty.", 1)
             return loader.construct_document(node), _line_map(node)
+        except (ValueError, OverflowError) as exc:
+            # The PyYAML scanner converts escapes and directive numbers with chr() and int().
+            raise _LoadError(
+                f"Invalid YAML: {exc}", loader.get_mark().line + 1
+            ) from exc
         finally:
             loader.dispose()
     except _LoadError as exc:
