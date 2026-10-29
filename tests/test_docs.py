@@ -6,7 +6,6 @@ import pytest
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.artwork import limits
-from netbox_device_view.artwork.bundle import MAX_MEMBERS
 from netbox_device_view.forms import DataSourceImportSourceForm
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
 
@@ -54,7 +53,7 @@ MIB = 1024 * 1024
         f"| SVG nesting | {limits.MAX_SVG_DEPTH} levels |",
         f"| `use` expansion | {limits.MAX_USE_EXPANSION_NODES} nodes, {limits.MAX_USE_DEPTH} levels |",
         f"| `viewBox` size | {limits.MIN_VIEWBOX_SIZE} to {limits.MAX_VIEWBOX_SIZE} mm |",
-        f"| Data Source files | {MAX_MEMBERS} and {limits.MAX_EXPANDED_BYTES // MIB} MiB below the prefix |",
+        f"| Data Source files | {limits.MAX_MEMBERS} and {limits.MAX_EXPANDED_BYTES // MIB} MiB below the prefix |",
         f"The import shows at most {limits.MAX_ISSUES} errors.",
     ],
 )

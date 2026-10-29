@@ -94,11 +94,13 @@ class SyncGuardTests(TransactionTestCase):
         ).result(TIMEOUT)
         user = User.objects.create_superuser(username="admin")
         with self.assertRaisesMessage(ArtworkError, capture.SYNC_RUNNING):
-            capture.capture(user, self.source, "")
+            capture.read_source_files(user, self.source, "")
 
         self.source.sync()
 
-        self.assertEqual(len(capture.capture(user, self.source, "").entries), 3)
+        self.assertEqual(
+            len(capture.read_source_files(user, self.source, "").entries), 3
+        )
 
     def test_a_later_sync_in_the_same_session_proceeds_and_releases_the_lock(self):
         # A failed sync in this session sent pre_sync and kept the lock.
