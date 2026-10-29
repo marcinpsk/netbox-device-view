@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from ..models import ArtworkBlob, RevisionFile
 
-ROOT = "artwork"
+ROOT = ArtworkBlob.ROOT
 ORPHAN_AGE = timedelta(days=1)
 _NAME = re.compile(r"(?P<digest>[0-9a-f]{64})\.(?P<extension>[a-z]{1,8})")
 # The first key of each two-key advisory lock; it keeps these locks apart from others.
@@ -73,9 +73,11 @@ def read_blob(blob: ArtworkBlob) -> bytes:
 
 def _stored_names():
     """Yield (name, digest, extension) of each blob file under the artwork root."""
-    if not default_storage.exists(ROOT):
+    # Object stores have no directories, so exists(ROOT) can be False; list instead.
+    try:
+        directories, _ = default_storage.listdir(ROOT)
+    except FileNotFoundError:
         return
-    directories, _ = default_storage.listdir(ROOT)
     for directory in directories:
         _, files = default_storage.listdir(f"{ROOT}/{directory}")
         for file in files:
