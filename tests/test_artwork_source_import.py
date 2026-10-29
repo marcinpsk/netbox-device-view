@@ -213,6 +213,20 @@ class SourceImportTests(SourceTestCase):
             response, f"larger than {MAX_SVG_BYTES} bytes.", status_code=400
         )
 
+    def test_a_file_larger_than_its_recorded_size_is_not_read(self):
+        self.sync()
+        DataFile.objects.filter(path=f"{DEVICE_DIR}/front.svg").update(
+            data=b"x" * (MAX_SVG_BYTES + 1)
+        )
+
+        response = self.import_source()
+
+        self.assertContains(
+            response,
+            f"{DEVICE_DIR}/front.svg: larger than {MAX_SVG_BYTES} bytes.",
+            status_code=400,
+        )
+
     def test_the_page_shows_the_source_state_and_a_check_for_updates_button(self):
         queue = private_sync_queue(self)
         self.grant(DataSource, "sync")
@@ -234,6 +248,13 @@ class SourceImportTests(SourceTestCase):
         self.source.refresh_from_db()
         self.assertEqual(self.source.status, DataSourceStatusChoices.QUEUED)
         self.assertEqual(queue.count, 1)
+
+    def test_check_for_updates_follows_the_sync_permission_constraints(self):
+        self.grant(DataSource, "sync", constraints={"name": "Other"})
+        page = self.client.get(
+            reverse(SOURCE_IMPORT_URL), {"data_source": self.source.pk}
+        )
+        self.assertNotContains(page, "mdi-sync")
 
     def test_check_for_updates_needs_the_native_sync_permission(self):
         page = self.client.get(

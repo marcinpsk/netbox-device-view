@@ -18,6 +18,7 @@ from .limits import (
     MAX_DEFINITIONS,
     MAX_EXPANDED_BYTES,
     MAX_FILES_PER_DEFINITION,
+    MAX_MEMBERS,
     MAX_SVG_BYTES,
 )
 from .manifest import UNSAFE_CATEGORIES, Manifest, parse_manifest
@@ -25,7 +26,6 @@ from .svg import Face, parse_face
 
 MANIFEST_NAME = "manifest.yaml"
 BUNDLE = "bundle"
-MAX_MEMBERS = MAX_DEFINITIONS * MAX_FILES_PER_DEFINITION
 MAX_PATH_LENGTH = 255
 _ALLOWED_TYPES = {0, stat.S_IFREG, stat.S_IFDIR}
 # The zip end record, zip64 end locator and central directory record, as zipfile reads them.
