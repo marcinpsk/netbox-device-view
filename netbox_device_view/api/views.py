@@ -67,6 +67,13 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
     filterset_class = DefinitionRevisionFilterSet
 
 
+def _error_response(exc: ArtworkError):
+    return Response(
+        {"errors": [vars(issue) for issue in exc.issues]},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _import_response(request, results):
     visible = set(
         models.DefinitionRevision.objects.restrict(request.user, "view")
@@ -118,10 +125,7 @@ class ArtworkBundleUploadView(APIView):
                 )
             results = importing.import_bundle(request.user, upload.name, upload)
         except ArtworkError as exc:
-            return Response(
-                {"errors": [vars(issue) for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(exc)
         return _import_response(request, results)
 
 
@@ -146,8 +150,5 @@ class ArtworkSourceImportView(APIView):
                 form.cleaned_data["prefix"],
             )
         except ArtworkError as exc:
-            return Response(
-                {"errors": [vars(issue) for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(exc)
         return _import_response(request, results)

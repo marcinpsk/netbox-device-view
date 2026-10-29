@@ -1,3 +1,4 @@
+from core.models import DataSource
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -440,7 +441,10 @@ class ArtworkSourceImportView(ContentTypePermissionRequiredMixin, View):
                 if source
                 else None
             ),
-            "can_sync": request.user.has_perm("core.sync_datasource"),
+            "can_sync": source is not None
+            and DataSource.objects.restrict(request.user, "sync")
+            .filter(pk=source.pk)
+            .exists(),
             "sync_url": source and self._sync_url(request, source, form),
             **extra,
         }

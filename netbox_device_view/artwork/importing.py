@@ -15,7 +15,7 @@ from ..models import (
     VisualDefinition,
 )
 from .bundle import Definition, read_bundle, read_definitions
-from .capture import capture
+from .capture import read_source_files
 from .errors import ArtworkError, Issue
 from .storage import lock_digest, store_blob
 
@@ -106,7 +106,7 @@ def import_from_source(user, source: DataSource, prefix: str) -> list[ImportedRe
         DataSource.objects.restrict(user, "view").filter(pk=source.pk).exists()
     ):
         raise PermissionDenied
-    captured = capture(user, source, prefix)
+    captured = read_source_files(user, source, prefix)
     provenance = Provenance(source.name, source, captured.last_synced)
     return _import_all(user, read_definitions(captured.entries), provenance)
 
