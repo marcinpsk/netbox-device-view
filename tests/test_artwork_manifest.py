@@ -201,3 +201,9 @@ def test_two_faces_cannot_name_one_file():
     found = issues(replace("rear: {file: rear.svg}", "rear: {file: front.svg}"))
     assert "faces.rear.file" in found[0].message
     assert found[0].line == 17
+
+
+@pytest.mark.parametrize("digits", ["1" * 4301, "0x" + "f" * 5000])
+def test_a_very_long_integer_fails_with_an_issue(digits):
+    found = issues(replace("schema: 1", f"schema: {digits}"))
+    assert found[0].line == 1
