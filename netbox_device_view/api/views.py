@@ -11,6 +11,7 @@ from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
 from ..filtersets import DefinitionRevisionFilterSet, DeviceViewFilterSet
+from ..forms import ArtworkSourceImportForm
 from .rendered_layout import compose_rendered_layout
 from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
 
@@ -66,6 +67,36 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
     filterset_class = DefinitionRevisionFilterSet
 
 
+def _import_response(request, results):
+    visible = set(
+        models.DefinitionRevision.objects.restrict(request.user, "view")
+        .filter(pk__in=[result.revision.pk for result in results])
+        .values_list("pk", flat=True)
+    )
+    context = {"request": request}
+    body = {
+        "revisions": [
+            {
+                "created": result.created,
+                # Without view permission, a known revision shows no earlier provenance.
+                "revision": (
+                    DefinitionRevisionSerializer(result.revision, context=context).data
+                    if result.revision.pk in visible
+                    else {
+                        "key": result.revision.definition.key,
+                        "digest": result.revision.digest,
+                    }
+                ),
+            }
+            for result in results
+        ]
+    }
+    created = any(result.created for result in results)
+    return Response(
+        body, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    )
+
+
 class ArtworkBundleUploadView(APIView):
     """
     POST /api/plugins/device_view/artwork-bundles/ (multipart, field "bundle")
@@ -91,32 +122,32 @@ class ArtworkBundleUploadView(APIView):
                 {"errors": [vars(issue) for issue in exc.issues]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        visible = set(
-            models.DefinitionRevision.objects.restrict(request.user, "view")
-            .filter(pk__in=[result.revision.pk for result in results])
-            .values_list("pk", flat=True)
-        )
-        context = {"request": request}
-        body = {
-            "revisions": [
-                {
-                    "created": result.created,
-                    # Without view permission, a known revision shows no earlier provenance.
-                    "revision": (
-                        DefinitionRevisionSerializer(
-                            result.revision, context=context
-                        ).data
-                        if result.revision.pk in visible
-                        else {
-                            "key": result.revision.definition.key,
-                            "digest": result.revision.digest,
-                        }
-                    ),
-                }
-                for result in results
-            ]
-        }
-        created = any(result.created for result in results)
-        return Response(
-            body, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        )
+        return _import_response(request, results)
+
+
+class ArtworkSourceImportView(APIView):
+    """
+    POST /api/plugins/device_view/artwork-source-imports/ {"data_source": <id>, "prefix": "<dir>/"}
+
+    Import the definitions below a prefix of a synchronized Data Source, like the UI.
+    """
+
+    permission_classes = (TokenPermissions,)
+    queryset = models.DefinitionRevision.objects.all()
+
+    def post(self, request):
+        form = ArtworkSourceImportForm(request.data, user=request.user)
+        if not form.is_valid():
+            return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            results = importing.import_from_source(
+                request.user,
+                form.cleaned_data["data_source"],
+                form.cleaned_data["prefix"],
+            )
+        except ArtworkError as exc:
+            return Response(
+                {"errors": [vars(issue) for issue in exc.issues]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return _import_response(request, results)
