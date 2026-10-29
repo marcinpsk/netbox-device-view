@@ -1,6 +1,8 @@
 from netbox.choices import ButtonColorChoices
 from netbox.plugins import PluginMenuButton, PluginMenuItem
 
+from .artwork.importing import PERMISSION
+
 deviceview_buttons = [
     PluginMenuButton(
         link="plugins:netbox_device_view:deviceview_add",
@@ -30,7 +32,7 @@ menu_items = (
                 link="plugins:netbox_device_view:definitionrevision_import",
                 title="Import bundle",
                 icon_class="mdi mdi-upload",
-                permissions=["netbox_device_view.add_definitionrevision"],
+                permissions=[PERMISSION],
             ),
         ],
     ),

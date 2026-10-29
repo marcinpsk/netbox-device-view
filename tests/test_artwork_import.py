@@ -129,6 +129,8 @@ class UploadTests(ArtworkTestCase):
             "SW-24-AC",
             "MIT",
             revision.digest[:12],
+            "importer",
+            "sw24.zip",
         ):
             self.assertContains(listing, text)
         detail = self.client.get(revision.get_absolute_url())
@@ -199,7 +201,11 @@ class UploadTests(ArtworkTestCase):
             "key: acme/nm-2x", "key: acme/sw-24"
         )
         response = self.upload(bundle(definition("m", module)))
-        self.assertContains(response, "is a device definition", status_code=400)
+        self.assertContains(
+            response,
+            "m/manifest.yaml:3: The key acme/sw-24 is a device",
+            status_code=400,
+        )
         self.assertEqual(DefinitionRevision.objects.count(), 1)
 
     def test_import_repairs_a_damaged_blob(self):
@@ -274,6 +280,20 @@ class ApiTests(ArtworkTestCase):
         self.assertEqual(
             [i["bundle_name"] for i in detail["imports"]], ["api.zip", "api.zip"]
         )
+
+    def test_a_reimport_does_not_show_provenance_the_user_cannot_view(self):
+        self.post(bundle())
+        self.user = User.objects.create_user(username="adder")
+        self.grant(DefinitionRevision, "add")
+        response = self.post(bundle())
+        self.assertEqual(response.status_code, 200)
+        [result] = response.json()["revisions"]
+        self.assertFalse(result["created"])
+        self.assertEqual(
+            set(result["revision"]), {"key", "digest"}, "no provenance without view"
+        )
+        self.assertNotContains(response, "importer")
+        self.assertNotContains(response, "api.zip")
 
     def test_ui_and_api_report_the_same_errors(self):
         response = self.post(bundle(UNSAFE))

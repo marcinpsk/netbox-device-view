@@ -79,6 +79,8 @@ class DefinitionRevisionTable(NetBoxTable):
         template_code='<span class="font-monospace" title="{{ value }}">{{ value|truncatechars:13 }}</span>',
     )
     created = columns.DateTimeColumn(verbose_name="Imported")
+    imported_by = tables.Column(verbose_name="Imported by")
+    bundle_name = tables.Column(verbose_name="Bundle")
     actions = columns.ActionsColumn(actions=("delete", "changelog"))
 
     class Meta(NetBoxTable.Meta):
@@ -93,6 +95,8 @@ class DefinitionRevisionTable(NetBoxTable):
             "license",
             "digest",
             "created",
+            "imported_by",
+            "bundle_name",
             "actions",
         )
         default_columns = (
@@ -103,4 +107,6 @@ class DefinitionRevisionTable(NetBoxTable):
             "license",
             "digest",
             "created",
+            "imported_by",
+            "bundle_name",
         )

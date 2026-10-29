@@ -137,11 +137,7 @@
         ],
         "properties": {
           "face": {
-            "enum": [
-              "front",
-              "rear",
-              "installed"
-            ]
+            "$ref": "#/$defs/face_name"
           },
           "type": {
             "type": "string",
@@ -198,11 +194,7 @@
         ],
         "properties": {
           "face": {
-            "enum": [
-              "front",
-              "rear",
-              "installed"
-            ]
+            "$ref": "#/$defs/face_name"
           },
           "module_bay": {
             "$ref": "#/$defs/name"
@@ -283,6 +275,13 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 64
+    },
+    "face_name": {
+      "enum": [
+        "front",
+        "rear",
+        "installed"
+      ]
     }
   }
 }

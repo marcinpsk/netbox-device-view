@@ -24,6 +24,7 @@ from .limits import (
     MAX_VIEWBOX_SIZE,
     MIN_VIEWBOX_SIZE,
 )
+from .manifest import SCHEMA
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -39,8 +40,6 @@ DEFINITIONS = GRADIENTS | {"defs", "symbol", "clipPath"}
 
 MAX_DASHES = 32
 MAX_FONT_NAME = 64
-# tinycss2 parses nested blocks recursively; no allowed value nests this deep.
-MAX_CSS_NESTING = 4
 
 
 @dataclass(frozen=True)
@@ -50,6 +49,7 @@ class Face:
     view_box: tuple[float, float, float, float]
     connector_ids: frozenset[str]
     bay_ids: frozenset[str]
+    id_lines: dict[str, int]
 
 
 class _Invalid(ValueError):
@@ -85,8 +85,8 @@ _TRANSFORM_SEPARATOR = re.compile(r"[ \t\r\n,]*")
 _NAME = re.compile(r"[A-Za-z]*")
 _ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}")
 _MARKER_IDS = {
-    "con-": re.compile(r"con-[a-z0-9-]{1,60}"),
-    "bay-": re.compile(r"bay-[a-z0-9-]{1,60}"),
+    kind: re.compile(SCHEMA["properties"][section]["propertyNames"]["pattern"][1:-1])
+    for kind, section in (("con-", "connectors"), ("bay-", "bays"))
 }
 _HREF = re.compile(r"#(.+)")
 # Each digit belongs to one group only, so a failed match backtracks in linear time.
@@ -335,18 +335,17 @@ def _url(value: str, kinds: frozenset[str]) -> _Reference | None:
     return None if match is None else _Reference(match.group(1), kinds)
 
 
-def _css_nesting(value: str):
-    depth = 0
-    for char in value:
-        depth += char in "([{"
-        depth -= char in ")]}"
-        if depth > MAX_CSS_NESTING:
-            raise _Invalid(f"CSS blocks are nested more than {MAX_CSS_NESTING} levels")
+def _css(function, *args, **kwargs):
+    """Call a tinycss2 function; it recurses into nested blocks, so deep nesting fails."""
+    try:
+        return function(*args, **kwargs)
+    except RecursionError:
+        raise _Invalid("CSS blocks are nested too deeply") from None
 
 
 def _is_color(value: str) -> bool:
-    _css_nesting(value)
-    return one_css_color(tinycss2.parse_component_value_list(value)) is not None
+    tokens = _css(tinycss2.parse_component_value_list, value)
+    return one_css_color(tokens) is not None
 
 
 def _paint(value: str) -> _Reference | None:
@@ -381,9 +380,8 @@ def _dash_array(value: str):
 
 
 def _font_family(value: str):
-    _css_nesting(value)
     groups: list[list] = [[]]
-    for token in tinycss2.parse_component_value_list(value, skip_comments=True):
+    for token in _css(tinycss2.parse_component_value_list, value, skip_comments=True):
         if token.type == "literal" and token.value == ",":
             groups.append([])
         elif token.type != "whitespace":
@@ -746,13 +744,15 @@ class _Validator:
 
     def style(self, element: etree._Element, tag: str, raw: str):
         try:
-            _css_nesting(raw)
+            declarations = _css(
+                tinycss2.parse_declaration_list,
+                raw,
+                skip_comments=True,
+                skip_whitespace=True,
+            )
         except _Invalid as error:
             self.add(element.sourceline, f"<{tag}> style: {error}")
             return
-        declarations = tinycss2.parse_declaration_list(
-            raw, skip_comments=True, skip_whitespace=True
-        )
         for item in declarations:
             if item.type == "at-rule":
                 message = f"at-rule @{item.at_keyword} is not allowed"
@@ -763,7 +763,11 @@ class _Validator:
             elif item.lower_name not in PROPERTIES:
                 message = f"property {item.lower_name} is not allowed"
             else:
-                value = tinycss2.serialize(item.value).strip(_SPACE)
+                try:
+                    value = _css(tinycss2.serialize, item.value).strip(_SPACE)
+                except _Invalid as error:
+                    self.add(element.sourceline, f"<{tag}> style: {error}")
+                    continue
                 label = f"<{tag}> style {item.lower_name}"
                 self.value(element, label, item.lower_name, value)
                 continue
@@ -798,6 +802,9 @@ class _Validator:
             view_box=_view_box(root.get("viewBox").strip(_SPACE)),
             connector_ids=frozenset(i for i in self.ids if i.startswith("con-")),
             bay_ids=frozenset(i for i in self.ids if i.startswith("bay-")),
+            id_lines={
+                i: e.sourceline for i, e in self.ids.items() if i[:4] in _MARKER_IDS
+            },
         )
 
     def resolve(self) -> bool:
