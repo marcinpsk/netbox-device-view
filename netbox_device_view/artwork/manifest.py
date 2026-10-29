@@ -25,9 +25,9 @@ FACES = tuple(SCHEMA["$defs"]["face_name"]["enum"])
 _URL = URLValidator(schemes=["https"])
 _INT_TAG = "tag:yaml.org,2002:int"
 MAX_INTEGER_LENGTH = 16
+# The manifest has no floats, so the float tag (and its YAML 1.1 forms) is not core here.
 _CORE_TAGS = {
-    f"tag:yaml.org,2002:{name}"
-    for name in ("str", "int", "bool", "null", "float", "seq", "map")
+    f"tag:yaml.org,2002:{name}" for name in ("str", "int", "bool", "null", "seq", "map")
 }
 # Unicode categories that no manifest string or bundle path may contain.
 UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
@@ -68,12 +68,21 @@ class _ManifestLoader(DepthLimitedLoader):
             raise _LoadError(str(exc), line) from exc
         if node.tag not in _CORE_TAGS:
             raise _LoadError(f"The YAML tag {node.tag} is not allowed.", line)
-        # int() of a long decimal string raises ValueError; no manifest integer is long.
-        if node.tag == _INT_TAG and len(node.value) > MAX_INTEGER_LENGTH:
+        if node.tag == _INT_TAG:
+            self._check_integer(node, line)
+        return node
+
+    def _check_integer(self, node, line):
+        """Build an implicit integer now; YAML 1.1 forms such as 0x_ make int() raise."""
+        # A long value is slow to build (base-60 forms) or exceeds int()'s digit limit.
+        if len(node.value) > MAX_INTEGER_LENGTH:
             raise _LoadError(
                 f"Integers have at most {MAX_INTEGER_LENGTH} characters.", line
             )
-        return node
+        try:
+            self.construct_yaml_int(node)
+        except ValueError as exc:
+            raise _LoadError(f"{node.value!r} is not a valid integer.", line) from exc
 
 
 def _line_map(node, path=(), lines=None):

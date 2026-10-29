@@ -203,7 +203,10 @@ def test_two_faces_cannot_name_one_file():
     assert found[0].line == 17
 
 
-@pytest.mark.parametrize("digits", ["1" * 4301, "0x" + "f" * 5000])
-def test_a_very_long_integer_fails_with_an_issue(digits):
+@pytest.mark.parametrize(
+    "digits",
+    ["1" * 4301, "0x" + "f" * 5000, "0x_", "0b_", "1:" * 174 + "0.0", "1.5", ".inf"],
+)
+def test_implicit_numbers_that_cannot_be_built_fail_with_an_issue(digits):
     found = issues(replace("schema: 1", f"schema: {digits}"))
     assert found[0].line == 1
