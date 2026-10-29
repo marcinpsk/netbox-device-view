@@ -43,7 +43,7 @@ def can_import(user) -> bool:
 
 def _key_owner_name(visual: VisualDefinition, user) -> str:
     if visual.key_owner_id is None:
-        return "the offline uploads"
+        return f"the {VisualDefinition.OFFLINE_UPLOADS}"
     if (
         not DataSource.objects.restrict(user, "view")
         .filter(pk=visual.key_owner_id)
