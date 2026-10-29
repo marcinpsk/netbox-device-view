@@ -11,6 +11,7 @@ from .. import models
 from ..filtersets import DeviceViewFilterSet
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
+from ..filtersets import DefinitionRevisionFilterSet
 from .rendered_layout import compose_rendered_layout
 from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
 
@@ -63,6 +64,7 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
         "definition"
     ).prefetch_related("files__blob", "imports")
     serializer_class = DefinitionRevisionSerializer
+    filterset_class = DefinitionRevisionFilterSet
 
 
 class ArtworkBundleUploadView(APIView):

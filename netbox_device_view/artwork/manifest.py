@@ -23,6 +23,8 @@ _LICENSING = get_spdx_licensing()
 # Physical faces in display order, from the schema.
 FACES = tuple(SCHEMA["$defs"]["face_name"]["enum"])
 _URL = URLValidator(schemes=["https"])
+_INT_TAG = "tag:yaml.org,2002:int"
+MAX_INTEGER_LENGTH = 16
 _CORE_TAGS = {
     f"tag:yaml.org,2002:{name}"
     for name in ("str", "int", "bool", "null", "float", "seq", "map")
@@ -66,6 +68,11 @@ class _ManifestLoader(DepthLimitedLoader):
             raise _LoadError(str(exc), line) from exc
         if node.tag not in _CORE_TAGS:
             raise _LoadError(f"The YAML tag {node.tag} is not allowed.", line)
+        # int() of a long decimal string raises ValueError; no manifest integer is long.
+        if node.tag == _INT_TAG and len(node.value) > MAX_INTEGER_LENGTH:
+            raise _LoadError(
+                f"Integers have at most {MAX_INTEGER_LENGTH} characters.", line
+            )
         return node
 
 

@@ -155,6 +155,19 @@ class UploadTests(ArtworkTestCase):
             with self.subTest(text=text):
                 self.assertContains(detail, text)
 
+    def test_quick_search_filters_the_list(self):
+        entries = {
+            **definition(DEVICE_DIR, DEVICE_FILES),
+            **definition("artwork/ACME/NM-2X", MODULE_FILES),
+        }
+        self.upload(bundle(entries))
+        module = DefinitionRevision.objects.get(definition__key="acme/nm-2x")
+        for query in ("nm-2x", "NM-2X", module.digest[:16]):
+            with self.subTest(query=query):
+                listing = self.client.get(reverse(LIST_URL), {"q": query})
+                self.assertContains(listing, module.get_absolute_url())
+                self.assertNotContains(listing, "acme/sw-24")
+
     def test_identical_content_returns_the_existing_revision_with_a_new_import_event(
         self,
     ):
