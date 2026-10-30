@@ -32,8 +32,8 @@ The response includes only the objects that the requesting user can view. NetBox
 - **DeviceView:** a `DeviceView` that the user cannot view counts as missing (`reason: "no_layout"`).
 - **Components:** an interface, console port, console-server port, front port or rear port that the user cannot view has no hotspot. Its element in the SVG has the default port fill, so the SVG does not show its state or cable colour.
 - **Peers:** `peer_labels` includes only the peers that the user can view. The label of a peer shows the name of its device.
-- **Cables:** a cable that the user cannot view gives `cable_color: null`, and the SVG does not show its colour.
-- **Modules:** a module that the user cannot view does not select a [module variant](layout-yaml.md#variant-definition).
+- **Cables:** a cable that the user cannot view counts as no cable. It gives `cable_color: null` and the `connection_state` of a component without a cable, and the SVG does not show its colour. `peer_labels` still includes the peers that the user can view.
+- **Modules:** a module that the user cannot view does not select a [module variant](layout-yaml.md#variant-definition), and its components have no hotspot.
 
 The Device View tab and the device page panel use the same rule.
 
@@ -103,7 +103,7 @@ The Device View tab and the device page panel use the same rule.
 | `name` | string | The component's real name, e.g. `"GigabitEthernet0/1"`. |
 | `x`, `y`, `width`, `height` | int | Hotspot geometry in the same coordinate space as the panel's `svg`/`viewBox` — apply one transform to both. |
 | `enabled` | bool | Always `true` for port-type components (they have no enabled flag); reflects `Interface.enabled` for interfaces. |
-| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`, or `"ambiguous"` (see [Ambiguous hotspot](#ambiguous-hotspot)). `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device) — see [SVG Renderer](svg-renderer.md#states). |
+| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`, or `"ambiguous"` (see [Ambiguous hotspot](#ambiguous-hotspot)). `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device); see [SVG Renderer](svg-renderer.md#states). |
 | `cable_color` | string \| null | `null` = no cable attached, or a cable that the user cannot view. `""` = cable attached, no colour set (rendered with a diagonal no-colour pattern). `"rrggbb"` = the cable's configured colour. |
 | `peer_labels` | array of string | `"{device} | {name}"` per resolved peer that the user can view: the traced endpoints when the component has them, otherwise the direct cable peers. Empty when unconnected. |
 | `trace_supported` | bool | Whether NetBox's REST trace endpoint (`GET /api/dcim/{type}s/{id}/trace/`) exists for this object type. `true` for interfaces, console ports and console-server ports; `false` for front/rear ports, which use `PassThroughPortMixin` and have no `/trace/` action. |
@@ -148,7 +148,7 @@ A Virtual Chassis device returns one set of panels per member, in rack order (sa
 
 ## Performance
 
-The component resolver (`netbox_device_view.components`) prefetches cable terminations and cable-trace path objects for every component up front, using the same prefetch shapes NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` use (`dcim/api/views.py`) — one request never issues a query per port. This is covered by a regression test (`tests/test_api_rendered_layout.py::QueryCountTests`) that asserts query count doesn't scale with interface count.
+The component resolver (`netbox_device_view.components`) prefetches cable terminations and cable-trace path objects for every component up front, using the same prefetch shapes NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` use (`dcim/api/views.py`). One request never issues a query per port. This is covered by a regression test (`tests/test_api_rendered_layout.py::QueryCountTests`) that asserts query count doesn't scale with interface count.
 
 No caching (`ETag`/`Last-Modified`) is applied — connection state and cable colour can change at any time, and a stale cached response would show wrong data. This may be revisited if it becomes a real bottleneck.
 
