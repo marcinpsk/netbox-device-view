@@ -1656,6 +1656,28 @@ class BulkImportTests(DataSourceImportTestBase):
         )
 
 
+class CustomFieldTests(DataSourceImportTestBase):
+    def custom_field(self, **fields):
+        custom_field = CustomField.objects.create(type="text", required=True, **fields)
+        custom_field.object_types.set([ObjectType.objects.get_for_model(DeviceView)])
+
+    def test_create_applies_custom_field_defaults(self):
+        self.custom_field(name="owner", default="ops")
+        review = self.review([(self.datafile(), self.device_type)]).context["review"]
+        self.assertEqual(review.rows[0].error, "")
+        self.assertEqual(review.rows[0].action, datasource_import.Action.CREATE)
+        self.assertEqual(self.apply(review.token).status_code, 200)
+        self.assertEqual(DeviceView.objects.get().custom_field_data, {"owner": "ops"})
+
+    def test_required_custom_field_without_default_is_a_row_error(self):
+        self.custom_field(name="owner")
+        response = self.review([(self.datafile(), self.device_type)])
+        self.assertEqual(response.status_code, 200)
+        review = response.context["review"]
+        self.assertIn("Missing required custom field 'owner'", review.rows[0].error)
+        self.assertEqual(review.token, "")
+
+
 class ReplacementTestBase(DataSourceImportTestBase):
     OLD_YAML = (
         EXAMPLE_YAML.read_text()

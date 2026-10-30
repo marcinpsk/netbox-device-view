@@ -27,6 +27,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import Length
+from extras.models import CustomField
 
 from .layout import LayoutParseError, parse_yaml, render_css
 from .layout.css_profile import validate_css
@@ -480,7 +481,7 @@ def _lock_targets(rows: list[ReviewedRow]) -> None:
 def _write(user, path: str, proposal: _Proposal) -> DeviceView:
     """Create or update the device view with native validation, logging and permissions."""
     if proposal.action == Action.CREATE:
-        device_view = DeviceView(device_type=proposal.device_type, **proposal.fields)
+        device_view = _new_device_view(proposal.device_type, proposal.fields)
     else:
         device_view = proposal.device_view
         device_view.snapshot()
@@ -559,7 +560,7 @@ def _propose(
     )
     if device_view is None:
         action = Action.CREATE
-        candidate = DeviceView(device_type=device_type, **fields)
+        candidate = _new_device_view(device_type, fields)
     else:
         if fields == _imported_fields(device_view):
             action = Action.UNCHANGED
@@ -579,6 +580,15 @@ def _propose(
         action=action,
         fields=fields,
         baseline=_baseline(device_type, device_view),
+    )
+
+
+def _new_device_view(device_type: DeviceType, fields: dict[str, str]) -> DeviceView:
+    """Return an unsaved device view with NetBox's custom field defaults, as a new object gets."""
+    return DeviceView(
+        device_type=device_type,
+        custom_field_data=CustomField.objects.get_defaults_for_model(DeviceView),
+        **fields,
     )
 
 
