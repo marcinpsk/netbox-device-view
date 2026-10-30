@@ -2,6 +2,7 @@
 
 import hashlib
 import stat
+import struct
 import unicodedata
 import zipfile
 import zlib
@@ -27,6 +28,13 @@ BUNDLE = "bundle"
 MAX_MEMBERS = MAX_DEFINITIONS * MAX_FILES_PER_DEFINITION
 MAX_PATH_LENGTH = 255
 _ALLOWED_TYPES = {0, stat.S_IFREG, stat.S_IFDIR}
+# The zip end record, zip64 end locator and central directory record, as zipfile reads them.
+_END = struct.Struct("<4s4H2LH")
+_END_SIGNATURE = b"PK\x05\x06"
+_END64_LOCATOR_SIZE = 20
+_END64_LOCATOR_SIGNATURE = b"PK\x06\x07"
+_RECORD = struct.Struct("<4s4B4HL2L5H2L")
+_RECORD_SIGNATURE = b"PK\x01\x02"
 
 
 def revision_digest(file_digests: dict[str, str]) -> str:
@@ -121,12 +129,46 @@ def _raise(issues: list[Issue]):
     raise ArtworkError(issues)
 
 
+def _directory_issues(fileobj, size: int) -> list[Issue]:
+    """Count the central directory records before zipfile builds one object for each of them."""
+    tail_size = min(size, _END.size + 0xFFFF)
+    fileobj.seek(size - tail_size)
+    tail = fileobj.read(tail_size)
+    found = tail.rfind(_END_SIGNATURE)
+    if found < 0 or tail_size - found < _END.size:
+        return [Issue(BUNDLE, None, "not a zip file.")]
+    location = size - tail_size + found
+    if location >= _END64_LOCATOR_SIZE:
+        fileobj.seek(location - _END64_LOCATOR_SIZE)
+        if fileobj.read(4) == _END64_LOCATOR_SIGNATURE:
+            return [Issue(BUNDLE, None, "a zip64 archive; use the classic zip format.")]
+    directory_size = _END.unpack_from(tail, found)[5]
+    start = location - directory_size
+    if start < 0:
+        return [Issue(BUNDLE, None, "not a zip file.")]
+    total = records = 0
+    while total < directory_size:
+        records += 1
+        if records > MAX_MEMBERS:
+            return [Issue(BUNDLE, None, f"more than {MAX_MEMBERS} archive members.")]
+        fileobj.seek(start + total)
+        header = fileobj.read(_RECORD.size)
+        if len(header) != _RECORD.size or header[:4] != _RECORD_SIGNATURE:
+            return [Issue(BUNDLE, None, "not a zip file.")]
+        fields = _RECORD.unpack(header)
+        total += _RECORD.size + fields[12] + fields[13] + fields[14]
+    return []
+
+
 def read_zip(fileobj) -> list[tuple[str, bytes]]:
     """Return the (path, bytes) files of a zip bundle after the archive checks."""
     size = fileobj.seek(0, 2)
     fileobj.seek(0)
     if size > MAX_BUNDLE_BYTES:
         _raise([Issue(BUNDLE, None, f"larger than {MAX_BUNDLE_BYTES} bytes.")])
+    if issues := _directory_issues(fileobj, size):
+        _raise(issues)
+    fileobj.seek(0)
     try:
         archive = zipfile.ZipFile(fileobj)
     except zipfile.BadZipFile:
