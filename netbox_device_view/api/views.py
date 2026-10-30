@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from dcim.models import Device
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
@@ -140,6 +142,11 @@ class ArtworkSourceImportView(APIView):
     queryset = models.DefinitionRevision.objects.all()
 
     def post(self, request):
+        if not isinstance(request.data, Mapping):
+            return Response(
+                {"non_field_errors": ["Send a JSON object."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         form = ArtworkSourceImportForm(request.data, user=request.user)
         if not form.is_valid():
             return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)

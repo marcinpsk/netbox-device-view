@@ -430,9 +430,9 @@ class ArtworkSourceImportView(ContentTypePermissionRequiredMixin, View):
         return artwork_importing.PERMISSION
 
     def _render(self, request, form, status=200, **extra):
-        value = str(form["data_source"].value() or "")
+        pk = _parse_pk(str(form["data_source"].value() or ""))
         queryset = form.fields["data_source"].queryset
-        source = queryset.filter(pk=value).first() if value.isdigit() else None
+        source = queryset.filter(pk=pk).first() if pk is not None else None
         context = {
             "form": form,
             "source": source,
