@@ -3,8 +3,10 @@
 import hashlib
 
 from core.exceptions import SyncError
+from core.models import DataFile
 from core.signals import post_sync, pre_sync
 from django.db import connection
+from django.db.models import CharField, F, Func, IntegerField, Q, Value
 from django.dispatch import receiver
 from django.utils import timezone
 
@@ -45,6 +47,25 @@ def start_guarded_sync(sender, instance, **kwargs):
         source_id=instance.pk,
         defaults={"started": timezone.now(), "finished": None},
     )
+    _forget_torn_files(instance.pk)
+
+
+def _forget_torn_files(source_pk: int) -> None:
+    """Clear the hash of torn files (data that the hash and size do not describe), so the sync reads them again."""
+    digest = Func(
+        Func(F("data"), function="sha256"),
+        Value("hex"),
+        function="encode",
+        output_field=CharField(),
+    )
+    size = Func(F("data"), function="octet_length", output_field=IntegerField())
+    torn = (
+        DataFile.objects.filter(source_id=source_pk)
+        .annotate(digest=digest, stored_size=size)
+        .filter(~Q(hash=F("digest")) | ~Q(size=F("stored_size")))
+        .values_list("pk", flat=True)
+    )
+    DataFile.objects.filter(pk__in=list(torn)).update(hash="")
 
 
 @receiver(post_sync)

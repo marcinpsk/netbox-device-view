@@ -39,8 +39,8 @@ NO_GUARDED_SYNC = (
 SYNC_RUNNING = "a sync of the Data Source has not finished. Import after it completes."
 HIDDEN_FILES = "you cannot view every file below this prefix."
 CHANGED_FILE = (
-    "the stored file does not match its recorded size and SHA-256. Check for"
-    " updates, then import again."
+    "the stored file does not match its recorded size and SHA-256: the file changed"
+    " while a sync read it. Check for updates, then import again."
 )
 
 
