@@ -805,6 +805,45 @@ class StrictYamlImportTests(DataSourceImportTestBase):
                 self.assertIn(message, review.rows[0].error)
                 self.assertEqual(review.token, "")
 
+    def test_overlapping_elements_are_rejected(self):
+        overlaps = {
+            "base": "  front:\n    elements: [{key: big, span: {rows: 2, cols: 2}}, "
+            "{key: small, at: {row: 2, col: 2}}]\n",
+            "variant": "  front:\n    elements: [{key: big, span: {rows: 2, cols: 2}}]\n"
+            "variants:\n  NM:\n    elements: [{key: small, at: {row: 2, col: 2}}]\n",
+        }
+        for name, where in (("base", "views.front"), ("variant", "variants.NM")):
+            with self.subTest(name):
+                content = "canvas: {columns: 4, rows: 2}\nviews:\n" + overlaps[name]
+                response = self.review_file(f"examples/{name}.yaml", content)
+                review = response.context["review"]
+                self.assertIn(
+                    f"{where}: the cells of grid area 'big' do not make one rectangle",
+                    review.rows[0].error,
+                )
+                self.assertEqual(review.token, "")
+                self.assertNotContains(response, "Apply import")
+        self.assertFalse(DeviceView.objects.exists())
+
+    def test_variants_that_do_not_render_are_rejected(self):
+        variant = "variants:\n  NM:\n    view: rear\n    elements: [{key: te1}]\n"
+        layouts = {
+            "both-faces": (
+                "views:\n  front: {elements: [{key: p1}]}\n  rear: {elements: [{key: p1}]}\n",
+                "variants: a layout with both a front and a rear view cannot have variants.",
+            ),
+            "undefined-view": (
+                "views:\n  front: {elements: [{key: p1}]}\n",
+                "variants.NM.view: the layout has no rear view.",
+            ),
+        }
+        for name, (views, message) in layouts.items():
+            with self.subTest(name):
+                response = self.review_file(f"examples/{name}.yaml", views + variant)
+                review = response.context["review"]
+                self.assertIn(message, review.rows[0].error)
+                self.assertEqual(review.token, "")
+
     def test_local_definitions_keep_the_lenient_parser(self):
         # Rendering reads stored YAML with the lenient parser; only imports are strict.
         DeviceView.objects.create(
@@ -898,6 +937,8 @@ class CssImportTests(DataSourceImportTestBase):
             "escape": base.replace('"a b"', '"\\61  b"'),
             "important": base.replace('";', '" !important;'),
             "row-widths": base.replace('"a b"', '"a b" "c"'),
+            "split-area": base.replace('"a b"', '"a b a"'),
+            "l-shaped-area": base.replace('"a b"', '"a a" "a b"'),
             "number-row": base.replace('"a b"', "1"),
             "percentage-row": base.replace('"a b"', '"a b" 5%'),
             "sizing": base.replace("{", "{ grid-auto-rows: 20px;"),

@@ -191,6 +191,31 @@ def test_invalid_grid_areas_are_rejected(areas):
     rejected(BASE.replace('"p1 p2" "p3 ."', areas), "grid-template-areas")
 
 
+@pytest.mark.parametrize(
+    ("areas", "area"),
+    [
+        ('"a b a"', "a"),
+        ('"a a" "a b"', "a"),
+        ('"a ." ". a"', "a"),
+        ('"a b" "b a"', "a"),
+        ('"x a a" "x a b" "x a a"', "a"),
+    ],
+)
+def test_areas_that_are_not_rectangles_are_rejected(areas, area):
+    rejected(
+        BASE.replace('"p1 p2" "p3 ."', areas),
+        f"grid-template-areas: the cells of area '{area}' must make one rectangle",
+    )
+
+
+@pytest.mark.parametrize(
+    "areas",
+    ['"a a" "a a"', '"a b" "a b"', '". a" ". a"', '"a a b" "c c b"', '"a" "a" "a"'],
+)
+def test_rectangular_areas_are_accepted(areas):
+    validate_css(BASE.replace('"p1 p2" "p3 ."', areas))
+
+
 def test_dot_runs_are_empty_cells():
     validate_css(BASE.replace('"p3 ."', '"p3 ..."'))
 

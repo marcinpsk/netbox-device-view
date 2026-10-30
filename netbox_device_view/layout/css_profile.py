@@ -19,6 +19,7 @@ from .renderers.css_grid import (
     GRID_CLASSES,
     MODULE_CLASS_PREFIX,
     REAR_CLASS,
+    non_rectangular_area,
 )
 
 _REQUIRED_CLASSES = set(GRID_CLASSES)
@@ -109,7 +110,7 @@ def _check_declaration(declaration: Any) -> bool:
 
 
 def _check_grid_areas(values: list[Any]) -> bool:
-    """Accept strings of area identifiers or dots with one row width."""
+    """Accept strings of area identifiers or dots with one row width and rectangular areas."""
     rows = []
     if not values:
         raise LayoutParseError("grid-template-areas: the value is empty.")
@@ -130,6 +131,11 @@ def _check_grid_areas(values: list[Any]) -> bool:
     if len({len(row) for row in rows}) != 1:
         raise LayoutParseError(
             "grid-template-areas: every row must have the same number of cells."
+        )
+    area = non_rectangular_area(rows)
+    if area is not None:
+        raise LayoutParseError(
+            f"grid-template-areas: the cells of area {area!r} must make one rectangle."
         )
     return any(IDENTIFIER.fullmatch(cell) for row in rows for cell in row)
 

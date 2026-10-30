@@ -85,16 +85,22 @@ def _render_variant(
     variant_elements: list[PlacedElement],
 ) -> str:
     """Render a module variant overlay CSS block."""
-    # Merge base + variant elements, variant wins on key conflicts
+    deviceview, area = GRID_CLASSES
+    selector = f".{deviceview}.{MODULE_CLASS_PREFIX}{variant_name}.{area}"
+    grid_areas = _elements_to_grid_template_areas(
+        variant_render_elements(base_view, variant_elements), base_view.canvas
+    )
+    return _build_css_block(selector, base_view.canvas, grid_areas)
+
+
+def variant_render_elements(
+    base_view: LayoutView, variant_elements: list[PlacedElement]
+) -> list[PlacedElement]:
+    """Return the elements that a variant renders: the base elements, replaced by key."""
     merged: dict[str, PlacedElement] = {el.key: el for el in base_view.elements}
     for el in variant_elements:
         merged[el.key] = el
-    all_elements = list(merged.values())
-
-    deviceview, area = GRID_CLASSES
-    selector = f".{deviceview}.{MODULE_CLASS_PREFIX}{variant_name}.{area}"
-    grid_areas = _elements_to_grid_template_areas(all_elements, base_view.canvas)
-    return _build_css_block(selector, base_view.canvas, grid_areas)
+    return list(merged.values())
 
 
 def _build_css_block(
@@ -134,18 +140,19 @@ def _elements_to_grid_template_areas(
     3. For elements spanning multiple rows/cols, fill all spanned cells with
        the same key (CSS grid-template-areas requires this).
     4. Convert each row to a space-separated string of area names.
-
-    CSS grid-template-areas does NOT allow a cell to be empty (".") unless
-    ALL cells in that column are empty — we replace empty cells with the
-    nearest spacer/blank key or a generated placeholder.
     """
+    return [" ".join(row) for row in area_grid(elements, canvas)]
+
+
+def area_grid(elements: list[PlacedElement], canvas: CanvasConfig) -> list[list[str]]:
+    """Return the area name of each canvas cell, or "." for an empty cell."""
     rows = canvas.rows
     cols = canvas.columns
 
     # grid[row][col] = area name ("." = empty)
     grid: list[list[str]] = [["." for _ in range(cols)] for _ in range(rows)]
 
-    # Sort elements to place in a predictable order
+    # Sort elements to place in a predictable order; a later element paints over an earlier one
     sorted_elements = sorted(elements, key=lambda e: (e.row, e.col))
 
     for el in sorted_elements:
@@ -154,12 +161,23 @@ def _elements_to_grid_template_areas(
             for c in col_range:
                 grid[r][c] = el.key
 
-    # Replace remaining "." placeholders with unique generated names
-    # CSS grid-template-areas requires that named areas form a contiguous
-    # rectangle; a lone "." in the middle can sometimes be a problem, but
-    # browsers handle it.  We leave them as "." for simplicity.
+    return grid
 
-    return [" ".join(row) for row in grid]
+
+def non_rectangular_area(rows: list[list[str]]) -> str | None:
+    """Return the first named area whose cells do not fill one rectangle, or None."""
+    # Browsers drop the whole grid-template-areas declaration for such an area.
+    cells: dict[str, list[tuple[int, int]]] = {}
+    for r, row in enumerate(rows):
+        for c, name in enumerate(row):
+            if name.strip("."):
+                cells.setdefault(name, []).append((r, c))
+    for name, spots in cells.items():
+        height = max(r for r, _ in spots) - min(r for r, _ in spots) + 1
+        width = max(c for _, c in spots) - min(c for _, c in spots) + 1
+        if len(spots) != height * width:
+            return name
+    return None
 
 
 def painted_area(el: PlacedElement, canvas: CanvasConfig) -> tuple[range, range]:

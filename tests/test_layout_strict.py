@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from netbox_device_view.layout import Face, render_css
 from netbox_device_view.layout.parser import (
     MAX_CANVAS_CELLS,
     MAX_CANVAS_ROWS,
@@ -137,11 +138,8 @@ class TestLimits:
 
         def change(d):
             d["canvas"] = canvas
-            d["views"] = {"front": {"rows": [sequence]}, "rear": {"rows": [sequence]}}
-            d["variants"] = {
-                name: {"match": "module", "view": view, "rows": [sequence]}
-                for name, view in (("A", "front"), ("B", "rear"))
-            }
+            d["views"] = {"front": {"rows": [sequence]}}
+            d["variants"] = {name: {"rows": [sequence]} for name in ("A", "B", "C")}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
             strict(layout(change))
@@ -209,15 +207,6 @@ class TestCssClasses:
         def change(d):
             front(d)["elements"] = [{"key": "p1", "css_classes": [INJECTION]}]
             del front(d)["rows"]
-
-        with pytest.raises(LayoutParseError, match="css_classes"):
-            strict(layout(change))
-
-    def test_rejected_in_a_variant_of_a_separate_face_layout(self):
-        # The CSS renderer does not emit variants for front/rear layouts.
-        def change(d):
-            separate_faces(d)
-            variant_element(d)["css_classes"] = [INJECTION]
 
         with pytest.raises(LayoutParseError, match="css_classes"):
             strict(layout(change))
@@ -340,9 +329,9 @@ class TestGridAreas:
     @pytest.mark.parametrize(
         "change",
         [
-            lambda d: d.update(views={}),
+            lambda d: d.update(views={}, variants={}),
             lambda d: d.update(views={"front": {}}),
-            lambda d: d.pop("views"),
+            lambda d: d.pop("views") and d.pop("variants"),
         ],
     )
     def test_at_least_one_element_is_required(self, change):
@@ -355,6 +344,110 @@ class TestGridAreas:
 
     def test_port_names_need_not_match_components(self):
         strict(layout(lambda d: variant_element(d).update(key="does-not-exist")))
+
+
+def rear_only(data):
+    data["views"] = {"rear": data["views"].pop("front")}
+
+
+class TestVariantViews:
+    """Strict layouts accept only the variants that the CSS renderer writes."""
+
+    @pytest.mark.parametrize(
+        ("change", "message"),
+        [
+            (
+                separate_faces,
+                "variants: a layout with both a front and a rear view cannot have variants",
+            ),
+            (
+                lambda d: d["variants"]["NM-2X"].update(view="rear"),
+                "variants.NM-2X.view: the layout has no rear view",
+            ),
+            (rear_only, "variants.NM-2X.view: the layout has no front view"),
+            (
+                lambda d: d.update(views={}),
+                "variants.NM-2X.view: the layout has no front view",
+            ),
+        ],
+    )
+    def test_variants_that_do_not_render_are_rejected(self, change, message):
+        with pytest.raises(LayoutParseError, match=message):
+            strict(layout(change))
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            lambda d: None,
+            lambda d: (rear_only(d), d["variants"]["NM-2X"].update(view="rear")),
+        ],
+    )
+    def test_accepted_variants_are_rendered(self, change):
+        assert ".deviceview.moduleNM-2X.area {" in render_css(strict(layout(change)))
+
+    @pytest.mark.parametrize("views", [{}, {"front": {"elements": [{"key": "p1"}]}}])
+    def test_lenient_parse_adds_the_view_of_a_variant_with_its_face(self, views):
+        data = {"views": views, "variants": {"V": {"view": "rear", "elements": []}}}
+        parsed = parse(yaml.safe_dump(data))
+        assert parsed.rear.face == Face.REAR
+        assert "V" in parsed.rear.variants
+
+
+def flat(canvas, front_elements, variant_elements=None):
+    """Return a front-only layout with flat elements and an optional variant V."""
+    data = {
+        "version": 1,
+        "canvas": {"columns": canvas[0], "rows": canvas[1]},
+        "views": {"front": {"elements": front_elements}},
+    }
+    if variant_elements is not None:
+        data["variants"] = {"V": {"elements": variant_elements}}
+    return data
+
+
+BIG = {"key": "big", "at": {"row": 1, "col": 1}, "span": {"rows": 2, "cols": 2}}
+SMALL = {"key": "small", "at": {"row": 2, "col": 2}}
+
+
+class TestAreaShapes:
+    @pytest.mark.parametrize(
+        ("data", "message"),
+        [
+            (flat((4, 2), [BIG, SMALL]), "views.front: the cells of grid area 'big'"),
+            (
+                flat((4, 2), [BIG], [SMALL]),
+                "variants.V: the cells of grid area 'big'",
+            ),
+            (
+                flat((4, 2), [SMALL], [BIG]),
+                "variants.V: the cells of grid area 'big'",
+            ),
+            (
+                flat((4, 1), [{"key": "p1"}, {"key": "p1", "at": {"col": 3}}]),
+                "views.front: the cells of grid area 'p1'",
+            ),
+        ],
+    )
+    def test_areas_that_are_not_rectangles_are_rejected(self, data, message):
+        with pytest.raises(LayoutParseError, match=message):
+            strict(data)
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            flat((4, 2), [BIG, {"key": "p1", "at": {"row": 1, "col": 3}}]),
+            flat((4, 1), [{"key": "p1"}, {"key": "p1", "at": {"col": 2}}]),
+            flat((4, 2), [BIG], [{**BIG, "key": "big", "span": {"rows": 1}}]),
+            flat((4, 2), [SMALL], [{"key": "small", "at": {"row": 1, "col": 1}}]),
+        ],
+    )
+    def test_rectangular_areas_are_accepted(self, data):
+        strict(data)
+
+    def test_lenient_parse_accepts_overlaps(self):
+        assert (
+            len(parse(yaml.safe_dump(flat((4, 2), [BIG, SMALL]))).front.elements) == 2
+        )
 
 
 class TestReviewFindings:

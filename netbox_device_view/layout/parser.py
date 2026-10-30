@@ -97,7 +97,12 @@ from .model import (
     NormalizedLayout,
     PlacedElement,
 )
-from .renderers.css_grid import painted_area
+from .renderers.css_grid import (
+    area_grid,
+    non_rectangular_area,
+    painted_area,
+    variant_render_elements,
+)
 
 # ── Schema version supported by this parser ──────────────────────────────────
 SUPPORTED_VERSION = 1
@@ -465,6 +470,11 @@ def _compile_variants(
     rules: _Rules,
 ) -> None:
     # Second pass: compile variants into each affected view
+    # The CSS renderer writes variants only for a layout with one face.
+    if rules.strict and raw_variants and set(_VIEW_NAMES) <= compiled_views.keys():
+        raise LayoutParseError(
+            "variants: a layout with both a front and a rear view cannot have variants."
+        )
     for variant_name, variant_data in raw_variants.items():
         where = f"variants.{variant_name}"
         if rules.strict and not (
@@ -479,9 +489,13 @@ def _compile_variants(
             variant_data.get("view", "front"), f"{where}.view", _VIEW_NAMES
         )
         if variant_view_name not in compiled_views:
-            # Create an implicit front view if needed
+            # An implicit view changes the faces that the CSS renderer writes.
+            if rules.strict:
+                raise LayoutParseError(
+                    f"{where}.view: the layout has no {variant_view_name} view."
+                )
             compiled_views[variant_view_name] = LayoutView(
-                face=Face.FRONT,
+                face=_parse_face(str(variant_view_name)),
                 canvas=canvas_cfg,
             )
         view = compiled_views[variant_view_name]
@@ -1139,6 +1153,7 @@ def _check_elements(layout: NormalizedLayout) -> None:
             for el in elements:
                 _check_element(el, where)
     _check_painted_cells(layout)
+    _check_area_shapes(layout)
 
 
 def _check_painted_cells(layout: NormalizedLayout) -> None:
@@ -1162,6 +1177,24 @@ def _check_painted_cells(layout: NormalizedLayout) -> None:
                 f"views.{view_name}: the views and variants paint more than "
                 f"{MAX_PAINTED_CELLS} grid cells in total."
             )
+
+
+def _check_area_shapes(layout: NormalizedLayout) -> None:
+    """Check that each grid area that the CSS renderer writes is one rectangle."""
+    for view_name, view in layout.views.items():
+        renders = [(f"views.{view_name}", view.elements)]
+        renders += [
+            (f"variants.{name}", variant_render_elements(view, elements))
+            for name, elements in view.variants.items()
+        ]
+        for where, elements in renders:
+            area = non_rectangular_area(area_grid(elements, view.canvas))
+            if area is not None:
+                raise LayoutParseError(
+                    f"{where}: the cells of grid area {area!r} do not make one "
+                    "rectangle. Elements must not overlap, and elements with one "
+                    "key must fill one rectangle."
+                )
 
 
 def _painted_cells(el: PlacedElement, canvas: CanvasConfig) -> int:
