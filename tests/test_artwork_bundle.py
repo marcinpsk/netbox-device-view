@@ -146,6 +146,19 @@ def test_too_many_directory_records_fail_before_zipfile_reads_them():
     assert peak < 4 * 1024 * 1024
 
 
+def test_signature_bytes_in_the_end_record_fields_are_not_its_signature():
+    # 7 members of 46 + 174 or 175 bytes give a 1541-byte (0x0605) directory, and
+    # the entry count 0x4B50 is "PK": the record holds "PK\x05\x06" after its start.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for i in range(7):
+            archive.writestr(f"d/{i}" + "x" * (171 if i else 172), "x")
+    data = bytearray(buffer.getvalue())
+    assert int.from_bytes(data[-10:-6], "little") == 0x0605
+    data[-12:-10] = b"PK"
+    assert len(read_zip(io.BytesIO(bytes(data)))) == 7
+
+
 def test_a_zip64_archive_fails():
     data = bundle({f"{DEVICE_DIR}/front.svg": FRONT_SVG})
     end = data.rindex(b"PK\x05\x06")
