@@ -55,7 +55,7 @@ views:
 
 
 class _PortCells(HTMLParser):
-    """Collect the attributes of each SVG port group of a page."""
+    """Collect the attributes of each SVG port group and CSS grid port of a page."""
 
     def __init__(self):
         super().__init__()
@@ -64,7 +64,9 @@ class _PortCells(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = (attrs.get("class") or "").split()
-        if tag == "g" and "dv-port" in classes:
+        if (tag == "g" and "dv-port" in classes) or (
+            tag == "a" and "device-view-port" in classes
+        ):
             self.cells.append(attrs)
         elif tag == "rect" and "dv-port-rect" in classes and self.cells:
             self.cells[-1]["rect-fill"] = attrs["fill"]
@@ -234,6 +236,16 @@ class PageMatchesApiTests(ResolverTestBase):
         content = self._tab(cable_colors="on")
         self.assertIn('fill="#ff0000"', content)
         self.assertNotIn("cableColor", content)
+
+    def test_cable_colour_mode_stripes_only_a_cable_without_a_colour(self):
+        Cable.objects.update(color="")
+        cells = {
+            cell["data-stylename"]: cell["class"].split()
+            for cell in page_cells(self._tab(cable_colors="on"))
+        }
+        self.assertIn("nocolor", cells["gi-1"])
+        self.assertNotIn("nocolor", cells["gi-3"])
+        self.assertIn("bg-danger", cells["gi-3"])
 
 
 class AmbiguousKeyTests(ResolverTestBase):
@@ -493,3 +505,28 @@ class HiddenObjectTests(ResolverTestBase):
                     self.module_interface.get_absolute_url(),
                     {cell.get("data-href") for cell in page_cells(content)},
                 )
+
+
+class PopoverEscapingTests(ResolverTestBase):
+    """A component name is popover text, not markup, in both render modes."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        Interface.objects.create(
+            device=cls.device, name="<b>Gi1</b>", type="1000base-t"
+        )
+
+    def test_the_popover_title_escapes_the_name(self):
+        for render_mode in (RenderMode.CSS, RenderMode.SVG):
+            with self.subTest(render_mode):
+                DeviceView.objects.update(
+                    render_mode=render_mode,
+                    yaml_layout="version: 1\nviews:\n  front:\n    elements: [{key: -b-gi1--b-}]\n",
+                )
+                (cell,) = (
+                    cell
+                    for cell in page_cells(self._tab())
+                    if "data-href" in cell or cell.get("href")
+                )
+                self.assertEqual(cell["data-bs-title"], "&lt;b&gt;Gi1&lt;/b&gt;")
