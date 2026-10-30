@@ -50,20 +50,19 @@ Edit the DeviceView and correct the layout. When you save a DeviceView, the plug
 
 ## Port status colours not showing in SVG mode
 
-Status classes (`bg-success`, `bg-warning`, `bg-secondary`, `bg-danger`) are applied by JavaScript at page load using the `data-stylename` attribute. Check that:
+The server writes the status classes (`bg-success`, `bg-warning`, `bg-secondary`, `bg-danger`) into the SVG. The colours of these classes come from a static file. Check that the static file `netbox_device_view/css/device_view_svg.css` has been collected:
 
-1. The static file `netbox_device_view/css/device_view_svg.css` has been collected:
-   ```bash
-   python manage.py collectstatic --no-input
-   ```
-2. JavaScript is not blocked by a browser extension or Content Security Policy.
+```bash
+python manage.py collectstatic --no-input
+```
+
+A grey, dashed port is an ambiguous stylename: two or more components share it. See [Shared stylenames](how-it-works.md#shared-stylenames).
 
 ---
 
 ## Partial connection dot not visible
 
-The yellow dot overlay is injected by JavaScript when a port has `link_peers` but no `connected_endpoints`. Verify that:
+The server adds the yellow dot when an interface has `link_peers` but no `connected_endpoints`. Verify that:
 
 - The port's cable is actually attached in NetBox
 - The cable path genuinely has no far-end device (check via the port's trace view)
-- JavaScript is running without errors (check the browser console)

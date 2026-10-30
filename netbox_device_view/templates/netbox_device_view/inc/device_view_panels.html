@@ -1,0 +1,101 @@
+{# The panels of a device view. utils.device_view_context() gives the context and the state of every port. #}
+{% spaceless %}
+{% if layout_error %}
+{% include 'netbox_device_view/inc/layout_error.html' %}
+{% elif use_svg %}
+{% for panel_pos, svg_markup in svg_panels %}
+<p class="text-muted small mb-1">Device {{ panel_pos }}</p>
+<div class="dv-svg-wrapper{% if panel_pos == active_panel %} active-device{% endif %}"
+	id="dv-svg-wrapper-{{ panel_pos }}"
+	data-device="{{ panel_pos }}">
+	{% autoescape off %}{{ svg_markup }}{% endautoescape %}
+</div>
+{% endfor %}
+{% else %}
+{% for switch, cells in ports_chassis.items %} Device
+{{switch}}
+<div
+	class="deviceview area d{{switch}}{% if switch == active_panel %} active-device{% endif %}{% for sw, modules in modules.items %}{% if sw == switch %}{% for module in modules %} module{{module.module_type.model}}{% endfor %}{% endif %}{% endfor %}"
+>
+	{% for cell in cells %}
+	<a
+		{% if cell.href %}href="{{ cell.href }}"{% endif %}
+		class="device-view-port {{ cell.classes|join:' ' }}"
+		data-connection-state="{{ cell.connection_state }}"
+		data-bs-title="{{ cell.popover_title }}"
+		data-bs-content="{{ cell.popover_content|force_escape }}"
+		style="grid-area: {{ cell.stylename }}{% if cell.fill %}; background-color: {{ cell.fill }}{% endif %}"
+		data-bs-toggle="popover"
+		data-bs-trigger="hover focus"
+		data-bs-placement="top"
+		data-bs-html="true"
+		data-bs-container="body"
+		data-bs-delay='{"show":200,"hide":300}'
+		data-bs-custom-class="device-view-tooltip"
+	>
+		<span class="text-white"><i class="mdi {% if cell.disabled %}mdi-close-thick{% elif cell.href %}mdi-check-bold{% else %}mdi-help{% endif %}"></i></span>
+	</a>
+	{% endfor %}
+</div>
+{% endfor %}
+{% endif %}
+{% endspaceless %}
+
+<script>
+// Shared popover helper — keeps popover open when cursor moves into it.
+// Bootstrap 5 hover trigger closes on mouseleave of the trigger element
+// before mouseenter on the popover fires. We use trigger:"manual" and
+// wire both elements ourselves so the popover stays open over either one.
+function dvInitPopover(el, opts) {
+  if (typeof Popover === "undefined") return;
+  var pop = new Popover(el, {
+    trigger: "manual",
+    html: true,
+    container: "body",
+    placement: "top",
+    customClass: "device-view-tooltip",
+    title: opts.title || "",
+    content: opts.content || ""
+  });
+  var hideTimer = null;
+  var showTimer = null;
+  function scheduleHide() {
+    clearTimeout(showTimer);
+    hideTimer = setTimeout(function () { pop.hide(); }, 500);
+  }
+  function cancelHide() {
+    clearTimeout(hideTimer);
+  }
+  el.addEventListener("mouseenter", function () { cancelHide(); showTimer = setTimeout(function () { pop.show(); }, 500); });
+  el.addEventListener("mouseleave", scheduleHide);
+  el.addEventListener("shown.bs.popover", function () {
+    var tip = Popover.getInstance(el) && Popover.getInstance(el)._tip;
+    if (!tip) {
+      // fallback: grab the most recently appended popover in body
+      var popovers = document.querySelectorAll(".popover");
+      tip = popovers[popovers.length - 1];
+    }
+    if (tip) {
+      tip.addEventListener("mouseenter", cancelHide);
+      tip.addEventListener("mouseleave", scheduleHide);
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  // The server sets the state of each port; this only wires links and popovers.
+  document.querySelectorAll(".dv-port[data-href]").forEach(function (g) {
+    var href = g.getAttribute("data-href");
+    g.addEventListener("click", function () { window.location.href = href; });
+    g.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { window.location.href = href; }
+    });
+  });
+  document.querySelectorAll('.dv-port[data-bs-toggle="popover"], .device-view-port[data-bs-toggle="popover"]').forEach(function (el) {
+    dvInitPopover(el, {
+      title: el.getAttribute("data-bs-title"),
+      content: el.getAttribute("data-bs-content")
+    });
+  });
+});
+</script>

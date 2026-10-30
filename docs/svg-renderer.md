@@ -20,7 +20,7 @@ Set **Render Mode → SVG** on the DeviceView edit page. The field is available 
 
 ## Port status colours
 
-Each port is coloured at page load by a small JavaScript snippet based on its connection state. The SVG renderer emits only the structural skeleton; no colours are baked into the SVG source.
+The server finds the connection state of each port and writes the status class, the cable colour and the popover into the SVG. The page script only connects the links and the popovers.
 
 ![Port status example](assets/port-status-example.svg)
 
@@ -67,9 +67,10 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
   <!-- canvas background -->
   <rect class="dv-canvas-bg" .../>
 
-  <!-- port elements — status classes added by JS at page load -->
-  <g class="dv-port {stylename}" data-stylename="{stylename}" tabindex="0" role="button">
-    <title>{stylename}</title>
+  <!-- port elements, with the state that the server found -->
+  <g class="dv-port {stylename} {status class}" data-stylename="{stylename}" tabindex="0" role="link"
+     data-connection-state="{state}" data-href="{component URL}" data-bs-title="..." data-bs-content="...">
+    <title>{component name}</title>
     <rect class="dv-port-rect" .../>
     <text class="dv-port-label" .../>
   </g>
@@ -85,18 +86,19 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 | `dv-face-front` / `dv-face-rear` | `<svg>` | Patch panel face identifier |
 | `dv-canvas-bg` | `<rect>` | Canvas background |
 | `dv-port` | `<g>` | Any clickable port element |
-| `{stylename}` | `<g>` | Derived port name — used by JS to apply status |
+| `{stylename}` | `<g>` | Derived port name |
 | `dv-port-rect` | `<rect>` | Port fill rectangle |
 | `dv-port-label` | `<text>` | Abbreviated port label |
 | `dv-spacer` | `<rect>` | Spacer element |
 | `dv-blank` | `<rect>` | Blank decorative element |
 | `dv-label` | `<text>` | Standalone text label |
-| `bg-success` | `<g>` | Added by JS: full connection (green) |
-| `bg-warning` | `<g>` | Added by JS: partial connection (yellow) |
-| `bg-secondary` | `<g>` | Added by JS: enabled, unconnected (grey) |
-| `bg-danger` | `<g>` | Added by JS: disabled (red) |
-| `nocolor` | `<g>` | Added by JS: cable with no colour set (stripe pattern) |
-| `dv-partial-dot` | `<circle>` | Added by JS: partial connection dot overlay |
+| `bg-success` | `<g>` | Full connection (green) |
+| `bg-warning` | `<g>` | Partial connection (yellow) |
+| `bg-secondary` | `<g>` | Enabled, unconnected (grey) |
+| `bg-danger` | `<g>` | Disabled (red) |
+| `dv-ambiguous` | `<g>` | Two or more components share the stylename (grey, dashed). See [Shared stylenames](how-it-works.md#shared-stylenames) |
+| `nocolor` | `<g>` | Cable with no colour set (stripe pattern) |
+| `dv-partial-dot` | `<circle>` | Partial connection dot overlay |
 
 ---
 
