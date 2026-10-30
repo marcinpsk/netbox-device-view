@@ -183,6 +183,17 @@ class SourceImportTests(SourceTestCase):
                 self.assertEqual(bytes(stored.data), FRONT_SVG.encode())
                 DefinitionRevision.objects.all().delete()
 
+    def test_a_sync_does_not_hash_files_too_large_to_import(self):
+        large = f"{DEVICE_DIR}/large.svg"
+        self.write({large: "x" * (MAX_SVG_BYTES + 1)})
+        self.sync()
+        torn = b"y" * (MAX_SVG_BYTES + 1)
+        DataFile.objects.filter(path=large).update(data=torn)
+
+        self.sync()
+
+        self.assertEqual(bytes(DataFile.objects.get(path=large).data), torn)
+
     def test_a_sync_leaves_consistent_files_alone(self):
         self.sync()
         before = dict(DataFile.objects.values_list("path", "last_updated"))

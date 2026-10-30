@@ -12,8 +12,6 @@ from django.db.models import (
     Count,
     Exists,
     F,
-    Func,
-    IntegerField,
     OuterRef,
     Q,
     Subquery,
@@ -23,6 +21,7 @@ from django.db.models import (
 )
 
 from ..models import SourceSyncRun
+from ..stored_data import stored_size
 from .bundle import is_safe_path
 from .errors import ArtworkError, Issue
 from .limits import MAX_EXPANDED_BYTES, MAX_MEMBERS, MAX_SVG_BYTES
@@ -63,11 +62,7 @@ def _files(user, source: DataSource, prefix: str):
     return (
         DataFile.objects.filter(source=source, path__startswith=prefix)
         # The size column can disagree with the data, so the limits use the stored bytes.
-        .annotate(
-            data_size=Func(
-                F("data"), function="octet_length", output_field=IntegerField()
-            )
-        )
+        .annotate(data_size=stored_size())
         .annotate(
             status=F("source__status"),
             synced=F("source__last_synced"),
