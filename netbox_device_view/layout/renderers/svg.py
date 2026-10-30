@@ -77,6 +77,7 @@ from dataclasses import dataclass, field
 from ..model import (
     CanvasConfig,
     ElementKind,
+    Face,
     LayoutView,
     NormalizedLayout,
     PlacedElement,
@@ -134,7 +135,8 @@ def render(
         (exactly as the CSS renderer does for module overlays).
         Pass ``None`` to render the base layout only.
     cells:
-        ``{face: {key: PortCell}}`` with the faces of ``face_views()``.
+        ``{"front" | "rear": {key: PortCell}}``; each view takes the cells of
+        its ``drawn_face()``.
 
     Returns
     -------
@@ -145,7 +147,10 @@ def render(
     cells = cells or {}
     return "\n".join(
         _render_view(
-            view, data_face=face, variant_name=variant_name, cells=cells.get(face)
+            view,
+            data_face=face,
+            variant_name=variant_name,
+            cells=cells.get(drawn_face(face, view)),
         )
         for face, view in face_views(layout)
     )
@@ -158,6 +163,13 @@ def face_views(layout: NormalizedLayout) -> list[tuple[str | None, LayoutView]]:
         return [(face, view) for face, view in faces if view]
     view = layout.front or layout.rear
     return [(None, view)] if view else []
+
+
+def drawn_face(face: str | None, view: LayoutView) -> str:
+    """Return the face that a view of ``face_views()`` draws: "front", or "rear" for a rear view."""
+    if face:
+        return face
+    return "rear" if view.face == Face.REAR else "front"
 
 
 def render_api_view(
