@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
         f"{datasource_import.MAX_BATCH_BYTES // 1024 // 1024} MiB",
         f"{datasource_import.MAX_BATCH_ROWS} files per import",
         f"more than {datasource_import.MAX_DIFF_LINES} lines",
+        f"more than {datasource_import.MAX_DIFF_CHARS} characters",
         f"{MAX_CANVAS_CELLS} cells per canvas",
         f"{MAX_EXPANDED_ELEMENTS} expanded elements per layout",
         f"valid for {datasource_import.REVIEW_MAX_AGE_SECONDS // 60} minutes",

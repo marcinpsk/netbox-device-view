@@ -2027,6 +2027,18 @@ class ReplacementTests(ReplacementTestBase):
         self.assertNotContains(review, "# padding")
         self.assertTrue(review.context["review"].token)
 
+    def test_a_field_with_one_long_line_shows_no_diff(self):
+        padding = "# " + "x" * datasource_import.MAX_DIFF_CHARS + "\n"
+        self.existing(yaml_layout=self.OLD_YAML + padding)
+        review = self.replace()
+        changes = {
+            change.name: change.lines
+            for change in review.context["review"].rows[0].changes
+        }
+        self.assertIsNone(changes["yaml_layout"])
+        self.assertContains(review, "too large to show a difference", count=1)
+        self.assertNotContains(review, "xxxxxxxxxx")
+
     def test_identical_row_with_replace_needs_no_change_permission(self):
         self.apply(self.review_token([(self.datafile(), self.device_type)]))
         ObjectPermission.objects.filter(actions=["change"]).delete()
