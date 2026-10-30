@@ -1,10 +1,8 @@
 import re
 import unicodedata
-from collections import defaultdict
-from itertools import chain
+from dataclasses import dataclass
 
 from dcim.models import (
-    Cable,
     ConsolePortTemplate,
     ConsoleServerPortTemplate,
     FrontPortTemplate,
@@ -13,7 +11,22 @@ from dcim.models import (
     VirtualChassis,
 )
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils.html import escape, format_html, format_html_join
+from django.utils.safestring import mark_safe
 
+from .components import (
+    AMBIGUOUS,
+    CONNECTED,
+    DISABLED,
+    ENABLED,
+    PARTIALLY_CONNECTED,
+    bind_layout,
+    derive_interface_key,
+    derive_port_key,
+    device_components,
+    panel_members,
+    viewable_device_view,
+)
 from .layout import (
     LayoutParseError,
     get_css_for_device_view,
@@ -22,6 +35,7 @@ from .layout import (
 from .layout import (
     parse as parse_layout,
 )
+from .layout.renderers.svg import PortCell
 from .models import DeviceView
 
 
@@ -32,30 +46,6 @@ def normalize_grid_template_area(value: str) -> str:
     Pasted text often holds U+00A0 and similar spaces, which grid-template-areas rejects.
     """
     return "".join(" " if unicodedata.category(ch) == "Zs" else ch for ch in value)
-
-
-def _derive_interface_stylename(name):
-    regex = r"^(?P<type>([a-zA-Z\-_]*))(\/|(?P<dev>[0-9]+).|\s)?((?P<module>[0-9]+).|\s)?((?P<port>[0-9]+))$"
-    matches = re.search(regex, name.lower())
-    if matches:
-        if not matches["type"]:
-            stylename = matches["port"]
-        else:
-            stylename = (
-                matches["type"] + (matches["module"] or "") + "-" + matches["port"]
-            )
-    else:
-        stylename = re.sub(r"[^.a-zA-Z\d]", "-", name.lower())
-    if stylename.isdigit():
-        stylename = f"p{stylename}"
-    return stylename
-
-
-def _derive_port_stylename(name):
-    stylename = re.sub(r"[^.a-zA-Z\d]", "-", name.lower())
-    if stylename.isdigit():
-        stylename = f"p{stylename}"
-    return stylename
 
 
 def get_stylenames_for_device_type(device_type_id):
@@ -74,7 +64,7 @@ def get_stylenames_for_device_type(device_type_id):
         results.append(
             {
                 "name": tmpl.name,
-                "stylename": _derive_interface_stylename(tmpl.name),
+                "stylename": derive_interface_key(tmpl.name),
                 "kind": "Interface",
                 "type": tmpl.get_type_display(),
             }
@@ -86,7 +76,7 @@ def get_stylenames_for_device_type(device_type_id):
         results.append(
             {
                 "name": tmpl.name,
-                "stylename": _derive_port_stylename(tmpl.name),
+                "stylename": derive_port_key(tmpl.name),
                 "kind": "Console Port",
                 "type": tmpl.get_type_display(),
             }
@@ -98,7 +88,7 @@ def get_stylenames_for_device_type(device_type_id):
         results.append(
             {
                 "name": tmpl.name,
-                "stylename": _derive_port_stylename(tmpl.name),
+                "stylename": derive_port_key(tmpl.name),
                 "kind": "Console Server Port",
                 "type": tmpl.get_type_display(),
             }
@@ -110,7 +100,7 @@ def get_stylenames_for_device_type(device_type_id):
         results.append(
             {
                 "name": tmpl.name,
-                "stylename": _derive_port_stylename(tmpl.name),
+                "stylename": derive_port_key(tmpl.name),
                 "kind": "Front Port",
                 "type": tmpl.get_type_display(),
             }
@@ -122,7 +112,7 @@ def get_stylenames_for_device_type(device_type_id):
         results.append(
             {
                 "name": tmpl.name,
-                "stylename": _derive_port_stylename(tmpl.name),
+                "stylename": derive_port_key(tmpl.name),
                 "kind": "Rear Port",
                 "type": tmpl.get_type_display(),
             }
@@ -171,241 +161,206 @@ def _detect_variant(member_modules, device_view) -> str | None:
     return None
 
 
-def process_interfaces(interfaces, ports_chassis, dev):
-    if interfaces is not None:
-        for itf in interfaces:
-            if itf.type == "virtual" or itf.type == "lag":
-                continue
-            regex = r"^(?P<type>([a-zA-Z\-_]*))(\/|(?P<dev>[0-9]+).|\s)?((?P<module>[0-9]+).|\s)?((?P<port>[0-9]+))$"
-            matches = re.search(regex, itf.name.lower())
-            if matches:
-                if not matches["type"]:
-                    # No alphabetic prefix — port number only; isdigit() below adds 'p'
-                    itf.stylename = matches["port"]
-                else:
-                    itf.stylename = (
-                        matches["type"]
-                        + (matches["module"] or "")
-                        + "-"
-                        + matches["port"]
-                    )
-            else:
-                itf.stylename = re.sub(r"[^.a-zA-Z\d]", "-", itf.name.lower())
-            if itf.stylename.isdigit():
-                itf.stylename = f"p{itf.stylename}"
-
-            if dev not in ports_chassis:
-                ports_chassis[dev] = []
-            ports_chassis[dev].append(itf)
-    return ports_chassis
+# format_html_join() escapes a plain-string separator.
+_BREAK = mark_safe("<br>")
+_STATE_CLASSES = {
+    CONNECTED: "bg-success",
+    PARTIALLY_CONNECTED: "bg-warning",
+    ENABLED: "bg-secondary",
+    DISABLED: "bg-danger",
+    AMBIGUOUS: "dv-ambiguous",
+}
 
 
-def process_console_ports(device, ports_chassis, dev, user):
-    """Add the console ports and console-server ports of ``device`` that ``user`` can view."""
-    for ports in (device.consoleports, device.consoleserverports):
-        ports_chassis = process_ports(ports.restrict(user, "view"), ports_chassis, dev)
-    return ports_chassis
+@dataclass(frozen=True)
+class PageCell:
+    """The page markup of one layout key: its state, link and popover."""
 
+    stylename: str
+    name: str
+    connection_state: str
+    # None for an ambiguous key: it links to no single component.
+    href: str | None
+    classes: tuple[str, ...]
+    # The cable colour, when the Cable Colors option is on.
+    fill: str | None
+    popover_title: str
+    popover_content: str
 
-def process_ports(ports, ports_chassis, dev):
-    if ports is not None:
-        for port in ports:
-            if port.type == "virtual":
-                continue
-            port.is_port = True
-            port.stylename = re.sub(r"[^.a-zA-Z\d]", "-", port.name.lower())
-            if port.stylename.isdigit():
-                port.stylename = f"p{port.stylename}"
-            if dev not in ports_chassis:
-                ports_chassis[dev] = []
-            ports_chassis[dev].append(port)
-    return ports_chassis
+    @property
+    def partial(self):
+        return self.connection_state == PARTIALLY_CONNECTED
 
+    @property
+    def disabled(self):
+        return self.connection_state == DISABLED
 
-def _rack_sort_key(member):
-    """Sort key for virtual chassis members by physical rack position.
-
-    Respects the rack's ``desc_units`` flag:
-      - desc_units=False (default): U1 is at the bottom → higher U = higher in rack
-        → sort descending so the top-of-rack device appears first.
-      - desc_units=True: U1 is at the top → lower U = higher in rack
-        → sort ascending so the top-of-rack device appears first.
-
-    Members without a rack position are placed last, tiebroken by vc_position.
-    """
-    pos = member.position
-    vc = member.vc_position if member.vc_position is not None else 0
-    if pos is None:
-        return (1, float("inf"), vc)  # un-racked: always last
-    desc = bool(member.rack and member.rack.desc_units)
-    if desc:
-        # U1 at top → ascending: smallest U first
-        return (0, float(pos), vc)
-    else:
-        # U1 at bottom → descending: largest U first (negate)
-        return (0, -float(pos), vc)
-
-
-def panel_members(obj, user):
-    """Return the devices of the panels of ``obj`` that ``user`` can view, in rack order."""
-    if obj.virtual_chassis is None:
-        return [obj]
-    return sorted(
-        obj.virtual_chassis.members.restrict(user, "view").select_related("rack"),
-        key=_rack_sort_key,
-    )
-
-
-def viewable_device_view(device_type, user):
-    """Return the DeviceView of ``device_type``; a DeviceView that ``user`` cannot view does not exist."""
-    return DeviceView.objects.restrict(user, "view").get(device_type=device_type)
-
-
-def _peer_label(peer):
-    device = getattr(peer, "device", None)
-    name = getattr(peer, "name", None)
-    if device and name:
-        return f"{device} | {name}"
-    return str(peer)
-
-
-def _peers(component):
-    endpoints = getattr(component, "connected_endpoints", None)
-    return list(endpoints or []) or list(component.link_peers)
-
-
-def label_connections(components, user):
-    """Set ``peer_labels`` and ``cable_color`` on each of ``components``.
-
-    Only the peers and the cable that ``user`` can view count. ``cable_color``
-    is None without a cable that ``user`` can view, and "" for a cable without
-    a colour.
-    """
-    components = list(components)
-    peers = [(component, _peers(component)) for component in components]
-    pks_by_model = defaultdict(set)
-    for _component, component_peers in peers:
-        for peer in component_peers:
-            pks_by_model[type(peer)].add(peer.pk)
-    pks_by_model[Cable] = {c.cable_id for c in components if c.cable_id is not None}
-    visible = {
-        (model, pk)
-        for model, pks in pks_by_model.items()
-        for pk in model.objects.restrict(user, "view")
-        .filter(pk__in=pks)
-        .values_list("pk", flat=True)
-    }
-    for component, component_peers in peers:
-        component.peer_labels = [
-            _peer_label(peer)
-            for peer in component_peers
-            if (type(peer), peer.pk) in visible
-        ]
-        component.cable_color = (
-            component.cable.color if (Cable, component.cable_id) in visible else None
+    def port_cell(self):
+        """Return the SVG state markup of this cell."""
+        attributes = {
+            "data-connection-state": self.connection_state,
+            "data-bs-toggle": "popover",
+            "data-bs-title": self.popover_title,
+            "data-bs-content": self.popover_content,
+        }
+        if self.href:
+            attributes |= {"data-href": self.href, "role": "link"}
+        return PortCell(
+            classes=self.classes,
+            attributes=attributes,
+            fill=self.fill,
+            title=self.name,
+            dot=self.partial,
         )
 
 
-def _member_ports(member, ports_chassis, key, user):
-    """Add the interfaces, console ports and console-server ports of ``member`` that ``user`` can view."""
-    ports_chassis = process_interfaces(
-        member.interfaces.restrict(user, "view"), ports_chassis, key
+def _page_cell(binding, cable_colors):
+    state = binding.state
+    if state is None:
+        return PageCell(
+            stylename=binding.key,
+            name=binding.key,
+            connection_state=AMBIGUOUS,
+            href=None,
+            classes=(_STATE_CLASSES[AMBIGUOUS],),
+            fill=None,
+            popover_title=escape(binding.key),
+            popover_content=format_html_join(
+                _BREAK,
+                '<a href="{}">{}</a> ({})',
+                (
+                    (
+                        candidate.component.get_absolute_url(),
+                        candidate.component.name,
+                        candidate.component._meta.verbose_name,
+                    )
+                    for candidate in binding.candidates
+                ),
+            ),
+        )
+    component = state.component
+    url = component.get_absolute_url()
+    title = escape(component.name)
+    if state.peer_labels:
+        title += format_html(
+            "<hr>{}",
+            format_html_join(_BREAK, "{}", ((label,) for label in state.peer_labels)),
+        )
+    if not cable_colors:
+        classes, fill = (_STATE_CLASSES[state.connection_state],), None
+    elif state.cable_color:
+        classes, fill = (), f"#{state.cable_color}"
+    else:
+        classes, fill = ("nocolor",), None
+    return PageCell(
+        stylename=binding.key,
+        name=component.name,
+        connection_state=state.connection_state,
+        href=url,
+        classes=classes,
+        fill=fill,
+        popover_title=title,
+        popover_content=format_html('<a href="{}trace/">Trace</a>', url),
     )
-    return process_console_ports(member, ports_chassis, key, user)
 
 
-def _device_ports(obj, user):
-    """Return the ports_chassis of a device that is not in a virtual chassis."""
-    ports_chassis = process_interfaces(
-        obj.interfaces.restrict(user, "view"), {}, obj.name
-    )
-    ports_chassis = process_ports(
-        obj.frontports.restrict(user, "view"), ports_chassis, "Front"
-    )
-    ports_chassis = process_ports(
-        obj.rearports.restrict(user, "view"), ports_chassis, "Rear"
-    )
-    return process_console_ports(obj, ports_chassis, obj.name, user)
+def page_cells(states, cable_colors, face=None):
+    """Return a PageCell for each layout key that ``states`` bind to."""
+    return [
+        _page_cell(binding, cable_colors)
+        for binding in bind_layout(states, face).values()
+    ]
 
 
-def prepare(obj, user):
-    """Return (dv, modules, ports_chassis, device_view) with the objects that ``user`` can view.
+def _css_groups(obj, members, user):
+    """Return {grid key: states}: one grid per member, and Front and Rear grids for a device outside a virtual chassis."""
+    groups = {}
+    for member in members:
+        states = device_components(member, user)
+        if obj.virtual_chassis is None:
+            for key, face in ((obj.name, None), ("Front", "front"), ("Rear", "rear")):
+                group = [state for state in states if state.face == face]
+                if group:
+                    groups[key] = group
+        else:
+            group = [state for state in states if state.face is None]
+            if group:
+                groups[member.vc_position] = group
+    return groups
 
-    Returns (None, None, None, None) if no DeviceView is configured for the
-    device type.
+
+def prepare(obj, user, cable_colors=False):
+    """Return (dv, modules, ports_chassis, device_view) for CSS rendering, with the objects that ``user`` can view.
+
+    ``ports_chassis`` maps each grid key to its PageCells. Returns
+    (None, None, None, None) if no DeviceView is configured for the device
+    type.
     """
-    ports_chassis = {}
     dv = {}
     modules = {}
     device_view = None
-
+    members = panel_members(obj, user)
     try:
         if obj.virtual_chassis is None:
             device_view = viewable_device_view(obj.device_type, user)
             dv[1] = get_css_for_device_view(device_view)
             modules[1] = obj.modules.restrict(user, "view")
-            ports_chassis = _device_ports(obj, user)
         else:
-            for member in panel_members(obj, user):
+            for member in members:
                 pos = member.vc_position
-                member_view = viewable_device_view(member.device_type, user)
-                member_css = get_css_for_device_view(member_view)
-                dv[pos] = re.sub(
-                    r"\.area\b",
-                    f".area.d{pos}",
-                    member_css,
+                member_css = get_css_for_device_view(
+                    viewable_device_view(member.device_type, user)
                 )
+                dv[pos] = re.sub(r"\.area\b", f".area.d{pos}", member_css)
                 modules[pos] = member.modules.restrict(user, "view")
-                ports_chassis = _member_ports(member, ports_chassis, pos, user)
     except ObjectDoesNotExist:
         return None, None, None, None
 
-    label_connections(chain.from_iterable(ports_chassis.values()), user)
+    ports_chassis = {
+        key: page_cells(states, cable_colors)
+        for key, states in _css_groups(obj, members, user).items()
+    }
     return dv, modules, ports_chassis, device_view
 
 
-def prepare_svg(obj, user):
-    """Return (svg_views, modules, ports_chassis, device_view) for SVG rendering.
+def _svg_cells(states, cable_colors):
+    return {
+        face: {
+            cell.stylename: cell.port_cell()
+            for cell in page_cells(states, cable_colors, face)
+        }
+        for face in (None, "front", "rear")
+    }
 
-    ``svg_views`` is a dict mapping position → SVG markup string.
-    Like ``prepare()``, returns (None, None, None, None) when no DeviceView exists,
-    and includes only the objects that ``user`` can view.
 
-    For virtual chassis devices each member is rendered as its own SVG panel,
-    keyed by vc_position — matching the ports_chassis key used by the template.
+def prepare_svg(obj, user, cable_colors=False):
+    """Return (svg_views, modules, device_view) for SVG rendering, with the objects that ``user`` can view.
+
+    ``svg_views`` maps each panel key (the device name, or the
+    ``vc_position`` of a virtual chassis member) to its SVG markup. A member
+    without components has no panel. Returns (None, None, None) when a
+    member has no DeviceView.
     """
-    ports_chassis = {}
     svg_views = {}
     modules = {}
     device_view = None
-
     try:
-        if obj.virtual_chassis is None:
-            device_view = viewable_device_view(obj.device_type, user)
-            member_modules = list(obj.modules.restrict(user, "view"))
-            variant = _detect_variant(member_modules, device_view)
-            svg_views[obj.name] = get_svg_for_device_view(
-                device_view, variant_name=variant
+        for member in panel_members(obj, user):
+            key = obj.name if obj.virtual_chassis is None else member.vc_position
+            device_view = viewable_device_view(member.device_type, user)
+            member_modules = list(member.modules.restrict(user, "view"))
+            modules[key] = member_modules
+            states = device_components(member, user)
+            svg = get_svg_for_device_view(
+                device_view,
+                variant_name=_detect_variant(member_modules, device_view),
+                cells=_svg_cells(states, cable_colors),
             )
-            modules[obj.name] = member_modules
-            ports_chassis = _device_ports(obj, user)
-        else:
-            for member in panel_members(obj, user):
-                pos = member.vc_position
-                member_view = viewable_device_view(member.device_type, user)
-                member_modules = list(member.modules.restrict(user, "view"))
-                variant = _detect_variant(member_modules, member_view)
-                svg_views[pos] = get_svg_for_device_view(
-                    member_view, variant_name=variant
-                )
-                modules[pos] = member_modules
-                ports_chassis = _member_ports(member, ports_chassis, pos, user)
-                device_view = member_view
+            if states:
+                svg_views[key] = svg
     except ObjectDoesNotExist:
-        return None, None, None, None
-
-    label_connections(chain.from_iterable(ports_chassis.values()), user)
-    return svg_views, modules, ports_chassis, device_view
+        return None, None, None
+    return svg_views, modules, device_view
 
 
 def panel_title(obj, user):
@@ -420,7 +375,7 @@ def panel_title(obj, user):
     return obj.name
 
 
-def device_view_context(obj, user):
+def device_view_context(obj, user, cable_colors=False):
     """Return the render context for the device view of ``obj`` that ``user`` sees, or None without one.
 
     ``layout_error`` holds the parse error of a stored layout that does not parse.
@@ -429,7 +384,6 @@ def device_view_context(obj, user):
         "layout_error": None,
         "device_view": None,
         "dv": None,
-        "svg_views": None,
         "svg_panels": [],
         "use_svg": False,
         "modules": None,
@@ -445,39 +399,18 @@ def device_view_context(obj, user):
 
     try:
         if use_svg:
-            svg_views, modules, ports_chassis, device_view = prepare_svg(obj, user)
+            svg_views, modules, device_view = prepare_svg(obj, user, cable_colors)
             # prepare_svg() gives None when a virtual chassis member has no device view.
             use_svg = svg_views is not None
-            context["svg_views"] = svg_views
+            context["svg_panels"] = list((svg_views or {}).items())
         if not use_svg:
-            dv, modules, ports_chassis, device_view = prepare(obj, user)
-            context["dv"] = dv
+            dv, modules, ports_chassis, device_view = prepare(obj, user, cable_colors)
+            if dv is None:
+                return None
+            context.update(dv=dv, ports_chassis=ports_chassis)
     except LayoutParseError as exc:
         context["layout_error"] = str(exc)
         return context
 
-    svg_views = context["svg_views"]
-    if (
-        (context["dv"] is None and svg_views is None)
-        or modules is None
-        or ports_chassis is None
-    ):
-        return None
-
-    svg_panels = []
-    if use_svg and svg_views and ports_chassis:
-        svg_panels = [
-            (pos, svg_views[pos]) for pos in ports_chassis if pos in svg_views
-        ]
-        # Patch panel ports have the keys "Front" and "Rear", not the device name.
-        if not svg_panels:
-            svg_panels = list(svg_views.items())
-
-    context.update(
-        device_view=device_view,
-        svg_panels=svg_panels,
-        use_svg=use_svg,
-        modules=modules,
-        ports_chassis=ports_chassis,
-    )
+    context.update(device_view=device_view, use_svg=use_svg, modules=modules)
     return context
