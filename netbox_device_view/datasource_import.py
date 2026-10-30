@@ -25,7 +25,7 @@ from dcim.models import DeviceType, Manufacturer
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
-from django.db.models import Q, Sum
+from django.db.models import Case, CharField, Func, Q, Sum, Value, When
 from django.db.models.functions import Length
 from extras.models import CustomField
 
@@ -64,7 +64,8 @@ CONCURRENT_CREATE = (
 )
 REPEATED_FILE = "Each file can be selected only once."
 FILE_CHANGED = "the file changed after review."
-IMPORTED_FIELDS = ("yaml_layout", "grid_template_area", "render_mode")
+CONTENT_FIELDS = ("yaml_layout", "grid_template_area")
+IMPORTED_FIELDS = (*CONTENT_FIELDS, "render_mode")
 
 
 class Format(models.TextChoices):
@@ -233,6 +234,15 @@ class _SourceFile:
 
 
 @dataclass(frozen=True)
+class _PreparedContent:
+    """The validated content fields of one file, as text without the file itself."""
+
+    format: Format
+    yaml_layout: str
+    grid_template_area: str
+
+
+@dataclass(frozen=True)
 class _Proposal:
     device_type: DeviceType
     device_view: DeviceView | None
@@ -346,8 +356,11 @@ def review(user, source: DataSource, selections: list[Selection]) -> Review:
         row.path = source_file.path
         row.format = source_file.format
         try:
-            proposal = _propose(
-                user, source_file, selection.device_type_id, replace=selection.replace
+            proposal = _decide(
+                user,
+                _prepare_content(source_file),
+                selection.device_type_id,
+                replace=selection.replace,
             )
         except ValidationError as exc:
             row.error = " ".join(exc.messages)
@@ -412,6 +425,8 @@ def apply(user, token: str) -> ApplyResult:
         if not _has_permission(user, action):
             raise ImportRejected(_permission_denied(action))
     source = _importable_source(user, payload["source"])
+    # Content work runs before the transaction, so the target locks are held only for cheap checks.
+    contents = [_prepare_row(user, source, row) for row in rows]
 
     result = ApplyResult()
     outcomes = {
@@ -422,8 +437,8 @@ def apply(user, token: str) -> ApplyResult:
     try:
         with transaction.atomic():
             _lock_targets(rows)
-            for row in rows:
-                action, device_view = _apply_row(user, source, row)
+            for row, content in zip(rows, contents, strict=True):
+                action, device_view = _apply_row(user, source, row, content)
                 outcomes[action].append(device_view)
             return result
     except ImportRejected:
@@ -432,19 +447,27 @@ def apply(user, token: str) -> ApplyResult:
         raise
 
 
-def _apply_row(user, source, reviewed: ReviewedRow) -> tuple[Action, DeviceView]:
+def _prepare_row(user, source, reviewed: ReviewedRow) -> _PreparedContent:
+    """Read one reviewed file, check it against the review and validate its content."""
     try:
         source_file = _read_source_file(user, source, reviewed.datafile_id)
     except ValidationError as exc:
         raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
-    if source_file.path != reviewed.path:
-        raise ImportRejected(f"{reviewed.path}: {FILE_UNAVAILABLE}")
-    if source_file.sha256 != reviewed.sha256:
-        raise ImportRejected(f"{reviewed.path}: {FILE_CHANGED}")
+    _check_reviewed_file(reviewed, source_file.path, source_file.sha256)
     try:
-        proposal = _propose(
+        return _prepare_content(source_file)
+    except ValidationError as exc:
+        raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
+
+
+def _apply_row(
+    user, source, reviewed: ReviewedRow, content: _PreparedContent
+) -> tuple[Action, DeviceView]:
+    _check_file_unchanged(user, source, reviewed)
+    try:
+        proposal = _decide(
             user,
-            source_file,
+            content,
             reviewed.device_type_id,
             replace=reviewed.action == Action.REPLACE,
         )
@@ -529,19 +552,24 @@ def _batch_errors(user, source, selections: list[Selection]) -> list[str]:
     return []
 
 
-def _read_source_file(user, source, datafile_id) -> _SourceFile:
+def _stored_file(user, source, datafile_id, **annotations) -> DataFile:
+    """Return the visible DataFile without its content; raise for an unavailable or oversized file."""
     datafile = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, pk=datafile_id)
-        .annotate(stored_bytes=Length("data"))
+        .annotate(stored_bytes=Length("data"), **annotations)
         .only("path")
         .first()
     )
-    file_format = None if datafile is None else _file_format(datafile.path)
-    if file_format is None:
+    if datafile is None or _file_format(datafile.path) is None:
         raise ValidationError(FILE_UNAVAILABLE)
     if datafile.stored_bytes > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)
+    return datafile
+
+
+def _read_source_file(user, source, datafile_id) -> _SourceFile:
+    datafile = _stored_file(user, source, datafile_id)
     # The deferred content loads in a second query, and a sync can replace or delete it first.
     try:
         content = bytes(datafile.data)
@@ -549,22 +577,94 @@ def _read_source_file(user, source, datafile_id) -> _SourceFile:
         raise ValidationError(FILE_UNAVAILABLE) from None
     if len(content) > MAX_FILE_BYTES:
         raise ValidationError(FILE_TOO_LARGE)
-    return _SourceFile(path=datafile.path, format=file_format, content=content)
+    return _SourceFile(
+        path=datafile.path, format=_file_format(datafile.path), content=content
+    )
 
 
-def _propose(
-    user, source_file: _SourceFile, device_type_id, *, replace: bool
+def _check_reviewed_file(reviewed: ReviewedRow, path: str, sha256: str) -> None:
+    if path != reviewed.path:
+        raise ImportRejected(f"{reviewed.path}: {FILE_UNAVAILABLE}")
+    if sha256 != reviewed.sha256:
+        raise ImportRejected(f"{reviewed.path}: {FILE_CHANGED}")
+
+
+def _check_file_unchanged(user, source, reviewed: ReviewedRow) -> None:
+    """Check in one query, without loading the content, that the reviewed file is still stored."""
+    # The database hashes the stored bytes, so DataFile.hash is not trusted.
+    sha256 = Func(
+        Func("data", function="sha256"),
+        Value("hex"),
+        function="encode",
+        output_field=CharField(),
+    )
+    try:
+        datafile = _stored_file(
+            user,
+            source,
+            reviewed.datafile_id,
+            # An oversized file is rejected without a hash.
+            sha256=Case(When(stored_bytes__lte=MAX_FILE_BYTES, then=sha256)),
+        )
+    except ValidationError as exc:
+        raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc
+    _check_reviewed_file(reviewed, datafile.path, datafile.sha256)
+
+
+def _prepare_content(source_file: _SourceFile) -> _PreparedContent:
+    """Decode and validate the content of one file; this needs no target and no query."""
+    try:
+        text = source_file.content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValidationError("The file is not valid UTF-8 text.") from exc
+    if not text.strip():
+        raise ValidationError("The file is empty.")
+    if source_file.format == Format.CSS:
+        css = normalize_grid_template_area(CSS_NEWLINES.sub("\n", text))
+        # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
+        yaml_layout = ""
+    else:
+        try:
+            yaml_layout, css = text, render_css(parse_yaml(text, strict=True))
+        except LayoutParseError as exc:
+            raise ValidationError(f"Invalid YAML layout: {exc}") from exc
+    try:
+        validate_css(css)
+    except LayoutParseError as exc:
+        raise ValidationError(f"Invalid CSS layout: {exc}") from exc
+    # The model checks of the content fields run here, so full_clean under the lock skips them.
+    other_fields = [
+        field.name
+        for field in DeviceView._meta.fields
+        if field.name not in CONTENT_FIELDS
+    ]
+    DeviceView(yaml_layout=yaml_layout, grid_template_area=css).clean_fields(
+        exclude=other_fields
+    )
+    return _PreparedContent(
+        format=source_file.format, yaml_layout=yaml_layout, grid_template_area=css
+    )
+
+
+def _decide(
+    user, content: _PreparedContent, device_type_id, *, replace: bool
 ) -> _Proposal:
-    """Validate one file for one target; raise ValidationError when it cannot be imported."""
+    """Decide what the content does to its current target; raise ValidationError when it cannot."""
     device_type, device_view = _target(user, device_type_id)
     if device_view is not None:
         # A CSS import replaces the stored mode before full_clean, so check it here.
         DeviceView._meta.get_field("render_mode").clean(
             device_view.render_mode, device_view
         )
-    fields = _proposed_fields(
-        source_file, device_view.render_mode if device_view else None
-    )
+    render_mode = RenderMode.CSS.value
+    # A YAML layout supports every render mode, so a replacement keeps it.
+    if content.format == Format.YAML and device_view is not None:
+        render_mode = device_view.render_mode
+    fields = {
+        "yaml_layout": content.yaml_layout,
+        "grid_template_area": content.grid_template_area,
+        "render_mode": render_mode,
+    }
     if device_view is None:
         action = Action.CREATE
         candidate = _new_device_view(device_type, fields)
@@ -580,7 +680,7 @@ def _propose(
         candidate = copy.copy(device_view)
         for name, value in fields.items():
             setattr(candidate, name, value)
-    candidate.full_clean(validate_unique=False)
+    candidate.full_clean(exclude=CONTENT_FIELDS, validate_unique=False)
     if action == Action.CREATE and not _has_permission(user, action):
         raise ValidationError(_permission_denied(action))
     if action == Action.REPLACE and not _permits(user, "change", device_view):
@@ -728,35 +828,3 @@ def _target(user, device_type_id) -> tuple[DeviceType, DeviceView | None]:
     if device_view is not None and not _permits(user, "view", device_view):
         raise ValidationError(TARGET_UNAVAILABLE)
     return device_type, device_view
-
-
-def _proposed_fields(
-    source_file: _SourceFile, current_render_mode: str | None
-) -> dict[str, str]:
-    try:
-        text = source_file.content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise ValidationError("The file is not valid UTF-8 text.") from exc
-    if not text.strip():
-        raise ValidationError("The file is empty.")
-    render_mode = RenderMode.CSS.value
-    if source_file.format == Format.CSS:
-        css = normalize_grid_template_area(CSS_NEWLINES.sub("\n", text))
-        # An empty yaml_layout keeps the YAML renderer from overriding this CSS.
-        yaml_layout = ""
-    else:
-        # A YAML layout supports every render mode, so a replacement keeps it.
-        render_mode = current_render_mode or render_mode
-        try:
-            yaml_layout, css = text, render_css(parse_yaml(text, strict=True))
-        except LayoutParseError as exc:
-            raise ValidationError(f"Invalid YAML layout: {exc}") from exc
-    try:
-        validate_css(css)
-    except LayoutParseError as exc:
-        raise ValidationError(f"Invalid CSS layout: {exc}") from exc
-    return {
-        "yaml_layout": yaml_layout,
-        "grid_template_area": css,
-        "render_mode": render_mode,
-    }

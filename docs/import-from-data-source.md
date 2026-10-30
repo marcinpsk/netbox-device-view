@@ -121,7 +121,7 @@ If the Data Source starts to synchronize during the review, the review stops and
 
 ### 4. Apply
 
-Click **Apply import**. The import writes all rows in one database transaction, or no row. The result lists the created, updated and unchanged device views.
+Click **Apply import**. Apply validates the content of all selected files before it changes a record. Then it writes all rows in one database transaction, or no row. If a different import or change of a target device view is in progress, apply waits until it is complete. Before apply writes a row, it checks again that the file did not change. The result lists the created, updated and unchanged device views.
 
 ![Result: two created, one updated](assets/datasource-import-result.png)
 

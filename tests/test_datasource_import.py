@@ -1752,7 +1752,8 @@ class BulkImportTests(DataSourceImportTestBase):
         post_save.connect(record_save, sender=DeviceView)
         self.addCleanup(post_save.disconnect, record_save, sender=DeviceView)
         response = self.client.post(reverse(APPLY_URL), apply_fields)
-        self.assertEqual(saved, ["C9300-48P", "C9300-24T"])
+        # Apply checks the content of every row before it saves any row.
+        self.assertEqual(saved, [])
         self.assert_rejected(response)
         self.assertContains(response, last, status_code=400)
         self.assertNotContains(response, "Created", status_code=400)
