@@ -246,12 +246,12 @@ def _page_cell(binding, cable_colors):
             "<hr>{}",
             format_html_join(_BREAK, "{}", ((label,) for label in state.peer_labels)),
         )
-    if not cable_colors:
-        classes, fill = (_STATE_CLASSES[state.connection_state],), None
-    elif state.cable_fill:
+    if cable_colors and state.cable_fill:
         classes, fill = (), state.cable_fill
-    else:
+    elif cable_colors and state.cable_color == "":
         classes, fill = ("nocolor",), None
+    else:
+        classes, fill = (_STATE_CLASSES[state.connection_state],), None
     return PageCell(
         stylename=binding.key,
         name=component.name,
