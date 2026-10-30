@@ -93,7 +93,7 @@ def get_css_for_device_view(device_view) -> str:
     return css.replace("<", "\\3c ")
 
 
-def get_svg_for_device_view(device_view, variant_name=None) -> str:
+def get_svg_for_device_view(device_view, variant_name=None, cells=None) -> str:
     """
     Return an SVG string for a DeviceView record.
 
@@ -107,6 +107,9 @@ def get_svg_for_device_view(device_view, variant_name=None) -> str:
         A DeviceView model instance with ``yaml_layout`` field.
     variant_name : str | None
         Optional module variant name to render.
+    cells : dict | None
+        ``{face: {key: PortCell}}``, the state markup of each port (see
+        ``renderers.svg.render``).
 
     Returns
     -------
@@ -117,4 +120,4 @@ def get_svg_for_device_view(device_view, variant_name=None) -> str:
     if not device_view.has_yaml_layout:
         return ""
     layout = parse(device_view.yaml_layout)
-    return _render_svg(layout, variant_name=variant_name)
+    return _render_svg(layout, variant_name=variant_name, cells=cells)
