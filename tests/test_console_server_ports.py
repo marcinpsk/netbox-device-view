@@ -98,7 +98,7 @@ class ConsoleServerPortTests(TestCase):
             with self.subTest(name=name):
                 self.assertContains(response, f'href="{port.get_absolute_url()}"')
                 self.assertContains(response, f"grid-area: {STYLENAMES[name]}")
-                self.assertContains(response, f"{name}<hr>{peer}")
+                self.assertContains(response, f"{name}&lt;hr&gt;{peer}")
 
     def test_svg_view_binds_device_and_module_ports(self):
         response = self._tab(RenderMode.SVG)
