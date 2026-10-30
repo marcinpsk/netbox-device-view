@@ -98,6 +98,20 @@ class CleanupTests(MediaMixin, TestCase):
 
 
 class CleanupLockTests(MediaMixin, TransactionTestCase):
+    @staticmethod
+    def wait_for_a_lock_wait(timeout=10):
+        """Return True when a session waits for an advisory lock, as cleanup does at lock_digest()."""
+        deadline = time.monotonic() + timeout
+        with connection.cursor() as cursor:
+            while time.monotonic() < deadline:
+                cursor.execute(
+                    "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+                )
+                if cursor.fetchone():
+                    return True
+                time.sleep(0.05)
+        return False
+
     def test_cleanup_waits_for_an_import_that_holds_the_digest_lock(self):
         blob = store_blob(b"<svg>reused</svg>", "svg")
         self.age(blob)
@@ -127,8 +141,10 @@ class CleanupLockTests(MediaMixin, TransactionTestCase):
         self.assertTrue(importing.wait(10))
         cleaner = threading.Thread(target=run_cleanup)
         cleaner.start()
-        time.sleep(0.5)
-        self.assertFalse(finished.is_set(), "cleanup did not wait for the lock")
+        self.assertTrue(
+            self.wait_for_a_lock_wait(), "cleanup did not wait for the lock"
+        )
+        self.assertFalse(finished.is_set())
         release.set()
         importer.join(10)
         cleaner.join(10)
