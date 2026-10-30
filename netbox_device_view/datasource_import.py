@@ -63,6 +63,7 @@ CONCURRENT_CREATE = (
     + REVIEW_AGAIN
 )
 REPEATED_FILE = "Each file can be selected only once."
+FILE_CHANGED = "the file changed after review."
 IMPORTED_FIELDS = ("yaml_layout", "grid_template_area", "render_mode")
 
 
@@ -439,7 +440,7 @@ def _apply_row(user, source, reviewed: ReviewedRow) -> tuple[Action, DeviceView]
     if source_file.path != reviewed.path:
         raise ImportRejected(f"{reviewed.path}: {FILE_UNAVAILABLE}")
     if source_file.sha256 != reviewed.sha256:
-        raise ImportRejected(f"{reviewed.path}: the file changed after review.")
+        raise ImportRejected(f"{reviewed.path}: {FILE_CHANGED}")
     try:
         proposal = _propose(
             user,

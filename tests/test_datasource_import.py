@@ -1433,6 +1433,35 @@ class ApplyTests(DataSourceImportTestBase):
             response, datasource_import.FILE_UNAVAILABLE, status_code=400
         )
 
+    def test_file_replaced_by_malformed_yaml_is_changed_after_review(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        self.write_file(EXAMPLE_PATH, b"views: [not closed")
+        self.source.sync()
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertEqual(
+            response.context["error"],
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_CHANGED}",
+        )
+
+    def test_oversized_file_at_another_path_is_too_large(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        DataFile.objects.filter(pk=self.datafile().pk).update(
+            path="examples/yaml/Cisco/Moved.yaml",
+            data=b"#" * (datasource_import.MAX_FILE_BYTES + 1),
+        )
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertEqual(
+            response.context["error"],
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_TOO_LARGE}",
+        )
+
+    def test_apply_compares_the_stored_data_not_the_hash_column(self):
+        token = self.review_token([(self.datafile(), self.device_type)])
+        DataFile.objects.filter(pk=self.datafile().pk).update(hash="0" * 64)
+        self.assertContains(self.apply(token), "Created: 1")
+
     def test_pages_require_add_or_change_permission(self):
         ObjectPermission.objects.filter(actions=["add"]).delete()
         list_page = self.client.get(
@@ -1777,6 +1806,27 @@ class CustomFieldTests(DataSourceImportTestBase):
         self.assertEqual(review.rows[0].action, datasource_import.Action.CREATE)
         self.assertEqual(self.apply(review.token).status_code, 200)
         self.assertEqual(DeviceView.objects.get().custom_field_data, {"owner": "ops"})
+
+    def test_unique_default_rejects_the_second_create_of_one_batch(self):
+        custom_field = CustomField.objects.create(
+            type="text", name="asset", unique=True, default="A1"
+        )
+        custom_field.object_types.set([ObjectType.objects.get_for_model(DeviceView)])
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other", slug="other"
+        )
+        manual = "examples/yaml/Cisco/Manual.yaml"
+        self.write_file(manual, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+        token = self.review_token(
+            [(self.datafile(), self.device_type), (self.datafile(manual), other)]
+        )
+        response = self.apply(token)
+        self.assert_rejected(response)
+        self.assertEqual(
+            response.context["error"],
+            f"{manual}: Custom field 'asset' must have a unique value.",
+        )
 
     def test_required_custom_field_without_default_is_a_row_error(self):
         self.custom_field(name="owner")

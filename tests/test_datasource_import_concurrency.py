@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from dcim.models import DeviceType, Manufacturer
+from django.core import signing
 from django.db import connection, connections, transaction
 from django.db.models.signals import post_save
 from django.test import Client, TransactionTestCase
@@ -24,7 +25,7 @@ WAIT_SECONDS = 20
 OTHER_YAML = EXAMPLE_YAML.read_text().replace("blank: 14", "blank: 13")
 
 
-class ConcurrentApplyTests(TransactionTestCase):
+class ConcurrentApplyTestBase(TransactionTestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
@@ -59,16 +60,18 @@ class ConcurrentApplyTests(TransactionTestCase):
         target.write_bytes(content)
 
     def token(self, path, replace=False):
-        datafile = self.source.datafiles.get(path=path)
-        data = {
-            "source": self.source.pk,
-            "prefix": "examples/",
-            "step": "review",
-            "file": [datafile.pk],
-            f"device_type_{datafile.pk}": self.device_type.pk,
-        }
-        if replace:
-            data[f"replace_{datafile.pk}"] = "on"
+        return self.token_for([(path, self.device_type)], replace=replace)
+
+    def token_for(self, selections, replace=False):
+        """Review (path, device type) selections and return the token."""
+        data = {"source": self.source.pk, "prefix": "examples/", "step": "review"}
+        data["file"] = []
+        for path, device_type in selections:
+            datafile = self.source.datafiles.get(path=path)
+            data["file"].append(datafile.pk)
+            data[f"device_type_{datafile.pk}"] = device_type.pk
+            if replace:
+                data[f"replace_{datafile.pk}"] = "on"
         token = self.clients[0].post(reverse(REVIEW_URL), data).context["review"].token
         self.assertTrue(token)
         return token
@@ -124,6 +127,8 @@ class ConcurrentApplyTests(TransactionTestCase):
         self.assertFalse(thread.is_alive())
         return results["value"]
 
+
+class ConcurrentApplyTests(ConcurrentApplyTestBase):
     def test_two_concurrent_creates_for_one_target(self):
         first_token = self.token(EXAMPLE_PATH)
         second_token = self.token("examples/yaml/Cisco/Other.yaml")
@@ -198,3 +203,108 @@ class ConcurrentApplyTests(TransactionTestCase):
             response, datasource_import.CONCURRENT_CREATE, status_code=400
         )
         self.assertEqual(DeviceView.objects.get().grid_template_area, "x")
+
+
+class FileCheckUnderLockTests(ConcurrentApplyTestBase):
+    """Apply checks each file again after it waits for the target locks."""
+
+    def apply_after_change_during_lock_wait(self, change):
+        token = self.token(EXAMPLE_PATH)
+
+        def hold_lock():
+            with transaction.atomic():
+                list(
+                    DeviceType.objects.select_for_update()
+                    .filter(pk=self.device_type.pk)
+                    .values_list("pk", flat=True)
+                )
+                self.paused.set()
+                self.release.wait(WAIT_SECONDS)
+
+        holder = self.start("lock", hold_lock)
+        self.assertTrue(self.paused.wait(WAIT_SECONDS))
+        applier = self.apply_in_thread("apply", self.clients[0], token)
+        self.wait_for_lock_wait('%FROM "dcim_devicetype"%FOR NO KEY UPDATE%')
+        change()
+        self.release.set()
+        self.finish(*holder)
+        response = self.finish(*applier)
+        self.assertFalse(DeviceView.objects.exists())
+        return response
+
+    def sync(self, path, content):
+        if content is None:
+            (self.repo / path).unlink()
+        else:
+            self.write_file(path, content)
+        self.source.sync()
+
+    def test_file_deleted_during_the_lock_wait(self):
+        response = self.apply_after_change_during_lock_wait(
+            lambda: self.sync(EXAMPLE_PATH, None)
+        )
+        self.assertContains(
+            response,
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_UNAVAILABLE}",
+            status_code=400,
+        )
+
+    def test_file_replaced_during_the_lock_wait(self):
+        response = self.apply_after_change_during_lock_wait(
+            lambda: self.sync(EXAMPLE_PATH, OTHER_YAML.encode())
+        )
+        self.assertContains(
+            response,
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_CHANGED}",
+            status_code=400,
+        )
+
+    def test_file_replaced_by_an_oversized_file_during_the_lock_wait(self):
+        oversized = b"#" * (datasource_import.MAX_FILE_BYTES + 1)
+        response = self.apply_after_change_during_lock_wait(
+            lambda: self.sync(EXAMPLE_PATH, oversized)
+        )
+        self.assertContains(
+            response,
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_TOO_LARGE}",
+            status_code=400,
+        )
+
+    def test_oversized_file_at_another_path_during_the_lock_wait(self):
+        def move_and_grow():
+            DataFile.objects.filter(path=EXAMPLE_PATH).update(
+                path="examples/yaml/Cisco/Moved.yaml",
+                data=b"#" * (datasource_import.MAX_FILE_BYTES + 1),
+            )
+
+        response = self.apply_after_change_during_lock_wait(move_and_grow)
+        self.assertContains(
+            response,
+            f"{EXAMPLE_PATH}: {datasource_import.FILE_TOO_LARGE}",
+            status_code=400,
+        )
+
+    def test_file_deleted_before_its_row_is_checked(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="Other", slug="other"
+        )
+        token = self.token_for(
+            [
+                (EXAMPLE_PATH, self.device_type),
+                ("examples/yaml/Cisco/Other.yaml", other),
+            ]
+        )
+        rows = signing.loads(token, salt=datasource_import.SIGNING_SALT)["rows"]
+        self.pause_saves_in("apply")
+        applier = self.apply_in_thread("apply", self.clients[0], token)
+        self.assertTrue(self.paused.wait(WAIT_SECONDS))
+        self.sync(rows[1]["path"], None)
+        self.release.set()
+
+        response = self.finish(*applier)
+        self.assertContains(
+            response,
+            f"{rows[1]['path']}: {datasource_import.FILE_UNAVAILABLE}",
+            status_code=400,
+        )
+        self.assertFalse(DeviceView.objects.exists())
