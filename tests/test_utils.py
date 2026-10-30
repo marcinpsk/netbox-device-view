@@ -26,7 +26,7 @@ from netbox_device_view.models import DeviceView
 from netbox_device_view.utils import prepare
 
 # ---------------------------------------------------------------------------
-# derive_interface_key — the layout key of an interface
+# derive_interface_key: the layout key of an interface
 # ---------------------------------------------------------------------------
 
 
@@ -100,7 +100,7 @@ class TestInterfaceKey:
 
 
 # ---------------------------------------------------------------------------
-# derive_port_key — the layout key of the other component types
+# derive_port_key: the layout key of the other component types
 # ---------------------------------------------------------------------------
 
 

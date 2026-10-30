@@ -42,10 +42,7 @@
 {% endspaceless %}
 
 <script>
-// Shared popover helper — keeps popover open when cursor moves into it.
-// Bootstrap 5 hover trigger closes on mouseleave of the trigger element
-// before mouseenter on the popover fires. We use trigger:"manual" and
-// wire both elements ourselves so the popover stays open over either one.
+// Manual trigger: the popover stays open while the pointer is on the port or on the popover.
 function dvInitPopover(el, opts) {
   if (typeof Popover === "undefined") return;
   var pop = new Popover(el, {

@@ -220,7 +220,7 @@ def _page_cell(binding, cable_colors):
         return PageCell(
             stylename=binding.key,
             name=binding.key,
-            connection_state=AMBIGUOUS,
+            connection_state=binding.connection_state,
             href=None,
             classes=(_STATE_CLASSES[AMBIGUOUS],),
             fill=None,
@@ -248,14 +248,14 @@ def _page_cell(binding, cable_colors):
         )
     if not cable_colors:
         classes, fill = (_STATE_CLASSES[state.connection_state],), None
-    elif state.cable_color:
-        classes, fill = (), f"#{state.cable_color}"
+    elif state.cable_fill:
+        classes, fill = (), state.cable_fill
     else:
         classes, fill = ("nocolor",), None
     return PageCell(
         stylename=binding.key,
         name=component.name,
-        connection_state=state.connection_state,
+        connection_state=binding.connection_state,
         href=url,
         classes=classes,
         fill=fill,
@@ -329,7 +329,7 @@ def _svg_cells(states, cable_colors):
             cell.stylename: cell.port_cell()
             for cell in page_cells(states, cable_colors, face)
         }
-        for face in (None, "front", "rear")
+        for face in ("front", "rear")
     }
 
 

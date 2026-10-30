@@ -2,6 +2,7 @@
 
 from html.parser import HTMLParser
 
+from core.models import ObjectType
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -26,11 +27,17 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
-from users.models import Token, User
+from users.models import ObjectPermission, Token, User
 
 from netbox_device_view.components import BINDABLE_MODELS, device_components, find
 from netbox_device_view.models import DeviceView, RenderMode
 
+SINGLE_VIEW_PATCH_PANEL = """
+version: 1
+views:
+  front:
+    elements: [{key: port-1}, {key: port-2}]
+"""
 SWITCH = """
 version: 1
 views:
@@ -56,8 +63,11 @@ class _PortCells(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        if tag == "g" and "dv-port" in (attrs.get("class") or "").split():
+        classes = (attrs.get("class") or "").split()
+        if tag == "g" and "dv-port" in classes:
             self.cells.append(attrs)
+        elif tag == "rect" and "dv-port-rect" in classes and self.cells:
+            self.cells[-1]["rect-fill"] = attrs["fill"]
 
 
 def page_cells(content):
@@ -178,6 +188,41 @@ class PageMatchesApiTests(ResolverTestBase):
                     api,
                 )
 
+    def test_page_and_api_show_the_same_peers_and_cable_colour(self):
+        hotspots = self._hotspots(self._api())
+        self.assertEqual(
+            {h["name"]: h["peer_labels"] for h in hotspots},
+            {"Gi1": ["sw1 | Gi2"], "Gi2": ["sw1 | Gi1"], "Gi3": []},
+        )
+        cells = {
+            cell["data-href"]: cell
+            for cell in page_cells(self._tab(cable_colors="on"))
+            if "data-href" in cell
+        }
+        for hotspot in hotspots:
+            with self.subTest(hotspot["name"]):
+                cell = cells[
+                    Interface.objects.get(pk=hotspot["object_id"]).get_absolute_url()
+                ]
+                self.assertEqual(
+                    cell["data-bs-title"],
+                    (
+                        "<hr>".join(
+                            [hotspot["name"], "<br>".join(hotspot["peer_labels"])]
+                        )
+                        if hotspot["peer_labels"]
+                        else hotspot["name"]
+                    ),
+                )
+                if hotspot["cable_color"]:
+                    self.assertEqual(cell["rect-fill"], f"#{hotspot['cable_color']}")
+
+    def test_a_malformed_cable_colour_is_not_drawn(self):
+        Cable.objects.update(color="zzzzzz")
+        body = self._api()
+        self.assertNotIn("#zzzzzz", body["panels"][0]["svg"])
+        self.assertNotIn("#zzzzzz", self._tab(cable_colors="on"))
+
     def test_page_sets_the_state_without_javascript(self):
         content = self._tab()
         self.assertNotIn("applyPortStatus", content)
@@ -275,6 +320,29 @@ class PatchPanelFaceTests(ResolverTestBase):
                 )
 
 
+class SingleViewPatchPanelTests(PatchPanelFaceTests):
+    layout = SINGLE_VIEW_PATCH_PANEL
+
+    def test_a_single_front_view_binds_the_front_ports(self):
+        hotspots = self._hotspots(self._api())
+        self.assertEqual(
+            {(h["object_type"], h["name"]) for h in hotspots},
+            {("dcim.frontport", "Port 1"), ("dcim.frontport", "Port 2")},
+        )
+        for page, content in self._pages().items():
+            with self.subTest(page):
+                self.assertEqual(
+                    {cell.get("data-href") for cell in page_cells(content)},
+                    {
+                        port.get_absolute_url()
+                        for port in FrontPort.objects.filter(device=self.device)
+                    },
+                )
+
+    test_each_face_binds_the_ports_of_that_face = None
+    test_page_binds_the_ports_of_each_face = None
+
+
 class VirtualChassisTests(ResolverTestBase):
     @classmethod
     def setUpTestData(cls):
@@ -361,3 +429,67 @@ class TypedLookupTests(ResolverTestBase):
 
     def test_a_missing_component_is_not_found(self):
         self.assertEqual(self._found(Interface, "Gi2"), [])
+
+
+class HiddenObjectTests(ResolverTestBase):
+    """A hidden cable or module renders as an absent one."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        gi1, gi2 = (
+            Interface.objects.create(device=cls.device, name=name, type="1000base-t")
+            for name in ("Gi1", "Gi2")
+        )
+        Cable(a_terminations=[gi1], b_terminations=[gi2], color="ff0000").save()
+        module = Module.objects.create(
+            device=cls.device,
+            module_bay=ModuleBay.objects.create(device=cls.device, name="NIM 1"),
+            module_type=ModuleType.objects.create(
+                manufacturer=cls.manufacturer, model="NIM"
+            ),
+        )
+        cls.module_interface = Interface.objects.create(
+            device=cls.device, module=module, name="Gi3", type="1000base-t"
+        )
+        cls.user = User.objects.create_user(username="viewer")
+        for name in (
+            "dcim.view_device",
+            "dcim.view_interface",
+            "netbox_device_view.view_deviceview",
+        ):
+            app_label, action_model = name.split(".")
+            action, model = action_model.split("_", 1)
+            permission = ObjectPermission.objects.create(name=name, actions=[action])
+            permission.users.add(cls.user)
+            permission.object_types.add(
+                ObjectType.objects.get_by_natural_key(app_label, model)
+            )
+
+    def test_a_hidden_cable_renders_as_no_cable(self):
+        self.assertEqual(
+            {h["name"]: h["connection_state"] for h in self._hotspots(self._api())},
+            {"Gi1": "enabled", "Gi2": "enabled"},
+        )
+        for page, content in self._pages().items():
+            with self.subTest(page):
+                self.assertEqual(
+                    {
+                        cell["data-stylename"]: cell["data-connection-state"]
+                        for cell in page_cells(content)
+                        if "data-href" in cell
+                    },
+                    {"gi-1": "enabled", "gi-2": "enabled"},
+                )
+
+    def test_a_component_of_a_hidden_module_is_absent(self):
+        self.assertNotIn(
+            self.module_interface.pk,
+            {h["object_id"] for h in self._hotspots(self._api())},
+        )
+        for page, content in self._pages().items():
+            with self.subTest(page):
+                self.assertNotIn(
+                    self.module_interface.get_absolute_url(),
+                    {cell.get("data-href") for cell in page_cells(content)},
+                )

@@ -5,6 +5,7 @@ component or peer is treated as an absent one; a hidden cable gives no cable
 facts.
 """
 
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from dcim.models import (
     FrontPortTemplate,
     Interface,
     InterfaceTemplate,
+    Module,
     PowerOutlet,
     PowerOutletTemplate,
     PowerPort,
@@ -28,6 +30,7 @@ from dcim.models import (
 )
 from dcim.models.device_components import PathEndpoint
 from django.contrib.contenttypes.prefetch import GenericPrefetch
+from django.db.models import Q
 
 from .models import DeviceView
 
@@ -44,6 +47,8 @@ _TEMPLATE_MODELS = {
     PowerPort: PowerPortTemplate,
     PowerOutlet: PowerOutletTemplate,
 }
+logger = logging.getLogger(__name__)
+_HEX_COLOR_RE = re.compile(r"^[0-9A-Fa-f]{6}$")
 _EXCLUDED_TYPES = {Interface: ("virtual", "lag")}
 _FACES = {FrontPort: "front", RearPort: "rear"}
 
@@ -110,6 +115,20 @@ class ComponentState:
         return _FACES.get(type(self.component))
 
     @property
+    def cable_fill(self):
+        """Return the visible cable colour as "#rrggbb", or None without one."""
+        if not self.cable_color:
+            return None
+        if not _HEX_COLOR_RE.match(self.cable_color):
+            logger.warning(
+                "Ignoring non-hex cable color %r on %s",
+                self.cable_color,
+                self.component,
+            )
+            return None
+        return f"#{self.cable_color}"
+
+    @property
     def occupied(self):
         return self.cable_status is not None
 
@@ -123,7 +142,7 @@ class ComponentState:
 
 
 @dataclass
-class Binding:
+class KeyBinding:
     """The components that one layout key binds to; more than one is ambiguous."""
 
     key: str
@@ -166,16 +185,16 @@ def viewable_device_view(device_type, user):
 
 
 def _peer_querysets():
-    return [
-        model.objects.select_related("device", "cable")
-        for model in (ConsolePort, ConsoleServerPort, FrontPort, RearPort, Interface)
-    ]
+    return [model.objects.select_related("device", "cable") for model in LAYOUT_MODELS]
 
 
 def _queryset(model, device, user):
     queryset = (
         model.objects.restrict(user, "view")
         .filter(device=device)
+        .filter(
+            Q(module__isnull=True) | Q(module__in=Module.objects.restrict(user, "view"))
+        )
         .exclude(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
         .select_related("cable")
         .prefetch_related(
@@ -248,12 +267,14 @@ def component_states(components, user):
 
 def _state(component, link_peers, endpoints, cable_visible, visible_peers):
     cable = component.cable if cable_visible else None
+    # A hidden cable is no cable: it does not connect the component.
+    linked = cable is not None or component.cable_id is None
     enabled = getattr(component, "enabled", None)
     if isinstance(component, Interface):
-        connected = bool(endpoints)
-        partially_connected = bool(link_peers) and not connected
+        connected = linked and bool(endpoints)
+        partially_connected = linked and bool(link_peers) and not connected
     else:
-        connected = bool(link_peers)
+        connected = linked and bool(link_peers)
         partially_connected = False
     if connected:
         connection_state = CONNECTED
@@ -271,7 +292,7 @@ def _state(component, link_peers, endpoints, cable_visible, visible_peers):
         cable_color=cable.color if cable else None,
         marked_connected=component.mark_connected,
         path_complete=(
-            bool(path and path.is_complete)
+            bool(linked and path and path.is_complete)
             if isinstance(component, PathEndpoint)
             else None
         ),
@@ -285,12 +306,14 @@ def _state(component, link_peers, endpoints, cable_visible, visible_peers):
 
 
 def bind_layout(states, face=None):
-    """Return {layout key: Binding} for ``states``; a face leaves out the pass-through ports of the other face."""
+    """Return {layout key: KeyBinding} for ``states``; a face ("front" or "rear") leaves out the pass-through ports of the other face."""
     bindings = {}
     for state in states:
         if face is not None and state.face not in (None, face):
             continue
-        bindings.setdefault(state.key, Binding(state.key, [])).candidates.append(state)
+        bindings.setdefault(state.key, KeyBinding(state.key, [])).candidates.append(
+            state
+        )
     return bindings
 
 

@@ -12,12 +12,10 @@ in the same state.
 from __future__ import annotations
 
 import logging
-import re
 
 from dcim.models import Device
 
 from ..components import (
-    AMBIGUOUS,
     CONNECTED,
     DISABLED,
     ENABLED,
@@ -28,9 +26,8 @@ from ..components import (
     viewable_device_view,
 )
 from ..layout import parse as parse_layout
-from ..layout.model import Face
 from ..layout.parser import LayoutParseError
-from ..layout.renderers.svg import face_views, render_api_view, svg_dims
+from ..layout.renderers.svg import drawn_face, face_views, render_api_view, svg_dims
 from ..models import DeviceView
 from ..utils import _detect_variant
 
@@ -48,8 +45,6 @@ COLOUR_DISABLED = "#dc3545"  # bg-danger
 COLOUR_PARTIAL = "#ffc107"  # bg-warning
 NO_COLOR_FILL = "url(#dv-nocolor-pattern)"
 
-_HEX_COLOR_RE = re.compile(r"^[0-9A-Fa-f]{6}$")
-
 
 class UnavailableReason:
     NO_LAYOUT = "no_layout"
@@ -58,31 +53,16 @@ class UnavailableReason:
 
 
 def _fill_for(state) -> str:
-    if state.cable_color is not None:
-        if state.cable_color == "":
-            return NO_COLOR_FILL
-        if _HEX_COLOR_RE.match(state.cable_color):
-            return f"#{state.cable_color}"
-        # Malformed value somehow stored on the model — don't trust it raw
-        # in hand-built SVG; fall through to the state colour instead.
-        logger.warning(
-            "Ignoring non-hex cable color %r on %s",
-            state.cable_color,
-            state.component,
-        )
-
+    if state.cable_color == "":
+        return NO_COLOR_FILL
+    if state.cable_fill:
+        return state.cable_fill
     return {
         CONNECTED: COLOUR_CONNECTED,
         PARTIALLY_CONNECTED: COLOUR_PARTIAL,
         ENABLED: COLOUR_ENABLED,
         DISABLED: COLOUR_DISABLED,
     }[state.connection_state]
-
-
-def _panel_key(face, view) -> str:
-    if face:
-        return face
-    return "rear" if view.face == Face.REAR else "front"
 
 
 def _reference(state) -> dict:
@@ -103,7 +83,7 @@ def _hotspot(cell: dict, binding) -> dict:
             "name": binding.key,
             **geometry,
             "enabled": None,
-            "connection_state": AMBIGUOUS,
+            "connection_state": binding.connection_state,
             "cable_color": None,
             "peer_labels": [],
             "trace_supported": False,
@@ -113,7 +93,7 @@ def _hotspot(cell: dict, binding) -> dict:
         **_reference(state),
         **geometry,
         "enabled": state.enabled is not False,
-        "connection_state": state.connection_state,
+        "connection_state": binding.connection_state,
         "cable_color": state.cable_color,
         "peer_labels": state.peer_labels,
         "trace_supported": state.trace_supported,
@@ -171,8 +151,8 @@ def compose_rendered_layout(device: Device, user) -> dict:
             member_suffix = f" ({member.name})" if len(members) > 1 else ""
 
             for face, view in face_views(normalized):
-                bindings = bind_layout(states, face)
-                face_key = _panel_key(face, view)
+                face_key = drawn_face(face, view)
+                bindings = bind_layout(states, face_key)
                 face_label = face_key.capitalize()
                 svg, geometry = render_api_view(
                     view,
