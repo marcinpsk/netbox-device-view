@@ -6,7 +6,7 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1] / "netbox_device_view"
 # The one reader: it keeps only the cable and the peers that the user can view.
-READER = PACKAGE / "utils.py"
+READER = PACKAGE / "components.py"
 RAW = {"link_peers", "connected_endpoints"}
 
 

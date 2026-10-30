@@ -5,10 +5,12 @@ For each **Device Type** you create a **DeviceView** object (at *Plugins → Dev
 When you visit a device of that type, the plugin:
 
 1. Looks up the DeviceView for the device's type
-2. Collects all interfaces, front ports, rear ports, console ports, and console-server ports from the device, including the ports of installed modules. For a virtual chassis member, it collects only the interfaces, console ports and console-server ports. It uses only the objects that you can view (see [Object permissions](#object-permissions))
-3. Derives a `stylename` for each port (see below)
-4. Renders the layout using the configured render mode (CSS Grid or SVG)
-5. Applies port status colours based on connection state
+2. Collects all interfaces, front ports, rear ports, console ports, and console-server ports from the device, including the ports of installed modules. It uses only the objects that you can view (see [Object permissions](#object-permissions))
+3. Derives a `stylename` for each port (see below) and binds each layout element to the components with the same stylename (see [Shared stylenames](#shared-stylenames))
+4. Finds the connection state of each port on the server
+5. Renders the layout using the configured render mode (CSS Grid or SVG), with the port status colours
+
+The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
 
 ---
 
@@ -34,6 +36,18 @@ Each interface and port is mapped to a `stylename` used as the CSS grid-area nam
 - Front, rear, console and console-server ports always use the replacement rule for other names: `ttyS1` becomes `ttys1`, and `Async0/1/0` becomes `async0-1-0`
 - Purely numeric stylenames are prefixed with `p`
 - Virtual and LAG interfaces are skipped
+
+### Shared stylenames
+
+Two components can derive the same stylename, for example an interface `Console` and a console port `Console`. The plugin does not select one of them:
+
+- The element shows a neutral, dashed cell. It links to no component.
+- Its popover lists each component with a link.
+- The [rendered-layout API](rendered-layout-api.md#ambiguous-hotspot) gives one hotspot with `connection_state: "ambiguous"` and a `candidates` list.
+
+A front port binds only on the front face, and a rear port only on the rear face. Thus the front port `Port 1` and the rear port `Port 1` of a patch panel do not share a stylename when the layout has separate `front` and `rear` views. In a layout with one view, they share it.
+
+In CSS mode, a device outside a virtual chassis shows its front ports and rear ports in separate **Front** and **Rear** grids, as before. A virtual chassis member shows no front or rear ports in CSS mode, because one grid per member cannot hold both faces.
 
 ---
 

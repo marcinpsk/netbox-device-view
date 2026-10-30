@@ -1,6 +1,7 @@
 """The rendered-layout API and the device view panels show only objects that the user can view."""
 
 import json
+import re
 
 from core.models import ObjectType
 from dcim.models import (
@@ -151,6 +152,16 @@ class ViewPermissionTests(TestCase):
                 return content[content.find(card) :]
         return ""
 
+    def _page_state(self, render_mode, component):
+        """Return the connection state of ``component`` on the Device View tab."""
+        url = re.escape(component.get_absolute_url())
+        pattern = (
+            rf'href="{url}"\s+class="[^"]*"\s+data-connection-state="(\w+)"'
+            if render_mode == RenderMode.CSS
+            else rf'data-connection-state="(\w+)"[^>]*data-href="{url}"'
+        )
+        return re.search(pattern, self._panel(render_mode)).group(1)
+
     def _hotspots(self, body):
         return {hotspot["name"]: hotspot for hotspot in body["panels"][0]["hotspots"]}
 
@@ -190,6 +201,7 @@ class ViewPermissionTests(TestCase):
         # Gi1 has a cable to peer1 eth-Gi1: it connects only when both are visible.
         cable = ("dcim.view_cable", None)
         peer = ("dcim.view_interface", {"device__name": "peer1"})
+        gi1 = Interface.objects.get(device=self.sw1, name="Gi1")
         for grants in ((), (cable,), (peer,), (cable, peer)):
             ObjectPermission.objects.filter(
                 name__in=[
@@ -204,10 +216,11 @@ class ViewPermissionTests(TestCase):
                     self._hotspots(self._api())["Gi1"]["connection_state"],
                     "connected" if connected else "enabled",
                 )
-                self.assertEqual("bg-success" in self._panel(RenderMode.CSS), connected)
-                self.assertEqual(
-                    "connected: true" in self._panel(RenderMode.SVG), connected
-                )
+                for render_mode in (RenderMode.CSS, RenderMode.SVG):
+                    self.assertEqual(
+                        self._page_state(render_mode, gi1),
+                        "connected" if connected else "enabled",
+                    )
 
     def test_a_port_connects_through_its_link_peer_on_the_page_as_in_the_api(self):
         # con0 reaches cs0 through the front and rear port of peer1.
@@ -225,13 +238,10 @@ class ViewPermissionTests(TestCase):
             self._grant(self.user, name)
         self._grant(self.user, "dcim.view_cable")
 
-        def connected():
-            script = self._panel(RenderMode.SVG)
-            return script.split('name: "con0"', 1)[1].split("connected: ", 1)[1][:4]
-
-        self.assertEqual(connected(), "fals")
+        # The layout has no key of con0, so only the CSS grid draws it.
+        self.assertEqual(self._page_state(RenderMode.CSS, con0), "enabled")
         self._grant(self.user, "dcim.view_frontport")
-        self.assertEqual(connected(), "true")
+        self.assertEqual(self._page_state(RenderMode.CSS, con0), "connected")
 
     def test_api_ignores_a_module_that_the_user_cannot_view(self):
         self.assertNotIn("Te1/1", self._hotspots(self._api()))
