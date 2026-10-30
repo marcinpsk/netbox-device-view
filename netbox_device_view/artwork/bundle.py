@@ -134,7 +134,12 @@ def _directory_issues(fileobj, size: int) -> list[Issue]:
     tail_size = min(size, _END.size + 0xFFFF)
     fileobj.seek(size - tail_size)
     tail = fileobj.read(tail_size)
-    found = tail.rfind(_END_SIGNATURE)
+    # As zipfile: an end record without a comment first, then the last signature.
+    found = tail_size - _END.size
+    if found < 0 or not (
+        tail.startswith(_END_SIGNATURE, found) and tail.endswith(b"\0\0")
+    ):
+        found = tail.rfind(_END_SIGNATURE)
     if found < 0 or tail_size - found < _END.size:
         return [Issue(BUNDLE, None, "not a zip file.")]
     location = size - tail_size + found
