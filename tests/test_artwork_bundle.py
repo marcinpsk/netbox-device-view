@@ -3,13 +3,14 @@
 import hashlib
 import io
 import os
+import struct
 import tracemalloc
 import zipfile
 import zlib
 
 import pytest
 
-from netbox_device_view.artwork.bundle import read_bundle, read_zip
+from netbox_device_view.artwork.bundle import MAX_MEMBERS, read_bundle, read_zip
 from netbox_device_view.artwork.errors import ArtworkError
 from netbox_device_view.artwork.limits import (
     MAX_BUNDLE_BYTES,
@@ -107,6 +108,49 @@ def test_a_nul_byte_in_a_member_name_fails():
     # zipfile cuts a name at NUL on write, so the byte goes into the raw archive.
     data = bundle({"a/front.svg#../../etc": "x"}).replace(b"#../../etc", b"\0../../etc")
     assert_rejected(data, "not a safe relative path")
+
+
+def test_too_many_directory_records_fail_before_zipfile_reads_them():
+    # Central directory records only, and the end record declares 0 entries.
+    record = struct.pack(
+        "<4s4B4HL2L5H2L",
+        b"PK\x01\x02",
+        20,
+        3,
+        20,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    directory = (record + b"x") * 200_000
+    end = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 0, 0, len(directory), 0, 0)
+    data = directory + end
+    tracemalloc.start()
+    try:
+        assert_rejected(data, f"more than {MAX_MEMBERS} archive members")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024
+
+
+def test_a_zip64_archive_fails():
+    data = bundle({f"{DEVICE_DIR}/front.svg": FRONT_SVG})
+    end = data.rindex(b"PK\x05\x06")
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, 0, 1)
+    assert_rejected(data[:end] + locator + data[end:], "zip64")
 
 
 def test_duplicate_members_fail():
