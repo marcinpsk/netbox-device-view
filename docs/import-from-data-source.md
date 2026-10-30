@@ -117,6 +117,8 @@ A device view applies to all devices of its device type. A replacement changes t
 
 If a row has an error, the import cannot apply any row. Correct the selection, then click **Review** again.
 
+If the Data Source starts to synchronize during the review, the review stops and shows an error. Click **Review again** when the synchronization is complete.
+
 ### 4. Apply
 
 Click **Apply import**. The import writes all rows in one database transaction, or no row. The result lists the created, updated and unchanged device views.

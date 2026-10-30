@@ -197,9 +197,21 @@ class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View
             )
         review = None
         if target_form.is_bound and target_form.is_valid():
-            review = datasource_import.review(
-                request.user, source, target_form.selections()
-            )
+            try:
+                review = datasource_import.review(
+                    request.user, source, target_form.selections()
+                )
+            except datasource_import.ImportRejected as exc:
+                return render(
+                    request,
+                    "netbox_device_view/datasource_import_result.html",
+                    {
+                        "error": str(exc),
+                        "source_form": source_form,
+                        "target_form": target_form,
+                    },
+                    status=400,
+                )
         return render(
             request,
             "netbox_device_view/datasource_import_review.html",

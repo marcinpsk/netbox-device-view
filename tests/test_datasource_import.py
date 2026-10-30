@@ -1242,6 +1242,29 @@ class ReviewTests(DataSourceImportTestBase):
         with self.assertRaises(datasource_import.ImportRejected):
             datasource_import.review(self.user, self.source, [selection])
 
+    def test_sync_that_starts_during_review_is_rejected(self):
+        """A sync that starts after the form check rejects the review, without a server error."""
+        started = []
+
+        def start_sync(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            if not started and sql.startswith("SELECT") and '"core_datasource"' in sql:
+                started.append(sql)
+                DataSource.objects.filter(pk=self.source.pk).update(
+                    status=DataSourceStatusChoices.SYNCING
+                )
+            return result
+
+        with connection.execute_wrapper(start_sync):
+            response = self.review([(self.datafile(), self.device_type)])
+        self.assertTrue(started)
+        self.assertContains(
+            response, "The Data Source is not available for import.", status_code=400
+        )
+        self.assertContains(response, "No records were changed", status_code=400)
+        self.assertContains(response, "Review again", status_code=400)
+        self.assertNotContains(response, "Apply import", status_code=400)
+
     def test_review_and_apply_require_csrf(self):
         client = Client(enforce_csrf_checks=True)
         client.force_login(self.user)
