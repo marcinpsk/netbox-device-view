@@ -711,11 +711,96 @@ class SuggestionTests(DataSourceImportTestBase):
         self.assertEqual(
             [row.datafile.path for row in first_page.context["rows"]], paths[:6]
         )
-        self.assertContains(first_page, "q=ubiquiti")
+        self.assertContains(first_page, 'name="page" value="2"')
         self.assertContains(first_page, 'value="ubiquiti"')
         empty = self.catalog(q="nothing-matches")
         self.assertContains(empty, "No layout files match the search.")
         self.assertNotContains(empty, "Assign device types")
+
+
+class CatalogSelectionTests(DataSourceImportTestBase):
+    """Ticked files stay selected when the user changes the page or the search."""
+
+    def setUp(self):
+        super().setUp()
+        self.paths = [f"examples/Ubiquiti/USW-{index:02}.yaml" for index in range(12)]
+        for path in self.paths:
+            self.write_file(path, EXAMPLE_YAML.read_bytes())
+        self.source.sync()
+
+    def navigate(self, response, ticked=(), **buttons):
+        """Tick files on the page, then click a page or search button, as a browser does."""
+        fields = submitted(response, START_URL)
+        fields.setdefault("file", []).extend(str(self.datafile(p).pk) for p in ticked)
+        for name, value in buttons.items():
+            self.assertContains(response, f'name="{name}" value="{value}"')
+            fields[name] = [str(value)]
+        return self.client.post(reverse(START_URL), fields, follow=True)
+
+    def paths_on_page(self, response):
+        return [row.datafile.path for row in response.context["rows"]]
+
+    def test_ticked_files_survive_page_and_search_changes(self):
+        first = self.client.get(
+            reverse(START_URL),
+            {"source": self.source.pk, "prefix": "examples/", "per_page": 6},
+        )
+        self.assertEqual(self.paths_on_page(first), self.paths[:6])
+
+        second = self.navigate(first, ticked=[self.paths[0]], page=2)
+        self.assertEqual(self.paths_on_page(second), self.paths[6:] + [EXAMPLE_PATH])
+        self.assertContains(second, "1 selected file is not shown here")
+
+        searched = submitted(second, START_URL)
+        searched["q"] = ["USW-1"]
+        searched["file"] = searched.get("file", []) + [
+            str(self.datafile(self.paths[11]).pk)
+        ]
+        searched["page"] = ["1"]
+        found = self.client.post(reverse(START_URL), searched, follow=True)
+        self.assertEqual(self.paths_on_page(found), self.paths[10:])
+        self.assertContains(found, 'value="USW-1"')
+        ticked = submitted(found, START_URL)["file"]
+        self.assertEqual(
+            sorted(ticked),
+            sorted(str(self.datafile(p).pk) for p in (self.paths[0], self.paths[11])),
+        )
+
+        self.assertContains(found, f'formaction="{reverse(REVIEW_URL)}"')
+        match = self.client.post(reverse(REVIEW_URL), submitted(found, START_URL))
+        self.assertEqual(
+            [datafile.path for datafile in match.context["target_form"].datafiles],
+            [self.paths[0], self.paths[11]],
+        )
+
+    def test_unticked_file_is_dropped(self):
+        first = self.client.get(
+            reverse(START_URL),
+            {"source": self.source.pk, "prefix": "examples/", "per_page": 6},
+        )
+        second = self.navigate(first, ticked=[self.paths[0]], page=2)
+        back = submitted(second, START_URL)
+        back["page"] = ["1"]
+        first_again = self.client.post(reverse(START_URL), back, follow=True)
+        fields = submitted(first_again, START_URL)
+        self.assertEqual(fields["file"], [str(self.datafile(self.paths[0]).pk)])
+        del fields["file"]
+        fields["page"] = ["2"]
+        second_again = self.client.post(reverse(START_URL), fields, follow=True)
+        self.assertNotIn("file", submitted(second_again, START_URL))
+
+    def test_too_many_ticked_files_are_rejected(self):
+        response = self.client.get(
+            reverse(START_URL),
+            {
+                "source": self.source.pk,
+                "prefix": "examples/",
+                "file": [str(pk) for pk in range(datasource_import.MAX_BATCH_ROWS + 1)],
+            },
+            follow=True,
+        )
+        self.assertContains(response, datasource_import.TOO_MANY_ROWS)
+        self.assertNotIn("file", submitted(response, START_URL))
 
 
 class StrictYamlImportTests(DataSourceImportTestBase):
@@ -1390,7 +1475,8 @@ class BulkImportTests(DataSourceImportTestBase):
 
     def review_page(self, datafiles):
         """Submit the catalog and the match pages as a browser would."""
-        fields = submitted(self.catalog(), REVIEW_URL)
+        # "Assign device types" posts the catalog form to the review URL.
+        fields = submitted(self.catalog(), START_URL)
         fields["file"] = [str(datafile.pk) for datafile in datafiles]
         match = self.client.post(reverse(REVIEW_URL), fields)
         self.assertEqual(match.status_code, 200)

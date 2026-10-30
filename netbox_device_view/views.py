@@ -133,6 +133,20 @@ class DataSourceImportPermissionMixin(ContentTypePermissionRequiredMixin):
         return datasource_import.can_import(self.request.user)
 
 
+def _ticked_file_ids(request, source, prefix) -> set[int]:
+    """Return the ids of the ticked files that are still in the catalog."""
+    values = request.GET.getlist("file")
+    if len(values) > datasource_import.MAX_BATCH_ROWS:
+        messages.error(request, datasource_import.TOO_MANY_ROWS)
+        return set()
+    file_ids = {pk for pk in map(_parse_pk, values) if pk is not None}
+    return set(
+        datasource_import.catalog(request.user, source, prefix)
+        .filter(pk__in=file_ids)
+        .values_list("pk", flat=True)
+    )
+
+
 class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
     """Select a Data Source and directory, then list the importable layout files."""
 
@@ -150,12 +164,38 @@ class DeviceViewDataSourceImportView(DataSourceImportPermissionMixin, View):
                 get_paginate_count(request),
             )
             page = paginator.get_page(request.GET.get("page"))
+            ticked = _ticked_file_ids(request, source, prefix)
             context["paginator"] = paginator
             context["page"] = page
             context["rows"] = datasource_import.catalog_rows(
                 request.user, source, prefix, page.object_list
             )
+            context["ticked"] = ticked
+            context["ticked_elsewhere"] = sorted(
+                ticked - {row.datafile.pk for row in context["rows"]}
+            )
         return render(request, "netbox_device_view/datasource_import.html", context)
+
+    def post(self, request):
+        """Keep the ticked files when the user changes the page or the search."""
+        form = forms.DataSourceImportSourceForm(request.POST, user=request.user)
+        if not form.is_valid():
+            return render(
+                request,
+                "netbox_device_view/datasource_import.html",
+                {"form": form},
+                status=400,
+            )
+        params = {
+            "source": form.cleaned_data["source"].pk,
+            "prefix": form.cleaned_data["prefix"],
+            "q": form.cleaned_data["q"],
+            "file": request.POST.getlist("file"),
+        }
+        for name in ("page", "per_page"):
+            if name in request.POST:
+                params[name] = request.POST[name]
+        return redirect(f"{request.path}?{urlencode(params, doseq=True)}")
 
 
 class DeviceViewDataSourceImportReviewView(DataSourceImportPermissionMixin, View):

@@ -130,7 +130,8 @@ class GitDataSourceImportTests(TransactionTestCase):
         self.assertEqual(
             [datafile.path for datafile in catalog.context["page"]], [EXAMPLE_PATH]
         )
-        fields = submitted(catalog, REVIEW_URL)
+        # "Assign device types" posts the catalog form to the review URL.
+        fields = submitted(catalog, START_URL)
         fields["file"] = [str(source.datafiles.get(path=EXAMPLE_PATH).pk)]
         match = self.client.post(reverse(REVIEW_URL), fields)
         review = self.client.post(reverse(REVIEW_URL), submitted(match, REVIEW_URL))

@@ -92,7 +92,7 @@ This example imports two new layouts and replaces one existing layout in one imp
 2. Select the Data Source.
 3. Set the prefix to `examples/yaml/`.
 4. Click **Show layout files**.
-5. Select the files to import.
+5. Select the files to import. You can select files on several pages and in several searches. The selection stays when you change the page or the search.
 6. Click **Assign device types**.
 
 The catalog shows each file with its format and its suggested device type. It also shows if that device type has a device view.
