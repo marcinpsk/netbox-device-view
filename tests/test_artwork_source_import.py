@@ -278,6 +278,19 @@ class SourceImportTests(SourceTestCase):
         self.assertNotContains(page, "ommit")
 
 
+class SourceIdTests(SourceTestCase):
+    def test_a_source_id_with_a_non_decimal_digit_is_a_form_error(self):
+        url = reverse(SOURCE_IMPORT_URL)
+        self.assertEqual(
+            self.client.get(url, {"data_source": "\u00b2"}).status_code, 200
+        )
+
+        response = self.client.post(url, {"data_source": "\u00b2", "prefix": ""})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("data_source", response.context["form"].errors)
+
+
 class OwnershipTests(SourceTestCase):
     def setUp(self):
         super().setUp()
@@ -392,6 +405,12 @@ class SourceApiTests(SourceTestCase):
         self.assertEqual(event["data_source"]["id"], self.source.pk)
         self.assertEqual(event["path"], DEVICE_DIR)
         self.assertIsNotNone(event["last_synced"])
+
+    def test_a_body_that_is_not_an_object_is_a_bad_request(self):
+        response = self.api().post(reverse(API_SOURCE_IMPORT), [1], format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(DefinitionRevision.objects.exists())
 
     def test_ui_and_api_report_the_same_errors(self):
         (self.root / DEVICE_DIR / "rear.svg").unlink()
