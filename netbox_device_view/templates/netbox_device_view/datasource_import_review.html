@@ -112,8 +112,12 @@
                         </summary>
                         {% for change in row.changes %}
                           <h3 class="h6 mt-2">{{ change.name }}</h3>
-                          <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{% for kind, line in change.lines %}<span class="{% if kind == 'add' %}text-success{% elif kind == 'remove' %}text-danger{% elif kind == 'hunk' %}text-muted{% endif %}">{{ line }}</span>
+                          {% if change.lines is None %}
+                            <p class="text-muted mb-0">{% trans "The field is too large to show a difference." %}</p>
+                          {% else %}
+                            <pre class="border rounded p-2 mb-0 text-break" style="white-space: pre-wrap; max-height: 24rem;">{% for kind, line in change.lines %}<span class="{% if kind == 'add' %}text-success{% elif kind == 'remove' %}text-danger{% elif kind == 'hunk' %}text-muted{% endif %}">{{ line }}</span>
 {% endfor %}</pre>
+                          {% endif %}
                         {% endfor %}
                       </details>
                     {% else %}

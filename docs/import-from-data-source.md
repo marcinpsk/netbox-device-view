@@ -109,7 +109,7 @@ Click **Review**.
 
 ### 3. Review the changes
 
-For each row, the review shows the action, the render mode and the validation result. For a replacement, it shows the changed fields as a text difference. The review shows the layout as text only. It does not show a preview of the layout.
+For each row, the review shows the action, the render mode and the validation result. For a replacement, it shows the changed fields as a text difference. A field with more than 1000 lines in the current and the proposed text together shows no difference, only a note that it is too large. The review shows the layout as text only. It does not show a preview of the layout.
 
 ![Review with two creates and one replacement](assets/datasource-import-review.png)
 

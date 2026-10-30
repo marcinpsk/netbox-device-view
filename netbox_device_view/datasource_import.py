@@ -43,6 +43,8 @@ DUPLICATE_TARGET = "Several selected files target this device type. Keep one of 
 MAX_FILE_BYTES = 256 * 1024
 MAX_BATCH_BYTES = 2 * 1024 * 1024
 MAX_BATCH_ROWS = 100
+# The review shows no diff for a field with more lines than this, in both versions together.
+MAX_DIFF_LINES = 1000
 FILE_TOO_LARGE = f"The file is larger than {MAX_FILE_BYTES // 1024} KiB."
 BATCH_TOO_LARGE = (
     f"The selected files are larger than {MAX_BATCH_BYTES // 1024 // 1024} MiB"
@@ -146,10 +148,10 @@ class ReviewedRow:
 
 @dataclass(frozen=True)
 class FieldChange:
-    """One imported field that a review row changes, with its unified diff lines."""
+    """One imported field that a review row changes, with its unified diff lines or None."""
 
     name: str
-    lines: list[tuple[str, str]]
+    lines: list[tuple[str, str]] | None
 
 
 @dataclass
@@ -638,13 +640,18 @@ def _comparable_text(value: str) -> str:
     return _FORM_NEWLINES.sub("\n", value).strip()
 
 
-def _diff_lines(current: str, proposed: str) -> list[tuple[str, str]]:
-    """Return (kind, text) lines of a unified diff; the template escapes the text."""
+def _diff_lines(current: str, proposed: str) -> list[tuple[str, str]] | None:
+    """Return (kind, text) lines of a unified diff, or None for a field that is too large."""
     kinds = {"+": "add", "-": "remove", "@": "hunk"}
     # Split the compared text, so that differing fields always give a diff.
+    current_lines = _comparable_text(current).split("\n")
+    proposed_lines = _comparable_text(proposed).split("\n")
+    if len(current_lines) + len(proposed_lines) > MAX_DIFF_LINES:
+        return None
+    # The template escapes the text.
     lines = difflib.unified_diff(
-        _comparable_text(current).split("\n"),
-        _comparable_text(proposed).split("\n"),
+        current_lines,
+        proposed_lines,
         "current",
         "proposed",
         lineterm="",

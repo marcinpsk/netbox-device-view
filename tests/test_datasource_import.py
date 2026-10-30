@@ -1928,6 +1928,19 @@ class ReplacementTests(ReplacementTestBase):
         kinds = {kind for kind, _ in row.changes[0].lines}
         self.assertTrue({"add", "remove"} <= kinds, row.changes[0].lines)
 
+    def test_large_fields_show_no_diff(self):
+        padding = "# padding\n" * datasource_import.MAX_DIFF_LINES
+        self.existing(yaml_layout=self.OLD_YAML + padding)
+        review = self.replace()
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.action, datasource_import.Action.REPLACE)
+        changes = {change.name: change.lines for change in row.changes}
+        self.assertIsNone(changes["yaml_layout"])
+        self.assertTrue(changes["grid_template_area"])
+        self.assertContains(review, "too large to show a difference", count=1)
+        self.assertNotContains(review, "# padding")
+        self.assertTrue(review.context["review"].token)
+
     def test_identical_row_with_replace_needs_no_change_permission(self):
         self.apply(self.review_token([(self.datafile(), self.device_type)]))
         ObjectPermission.objects.filter(actions=["change"]).delete()
