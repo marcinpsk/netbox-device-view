@@ -51,6 +51,7 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 
 - Each port is filled with the hex colour of its attached cable
 - Ports with a cable that has no colour set are shown with a grey/black diagonal stripe pattern
+- Ports without a cable, or with a cable that you cannot view, keep their status colour
 - The partial connection **dot overlay is still rendered** on top, so the partial state remains visible regardless of the cable colour
 
 ---

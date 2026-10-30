@@ -22,7 +22,7 @@
 		{% if cell.href %}href="{{ cell.href }}"{% endif %}
 		class="device-view-port {{ cell.classes|join:' ' }}"
 		data-connection-state="{{ cell.connection_state }}"
-		data-bs-title="{{ cell.popover_title }}"
+		data-bs-title="{{ cell.popover_title|force_escape }}"
 		data-bs-content="{{ cell.popover_content|force_escape }}"
 		style="grid-area: {{ cell.stylename }}{% if cell.fill %}; background-color: {{ cell.fill }}{% endif %}"
 		data-bs-toggle="popover"
