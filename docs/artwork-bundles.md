@@ -172,7 +172,7 @@ The import reads all files below the prefix in one database query. It fails when
 
 - the Data Source status is not **Completed**,
 - a sync of the source has not finished,
-- a stored file does not match its recorded SHA-256,
+- a stored file does not match its recorded size and SHA-256 (the file changed while a sync read it; the next sync reads it again),
 - a file that a manifest names is missing.
 
 The plugin lets only one sync of a Data Source run at a time. A second sync that starts during a sync fails, and NetBox sets the source status to **Failed**. Check for updates again after the first sync completes. A sync that ran before you installed the plugin does not count: check for updates once before the first import.
