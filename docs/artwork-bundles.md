@@ -26,6 +26,7 @@ artwork/
 - Every file must be inside a definition directory. A definition directory cannot be inside another one.
 - A definition key can occur in only one directory of a bundle.
 - Archive members are stored or deflated, and not encrypted. The manifest and the SVG files are UTF-8.
+- The archive uses the classic zip format. A zip64 archive fails. A bundle fits the classic format, because of its size and member limits.
 - If one definition fails, the import stores nothing.
 
 ---
