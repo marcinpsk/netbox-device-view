@@ -8,10 +8,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .. import models
-from ..filtersets import DeviceViewFilterSet
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
-from ..filtersets import DefinitionRevisionFilterSet
+from ..filtersets import DefinitionRevisionFilterSet, DeviceViewFilterSet
 from .rendered_layout import compose_rendered_layout
 from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
 
