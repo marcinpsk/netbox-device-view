@@ -99,13 +99,15 @@ class CleanupTests(MediaMixin, TestCase):
 
 class CleanupLockTests(MediaMixin, TransactionTestCase):
     @staticmethod
-    def wait_for_a_lock_wait(timeout=10):
-        """Return True when a session waits for an advisory lock, as cleanup does at lock_digest()."""
+    def wait_for_a_lock_wait(pid, timeout=10):
+        """Return True when session ``pid`` waits for an advisory lock, as cleanup does at lock_digest()."""
         deadline = time.monotonic() + timeout
         with connection.cursor() as cursor:
             while time.monotonic() < deadline:
                 cursor.execute(
-                    "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+                    "SELECT 1 FROM pg_locks"
+                    " WHERE locktype = 'advisory' AND NOT granted AND pid = %s",
+                    [pid],
                 )
                 if cursor.fetchone():
                     return True
@@ -116,6 +118,7 @@ class CleanupLockTests(MediaMixin, TransactionTestCase):
         blob = store_blob(b"<svg>reused</svg>", "svg")
         self.age(blob)
         importing, finished = threading.Event(), threading.Event()
+        cleaner_ready = threading.Event()
         release = threading.Event()
         results = {}
 
@@ -131,6 +134,10 @@ class CleanupLockTests(MediaMixin, TransactionTestCase):
 
         def run_cleanup():
             try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    results["pid"] = cursor.fetchone()[0]
+                cleaner_ready.set()
                 results["removed"] = cleanup()
             finally:
                 finished.set()
@@ -141,8 +148,10 @@ class CleanupLockTests(MediaMixin, TransactionTestCase):
         self.assertTrue(importing.wait(10))
         cleaner = threading.Thread(target=run_cleanup)
         cleaner.start()
+        self.assertTrue(cleaner_ready.wait(10))
         self.assertTrue(
-            self.wait_for_a_lock_wait(), "cleanup did not wait for the lock"
+            self.wait_for_a_lock_wait(results["pid"]),
+            "cleanup did not wait for the lock",
         )
         self.assertFalse(finished.is_set())
         release.set()
