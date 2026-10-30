@@ -6,11 +6,13 @@ from core.exceptions import SyncError
 from core.models import DataFile
 from core.signals import post_sync, pre_sync
 from django.db import connection
-from django.db.models import CharField, F, Func, IntegerField, Q, Value
+from django.db.models import F, Q
 from django.dispatch import receiver
 from django.utils import timezone
 
 from ..models import SourceSyncRun
+from ..stored_data import stored_sha256, stored_size
+from .limits import MAX_SVG_BYTES
 
 # The first key of each two-key session lock; pg_locks shows it as an oid, so it stays positive.
 _LOCK_CLASS = (
@@ -47,25 +49,16 @@ def start_guarded_sync(sender, instance, **kwargs):
         source_id=instance.pk,
         defaults={"started": timezone.now(), "finished": None},
     )
-    _forget_torn_files(instance.pk)
+    _clear_hash_of_torn_files(instance.pk)
 
 
-def _forget_torn_files(source_pk: int) -> None:
-    """Clear the hash of torn files (data that the hash and size do not describe), so the sync reads them again."""
-    digest = Func(
-        Func(F("data"), function="sha256"),
-        Value("hex"),
-        function="encode",
-        output_field=CharField(),
+def _clear_hash_of_torn_files(source_pk: int) -> None:
+    """Clear the hash of each importable file whose data the hash or size does not describe, so the sync reads it again."""
+    files = DataFile.objects.filter(source_id=source_pk).annotate(
+        stored_bytes=stored_size(), digest=stored_sha256(MAX_SVG_BYTES)
     )
-    size = Func(F("data"), function="octet_length", output_field=IntegerField())
-    torn = (
-        DataFile.objects.filter(source_id=source_pk)
-        .annotate(digest=digest, stored_size=size)
-        .filter(~Q(hash=F("digest")) | ~Q(size=F("stored_size")))
-        .values_list("pk", flat=True)
-    )
-    DataFile.objects.filter(pk__in=list(torn)).update(hash="")
+    torn = ~Q(hash=F("digest")) | ~Q(size=F("stored_bytes"))
+    files.filter(torn, digest__isnull=False).update(hash="")
 
 
 @receiver(post_sync)
