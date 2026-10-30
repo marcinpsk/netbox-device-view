@@ -159,6 +159,40 @@ class SourceImportTests(SourceTestCase):
         )
         self.assertFalse(DefinitionRevision.objects.exists())
 
+    def test_the_next_sync_repairs_a_file_that_changed_while_a_sync_read_it(self):
+        # The hash matches the file on disk, so NetBox's own sync skips the row.
+        torn = {
+            "data": {"data": FRONT_SVG.replace("#333", "#222").encode()},
+            "size": {"size": len(FRONT_SVG.encode()) + 1},
+        }
+        for name, fields in torn.items():
+            with self.subTest(name):
+                self.sync()
+                DataFile.objects.filter(path=f"{DEVICE_DIR}/front.svg").update(**fields)
+                self.assertContains(
+                    self.import_source(),
+                    f"{DEVICE_DIR}/front.svg: {capture.CHANGED_FILE}",
+                    status_code=400,
+                )
+
+                self.sync()
+
+                self.import_source()
+                self.assertTrue(DefinitionRevision.objects.exists())
+                stored = DataFile.objects.get(path=f"{DEVICE_DIR}/front.svg")
+                self.assertEqual(bytes(stored.data), FRONT_SVG.encode())
+                DefinitionRevision.objects.all().delete()
+
+    def test_a_sync_leaves_consistent_files_alone(self):
+        self.sync()
+        before = dict(DataFile.objects.values_list("path", "last_updated"))
+
+        self.sync()
+
+        self.assertEqual(
+            dict(DataFile.objects.values_list("path", "last_updated")), before
+        )
+
     def test_a_sync_in_progress_or_a_failed_sync_blocks_the_import(self):
         self.sync()
         for status in (
