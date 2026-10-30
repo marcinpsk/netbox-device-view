@@ -136,7 +136,7 @@ To update device views after a change in the repository:
 1. Click **Sync** on the Data Source.
 2. Import the changed files again, and select **Replace**.
 
-If a file has the same layout as the device view, the result is **Unchanged**. The import then does not change the device view or its change log.
+If a file has the same layout as the device view, the result is **Unchanged**. The import then does not change the device view or its change log. The comparison and the text difference ignore line endings and the whitespace at the start and end of each field. Thus a device view that you saved in its edit form, which strips the fields and can store CRLF line endings, does not show as changed.
 
 ---
 

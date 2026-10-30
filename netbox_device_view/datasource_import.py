@@ -71,6 +71,8 @@ class Format(models.TextChoices):
 FORMAT_SUFFIXES = {".yaml": Format.YAML, ".yml": Format.YAML, ".css": Format.CSS}
 # tinycss2 reads these as "\n", and validate_css requires an unchanged round trip.
 CSS_NEWLINES = re.compile(r"\r\n?|\f")
+# Browsers submit CRLF line endings, and the edit form strips the value.
+_FORM_NEWLINES = re.compile(r"\r\n?")
 
 
 class ImportRejected(Exception):
@@ -183,7 +185,8 @@ class ReviewRow:
         return [
             FieldChange(name, _diff_lines(self.current_fields[name], value))
             for name, value in self.proposed_fields.items()
-            if self.current_fields and self.current_fields[name] != value
+            if self.current_fields
+            and _comparable_text(self.current_fields[name]) != _comparable_text(value)
         ]
 
 
@@ -562,7 +565,11 @@ def _propose(
         action = Action.CREATE
         candidate = _new_device_view(device_type, fields)
     else:
-        if fields == _imported_fields(device_view):
+        current = _imported_fields(device_view)
+        if all(
+            _comparable_text(current[name]) == _comparable_text(value)
+            for name, value in fields.items()
+        ):
             action = Action.UNCHANGED
         else:
             action = Action.REPLACE if replace else Action.SKIP
@@ -626,12 +633,18 @@ def _imported_fields(device_view: DeviceView) -> dict[str, str]:
     return {name: getattr(device_view, name) for name in IMPORTED_FIELDS}
 
 
+def _comparable_text(value: str) -> str:
+    """Return the text without the changes that a save through the edit form makes."""
+    return _FORM_NEWLINES.sub("\n", value).strip()
+
+
 def _diff_lines(current: str, proposed: str) -> list[tuple[str, str]]:
     """Return (kind, text) lines of a unified diff; the template escapes the text."""
     kinds = {"+": "add", "-": "remove", "@": "hunk"}
+    # Split the compared text, so that differing fields always give a diff.
     lines = difflib.unified_diff(
-        current.splitlines(),
-        proposed.splitlines(),
+        _comparable_text(current).split("\n"),
+        _comparable_text(proposed).split("\n"),
         "current",
         "proposed",
         lineterm="",

@@ -1855,6 +1855,56 @@ class ReplacementTests(ReplacementTestBase):
         device_view.refresh_from_db()
         self.assertEqual(device_view.last_updated, last_updated)
 
+    def save_through_edit_form(self, device_view, **fields):
+        """Save the device view as a browser submits the edit form: CRLF line endings."""
+        data = {
+            "device_type": device_view.device_type.pk,
+            "render_mode": device_view.render_mode,
+            **{
+                name: getattr(device_view, name)
+                for name in ("yaml_layout", "grid_template_area")
+            },
+            **fields,
+        }
+        for name in ("yaml_layout", "grid_template_area"):
+            data[name] = data[name].replace("\n", "\r\n")
+        response = self.client.post(
+            reverse(
+                "plugins:netbox_device_view:deviceview_edit",
+                kwargs={"pk": device_view.pk},
+            ),
+            data,
+        )
+        self.assertEqual(response.status_code, 302)
+        device_view.refresh_from_db()
+        self.assertIn("\r\n", device_view.yaml_layout)
+
+    def test_fields_saved_through_the_edit_form_are_unchanged(self):
+        self.apply(self.review_token([(self.datafile(), self.device_type)]))
+        device_view = DeviceView.objects.get()
+        self.save_through_edit_form(device_view)
+        self.assertNotEqual(device_view.yaml_layout, EXAMPLE_YAML.read_text())
+
+        review = self.replace()
+        row = review.context["review"].rows[0]
+        self.assertEqual(row.action, datasource_import.Action.UNCHANGED)
+        self.assertEqual(row.changes, [])
+        self.assertContains(review, "already has these fields")
+
+    def test_diff_ignores_line_endings_and_outer_whitespace(self):
+        self.apply(self.review_token([(self.datafile(), self.device_type)]))
+        device_view = DeviceView.objects.get()
+        old_css = render_css(parse_yaml(self.OLD_YAML))
+        self.save_through_edit_form(device_view, grid_template_area=old_css)
+
+        row = self.replace().context["review"].rows[0]
+        self.assertEqual(row.action, datasource_import.Action.REPLACE)
+        self.assertEqual(
+            [change.name for change in row.changes], ["grid_template_area"]
+        )
+        kinds = {kind for kind, _ in row.changes[0].lines}
+        self.assertTrue({"add", "remove"} <= kinds, row.changes[0].lines)
+
     def test_identical_row_with_replace_needs_no_change_permission(self):
         self.apply(self.review_token([(self.datafile(), self.device_type)]))
         ObjectPermission.objects.filter(actions=["change"]).delete()
