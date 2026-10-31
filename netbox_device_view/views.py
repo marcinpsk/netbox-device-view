@@ -3,6 +3,7 @@ from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.db import router, transaction
 from django.db.models import Count, OuterRef, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -420,6 +421,15 @@ class VisualDefinitionEditView(generic.ObjectEditView):
 
     queryset = models.VisualDefinition.objects.all()
     form = forms.VisualDefinitionForm
+
+    def post(self, request, *args, **kwargs):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            return super().post(request, *args, **kwargs)
+
+    def get_object(self, **kwargs):
+        if self.request.method == "POST":
+            models.VisualDefinition.lock([kwargs["pk"]])
+        return super().get_object(**kwargs)
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

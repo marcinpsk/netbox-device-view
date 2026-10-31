@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 
 from dcim.models import Device
+from django.db import router, transaction
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import mixins, status
@@ -84,6 +85,19 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
     serializer_class = VisualDefinitionSerializer
     filterset_class = VisualDefinitionFilterSet
     http_method_names = ("get", "put", "patch", "head", "options")
+
+    def update(self, request, *args, **kwargs):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            return super().update(request, *args, **kwargs)
+
+    def get_object_with_snapshot(self):
+        models.VisualDefinition.lock([self.kwargs[self.lookup_field]])
+        return super().get_object_with_snapshot()
+
+    def perform_bulk_update(self, objects, update_data, partial):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            models.VisualDefinition.lock(update_data)
+            return super().perform_bulk_update(objects, update_data, partial)
 
 
 def _error_response(exc: ArtworkError):

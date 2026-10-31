@@ -8,9 +8,10 @@ import time
 
 from core.models import DataSource, ObjectChange, ObjectType
 from django.db import connection, transaction
-from django.test import TransactionTestCase, override_settings
+from django.test import Client, TransactionTestCase, override_settings
 from django.urls import reverse
-from users.models import User
+from rest_framework.test import APIClient
+from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.errors import ArtworkError
 from netbox_device_view.artwork.importing import import_bundle
@@ -373,3 +374,92 @@ class TransferRaceTests(TransactionTestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn(SOURCE_KEY, errors[0])
         self.assertEqual(DefinitionRevision.objects.count(), 1)
+
+
+class TransferPermissionRaceTests(TransactionTestCase):
+    """A transfer checks the permissions against the owner that a concurrent transfer committed."""
+
+    def setUp(self):
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        media_override = override_settings(MEDIA_ROOT=media)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
+        admin = User.objects.create_user(username="admin", is_superuser=True)
+        import_bundle(admin, "sw24.zip", io.BytesIO(bundle()))
+        self.visual = VisualDefinition.objects.get()
+        self.source = DataSource.objects.create(
+            name="Artwork", type="local", source_url="file:///nonexistent"
+        )
+        # The user can change only the definitions of the offline uploads.
+        self.user = User.objects.create_user(username="limited")
+        for model, constraints in (
+            (VisualDefinition, {"key_owner__isnull": True}),
+            (DataSource, None),
+        ):
+            permission = ObjectPermission.objects.create(
+                name=model._meta.model_name,
+                actions=["view", "change"],
+                constraints=constraints,
+            )
+            permission.users.add(self.user)
+            permission.object_types.add(ObjectType.objects.get_for_model(model))
+
+    def transfer_back_during_a_transfer_to_the_source(self, send):
+        result = {}
+
+        def run():
+            try:
+                result["response"] = send()
+            finally:
+                connection.close()
+
+        with transaction.atomic():
+            visual = VisualDefinition.objects.select_for_update().get()
+            visual.key_owner = self.source
+            visual.save()
+            thread = threading.Thread(target=run)
+            thread.start()
+            deadline = time.monotonic() + 10
+            while waiting_row_locks() < 1 and thread.is_alive():
+                self.assertLess(time.monotonic(), deadline, "the transfer did not wait")
+                time.sleep(0.05)
+        thread.join(30)
+        self.visual.refresh_from_db()
+        self.assertEqual(self.visual.key_owner, self.source)
+        return result["response"]
+
+    def api(self):
+        client = APIClient()
+        client.force_authenticate(self.user)
+        return client
+
+    def test_a_ui_transfer_waits_and_sees_the_new_owner(self):
+        client = Client()
+        client.force_login(self.user)
+        url = reverse(EDIT_URL, args=[self.visual.pk])
+
+        response = self.transfer_back_during_a_transfer_to_the_source(
+            lambda: client.post(url, {"key_owner": ""})
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_an_api_transfer_waits_and_sees_the_new_owner(self):
+        url = reverse(API_DETAIL, args=[self.visual.pk])
+
+        response = self.transfer_back_during_a_transfer_to_the_source(
+            lambda: self.api().patch(url, {"key_owner": None}, format="json")
+        )
+
+        self.assertEqual(response.status_code, 404, response.content)
+
+    def test_a_bulk_api_transfer_waits_and_sees_the_new_owner(self):
+        rows = [{"id": self.visual.pk, "key_owner": None}]
+
+        response = self.transfer_back_during_a_transfer_to_the_source(
+            lambda: self.api().patch(reverse(API_LIST), rows, format="json")
+        )
+
+        # NetBox leaves out the rows that the user cannot change.
+        self.assertEqual((response.status_code, response.json()), (200, []))
