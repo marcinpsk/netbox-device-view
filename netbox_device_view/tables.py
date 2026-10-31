@@ -80,7 +80,7 @@ class DefinitionRevisionTable(NetBoxTable):
     )
     created = columns.DateTimeColumn(verbose_name="Imported")
     imported_by = tables.Column(verbose_name="Imported by")
-    bundle_name = tables.Column(verbose_name="Bundle")
+    source_name = tables.Column(verbose_name="Source")
     actions = columns.ActionsColumn(actions=("delete", "changelog"))
 
     class Meta(NetBoxTable.Meta):
@@ -96,7 +96,7 @@ class DefinitionRevisionTable(NetBoxTable):
             "digest",
             "created",
             "imported_by",
-            "bundle_name",
+            "source_name",
             "actions",
         )
         default_columns = (
@@ -108,5 +108,5 @@ class DefinitionRevisionTable(NetBoxTable):
             "digest",
             "created",
             "imported_by",
-            "bundle_name",
+            "source_name",
         )

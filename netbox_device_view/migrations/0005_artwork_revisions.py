@@ -79,7 +79,7 @@ class Migration(migrations.Migration):
                 ),
                 ("created", models.DateTimeField(auto_now_add=True)),
                 ("user_name", models.CharField(max_length=150)),
-                ("bundle_name", models.CharField(max_length=255)),
+                ("source_name", models.CharField(max_length=255)),
                 ("path", models.CharField(max_length=255)),
                 (
                     "revision",

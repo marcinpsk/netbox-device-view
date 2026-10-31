@@ -61,7 +61,7 @@ def _import(user, bundle_name: str, item: Definition) -> ImportedRevision:
         revision=revision,
         user=user,
         user_name=user.get_username(),
-        bundle_name=bundle_name,
+        source_name=bundle_name,
         path=item.directory,
     )
     return ImportedRevision(revision, created)
