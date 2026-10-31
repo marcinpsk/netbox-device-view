@@ -1,8 +1,9 @@
 import django_tables2 as tables
 from django.utils.html import mark_safe
+from django.utils.text import capfirst
 from netbox.tables import NetBoxTable, columns
 
-from .models import DefinitionRevision, DeviceView
+from .models import DefinitionRevision, DeviceView, VisualDefinition
 
 
 class LayoutColumn(tables.Column):
@@ -56,6 +57,23 @@ class DeviceViewTable(NetBoxTable):
         model = DeviceView
         fields = ("pk", "id", "device_type", "device_count", "layout", "render_mode")
         default_columns = ("device_type", "device_count", "layout", "render_mode")
+
+
+class VisualDefinitionTable(NetBoxTable):
+    key = tables.Column(verbose_name="Definition key", linkify=True)
+    kind = columns.ChoiceFieldColumn(verbose_name="Kind")
+    key_owner = tables.Column(
+        verbose_name="Key owner",
+        linkify=True,
+        default=capfirst(VisualDefinition.OFFLINE_UPLOADS),
+    )
+    revision_count = tables.Column(verbose_name="Revisions")
+    actions = columns.ActionsColumn(actions=("edit", "changelog"))
+
+    class Meta(NetBoxTable.Meta):
+        model = VisualDefinition
+        fields = ("pk", "id", "key", "kind", "key_owner", "revision_count", "actions")
+        default_columns = ("key", "kind", "key_owner", "revision_count")
 
 
 class DefinitionRevisionTable(NetBoxTable):

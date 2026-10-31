@@ -17,6 +17,7 @@ from netbox.object_actions import (
     BulkExport,
     BulkImport,
     DeleteObject,
+    EditObject,
     ObjectAction,
 )
 from netbox.views import generic
@@ -389,6 +390,31 @@ class DefinitionRevisionView(generic.ObjectView):
 
 class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
     queryset = models.DefinitionRevision.objects.all()
+
+
+class VisualDefinitionListView(generic.ObjectListView):
+    queryset = models.VisualDefinition.objects.select_related("key_owner").annotate(
+        revision_count=Count("revisions")
+    )
+    table = tables.VisualDefinitionTable
+    filterset = filtersets.VisualDefinitionFilterSet
+    filterset_form = forms.VisualDefinitionFilterForm
+    actions = ()
+
+
+class VisualDefinitionView(generic.ObjectView):
+    queryset = models.VisualDefinition.objects.select_related("key_owner")
+    actions = (EditObject,)
+
+    def get_extra_context(self, request, instance):
+        return {"revisions": instance.revisions.restrict(request.user, "view")}
+
+
+class VisualDefinitionEditView(generic.ObjectEditView):
+    """Transfer the key: the form changes only the owner."""
+
+    queryset = models.VisualDefinition.objects.all()
+    form = forms.VisualDefinitionForm
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

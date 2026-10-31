@@ -1,12 +1,15 @@
 from core.models import DataSource
 from dcim.models import DeviceType, Manufacturer
 from django import forms
+from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
 from netbox.forms import (
     NetBoxModelFilterSetForm,
     NetBoxModelForm,
     NetBoxModelImportForm,
 )
+from netbox.forms.mixins import ChangelogMessageMixin, SavedFiltersMixin
+from utilities.forms import FilterForm
 from utilities.forms.fields import (
     CSVModelChoiceField,
     DynamicModelChoiceField,
@@ -16,7 +19,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet
 
 from . import datasource_import
-from .models import DeviceView
+from .models import DeviceView, VisualDefinition
 from .utils import normalize_grid_template_area
 
 
@@ -165,3 +168,33 @@ class ArtworkSourceImportForm(forms.Form):
 
     def clean_prefix(self):
         return datasource_import.normalize_prefix(self.cleaned_data["prefix"])
+
+
+class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
+    key_owner = DynamicModelChoiceField(
+        queryset=DataSource.objects.all(),
+        required=False,
+        label=_("Key owner"),
+        help_text=format_lazy(
+            _(
+                "The only source that can import revisions of this key. Leave empty for"
+                " the {}."
+            ),
+            VisualDefinition.OFFLINE_UPLOADS,
+        ),
+    )
+
+    class Meta:
+        model = VisualDefinition
+        fields = ("key_owner",)
+
+
+class VisualDefinitionFilterForm(SavedFiltersMixin, FilterForm):
+    model = VisualDefinition
+    fieldsets = (FieldSet("q", "filter_id"), FieldSet("key_owner_id"))
+    key_owner_id = DynamicModelMultipleChoiceField(
+        queryset=DataSource.objects.all(),
+        required=False,
+        null_option=capfirst(VisualDefinition.OFFLINE_UPLOADS),
+        label=_("Key owner"),
+    )
