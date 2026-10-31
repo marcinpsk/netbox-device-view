@@ -8,6 +8,7 @@ from pathlib import Path
 from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
@@ -367,6 +368,40 @@ class ImmutabilityTests(ArtworkTestCase):
             reverse(
                 "plugins:netbox_device_view:definitionrevision_edit", args=[revision.pk]
             )
+
+    def test_a_new_record_with_a_stored_key_does_not_overwrite_it(self):
+        self.grant(DefinitionRevision, "view", "add")
+        self.upload()
+        stored = ArtworkBlob.objects.first()
+        revision = DefinitionRevision.objects.get()
+        copies = [
+            ArtworkBlob(digest=stored.digest, size=stored.size + 1, extension="png"),
+            DefinitionRevision(
+                pk=revision.pk,
+                definition=revision.definition,
+                digest="0" * 64,
+                manifest={},
+            ),
+        ]
+        for copy in copies:
+            with (
+                self.subTest(record=type(copy).__name__),
+                self.assertRaises(IntegrityError),
+                transaction.atomic(),
+            ):
+                copy.save()
+        stored_again = ArtworkBlob.objects.get(digest=stored.digest)
+        self.assertEqual(
+            (stored_again.size, stored_again.extension), (stored.size, stored.extension)
+        )
+        self.assertEqual(DefinitionRevision.objects.get().digest, revision.digest)
+
+    def test_a_save_cannot_update_fields(self):
+        blob = ArtworkBlob(digest="0" * 64, size=1, extension="svg")
+        for options in ({"force_update": True}, {"update_fields": ["size"]}):
+            with self.subTest(options=options), self.assertRaises(ImmutableModelError):
+                blob.save(**options)
+        self.assertFalse(ArtworkBlob.objects.filter(digest="0" * 64).exists())
 
     def test_ui_delete_removes_the_revision(self):
         self.grant(DefinitionRevision, "view", "add", "delete")

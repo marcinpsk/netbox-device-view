@@ -88,10 +88,16 @@ class ImmutableMixin:
     """Refuse every save of a stored row; artwork records are written once."""
 
     def save(self, *args, **kwargs):
-        if not self._state.adding:
+        if (
+            not self._state.adding
+            or kwargs.get("force_update")
+            or kwargs.get("update_fields") is not None
+        ):
             raise ImmutableModelError(
                 f"A stored {self._meta.verbose_name} cannot be changed."
             )
+        # A new record with the primary key of a stored row fails instead of updating it.
+        kwargs["force_insert"] = True
         super().save(*args, **kwargs)
 
 
