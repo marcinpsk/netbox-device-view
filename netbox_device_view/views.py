@@ -361,7 +361,7 @@ def _first_import(field):
 
 class DefinitionRevisionListView(generic.ObjectListView):
     queryset = models.DefinitionRevision.objects.select_related("definition").annotate(
-        imported_by=_first_import("user_name"), bundle_name=_first_import("bundle_name")
+        imported_by=_first_import("user_name"), source_name=_first_import("source_name")
     )
     table = tables.DefinitionRevisionTable
     filterset = filtersets.DefinitionRevisionFilterSet
