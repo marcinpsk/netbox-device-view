@@ -10,6 +10,7 @@ from unittest import skipUnless
 
 from core.choices import DataSourceStatusChoices, JobStatusChoices
 from core.exceptions import SyncError
+from core.jobs import SyncDataSourceJob
 from core.models import DataSource, Job
 from core.signals import pre_sync
 from django.db import connection
@@ -111,6 +112,39 @@ class SyncGuardTests(TransactionTestCase):
         self.in_other_session(
             lambda: DataSource.objects.get(pk=self.source.pk).sync()
         ).result(TIMEOUT)
+
+    def test_a_failed_sync_job_blocks_capture_until_a_retry_completes(self):
+        queue = private_sync_queue(self)
+        user = User.objects.create_superuser(username="admin")
+        self.source.sync()
+        # The backend raises when it reads the file, after the source is SYNCING.
+        broken = self.root / DEVICE_DIR / "broken.svg"
+        broken.symlink_to(self.root / "missing.svg")
+
+        def run_sync_job():
+            SyncDataSourceJob.enqueue(instance=self.source, user=user)
+            SimpleWorker([queue], connection=queue.connection).work(burst=True)
+            return Job.objects.filter(object_id=self.source.pk).latest("created")
+
+        failed = run_sync_job()
+
+        self.assertEqual(failed.status, JobStatusChoices.STATUS_ERRORED, failed.data)
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.status, DataSourceStatusChoices.FAILED)
+        self.assertIsNone(SourceSyncRun.objects.get(source=self.source).finished)
+        with self.assertRaisesMessage(ArtworkError, "status is failed"):
+            capture.read_source_files(user, self.source, "")
+
+        broken.unlink()
+        retried = run_sync_job()
+
+        self.assertEqual(
+            retried.status, JobStatusChoices.STATUS_COMPLETED, retried.data
+        )
+        self.assertIsNotNone(SourceSyncRun.objects.get(source=self.source).finished)
+        self.assertEqual(
+            len(capture.read_source_files(user, self.source, "").entries), 3
+        )
 
 
 @skipUnless(
