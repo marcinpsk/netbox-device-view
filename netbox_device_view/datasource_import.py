@@ -25,13 +25,13 @@ from dcim.models import DeviceType, Manufacturer
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, router, transaction
-from django.db.models import Case, CharField, Func, Q, Sum, Value, When
-from django.db.models.functions import Length
+from django.db.models import Q, Sum
 from extras.models import CustomField
 
 from .layout import LayoutParseError, parse_yaml, render_css
 from .layout.css_profile import validate_css
 from .models import DeviceView, RenderMode
+from .stored_data import stored_sha256, stored_size
 from .utils import normalize_grid_template_area
 
 SIGNING_SALT = "netbox_device_view.datasource_import.review"
@@ -546,7 +546,7 @@ def _batch_errors(user, source, selections: list[Selection]) -> list[str]:
     total = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, pk__in=datafile_ids)
-        .aggregate(total=Sum(Length("data")))["total"]
+        .aggregate(total=Sum(stored_size()))["total"]
     )
     if total and total > MAX_BATCH_BYTES:
         return [BATCH_TOO_LARGE]
@@ -558,7 +558,7 @@ def _stored_file(user, source, datafile_id, **annotations) -> DataFile:
     datafile = (
         DataFile.objects.restrict(user, "view")
         .filter(source=source, pk=datafile_id)
-        .annotate(stored_bytes=Length("data"), **annotations)
+        .annotate(stored_bytes=stored_size(), **annotations)
         .only("path")
         .first()
     )
@@ -592,20 +592,10 @@ def _check_reviewed_file(reviewed: ReviewedRow, path: str, sha256: str) -> None:
 
 def _check_file_unchanged(user, source, reviewed: ReviewedRow) -> None:
     """Check in one query, without loading the content, that the reviewed file is still stored."""
-    # The database hashes the stored bytes, so DataFile.hash is not trusted.
-    sha256 = Func(
-        Func("data", function="sha256"),
-        Value("hex"),
-        function="encode",
-        output_field=CharField(),
-    )
     try:
+        # The database hashes the stored bytes, so DataFile.hash is not trusted.
         datafile = _stored_file(
-            user,
-            source,
-            reviewed.datafile_id,
-            # An oversized file is rejected without a hash.
-            sha256=Case(When(stored_bytes__lte=MAX_FILE_BYTES, then=sha256)),
+            user, source, reviewed.datafile_id, sha256=stored_sha256(MAX_FILE_BYTES)
         )
     except ValidationError as exc:
         raise ImportRejected(f"{reviewed.path}: {' '.join(exc.messages)}") from exc

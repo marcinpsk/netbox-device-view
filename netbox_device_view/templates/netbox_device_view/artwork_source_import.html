@@ -1,0 +1,71 @@
+{% extends 'generic/_base.html' %}
+{% load form_helpers %}
+{% load helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Import Artwork from a Data Source" %}{% endblock %}
+
+{% block content %}
+  <div class="row">
+    <div class="col col-md-10 col-lg-8">
+      <p class="text-muted">
+        {% trans "The import reads the synchronized files below the prefix, validates them like a bundle, and stores each visual definition as a candidate revision. A sync does not change any revision, and the import does not change any device view." %}
+      </p>
+      {% trans "The Data Source was not imported" as rejected_title %}
+      {% include "netbox_device_view/inc/artwork_import_results.html" %}
+      {% if source %}
+        <div class="card mb-3">
+          <h2 class="card-header">{% trans "Data Source" %}</h2>
+          <table class="table table-hover attr-table mb-0">
+            <tr>
+              <th scope="row">{% trans "Name" %}</th>
+              <td><a href="{{ source.get_absolute_url }}">{{ source.name }}</a></td>
+            </tr>
+            <tr>
+              <th scope="row">{% trans "Status" %}</th>
+              <td>{% badge source.get_status_display bg_color=source.get_status_color %}</td>
+            </tr>
+            <tr>
+              <th scope="row">{% trans "Last synced" %}</th>
+              <td>{{ source.last_synced|isodatetime|placeholder }}</td>
+            </tr>
+            <tr>
+              <th scope="row">{% trans "Sync record" %}</th>
+              <td>
+                {% if not sync_run %}
+                  {% trans "None since the plugin was installed. Check for updates once before the import." %}
+                {% elif sync_run.finished %}
+                  {% trans "Finished" %} {{ sync_run.finished|isodatetime }}
+                {% else %}
+                  {% trans "Started" %} {{ sync_run.started|isodatetime }}, {% trans "not finished" %}
+                {% endif %}
+              </td>
+            </tr>
+          </table>
+          {% if can_sync %}
+            <div class="card-footer text-end">
+              <form method="post" action="{{ sync_url }}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline-primary"{% if not source.ready_for_sync %} disabled{% endif %}>
+                  <i class="mdi mdi-sync" aria-hidden="true"></i> {% trans "Check for updates" %}
+                </button>
+              </form>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+      <form method="post" class="card">
+        {% csrf_token %}
+        <h2 class="card-header">{% trans "Import" %}</h2>
+        <div class="card-body">
+          {% render_field form.data_source %}
+          {% render_field form.prefix %}
+          <div class="text-end">
+            <a href="{% url 'plugins:netbox_device_view:definitionrevision_list' %}" class="btn btn-outline-secondary">{% trans "Artwork revisions" %}</a>
+            <button type="submit" class="btn btn-primary">{% trans "Import" %}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

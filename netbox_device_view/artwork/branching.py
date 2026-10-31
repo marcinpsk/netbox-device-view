@@ -8,6 +8,7 @@ CATALOGUE = frozenset(
         "netbox_device_view.artworkblob",
         "netbox_device_view.revisionfile",
         "netbox_device_view.revisionimport",
+        "netbox_device_view.sourcesyncrun",
     }
 )
 
