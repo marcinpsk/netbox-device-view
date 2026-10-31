@@ -135,6 +135,12 @@ class VisualDefinition(ChangeLoggedModel):
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:visualdefinition", args=[self.pk])
 
+    @classmethod
+    def lock(cls, pks) -> None:
+        """Wait for concurrent changes of the definitions; a later query reads their result."""
+        # NetBox restricts a queryset with a pk IN subquery, which a lock wait does not read again.
+        list(cls.objects.select_for_update().filter(pk__in=pks).values_list("pk"))
+
 
 class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
     """An immutable edition of a visual definition, identified by its content digest."""
