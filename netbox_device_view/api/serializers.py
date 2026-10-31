@@ -33,7 +33,7 @@ class RevisionFileSerializer(serializers.ModelSerializer):
 class RevisionImportSerializer(serializers.ModelSerializer):
     class Meta:
         model = RevisionImport
-        fields = ("created", "user_name", "bundle_name", "path")
+        fields = ("created", "user_name", "source_name", "path")
 
 
 class DefinitionRevisionSerializer(BaseModelSerializer):

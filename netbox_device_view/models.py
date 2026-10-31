@@ -191,7 +191,7 @@ class RevisionImport(ImmutableMixin, models.Model):
         related_name="+",
     )
     user_name = models.CharField(max_length=150)
-    bundle_name = models.CharField(max_length=255)
+    source_name = models.CharField(max_length=255)
     path = models.CharField(max_length=255)
 
     class Meta:
