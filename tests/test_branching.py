@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.models import DataFile, DataSource, ObjectType
+from core.models import DataFile, DataSource, ObjectChange, ObjectType
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -14,11 +14,12 @@ from django.urls import reverse
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.branching import CATALOGUE
-from netbox_device_view.models import DefinitionRevision, DeviceView
+from netbox_device_view.models import DefinitionRevision, DeviceView, VisualDefinition
 
 from .artwork_samples import DEVICE_FILES, bundle, definition
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
+from .test_artwork_key_transfer import EDIT_URL as DEFINITION_EDIT_URL
 from .test_artwork_source_import import SOURCE_IMPORT_URL
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
@@ -144,3 +145,28 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
         revision = DefinitionRevision.objects.get()
         self.assertEqual(revision.definition.key_owner, source)
         self.assertEqual(revision.imports.get().data_source, source)
+
+
+class KeyTransferInBranchTests(ArtworkBranchTestCase):
+    def test_a_key_transfer_in_a_branch_changes_main_at_once(self):
+        self.upload()
+        visual = VisualDefinition.objects.get()
+        source = DataSource.objects.create(
+            name="Artwork", type="local", source_url="file:///artwork", enabled=True
+        )
+        self.grant(VisualDefinition, "view", "change")
+        self.grant(DataSource, "view")
+
+        response = self.client.post(
+            reverse(DEFINITION_EDIT_URL, args=[visual.pk]), {"key_owner": source.pk}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        visual.refresh_from_db()
+        self.assertEqual(visual.key_owner, source)
+        self.assertEqual(
+            ObjectChange.objects.using("default")
+            .filter(changed_object_id=visual.pk, action="update")
+            .count(),
+            1,
+        )
