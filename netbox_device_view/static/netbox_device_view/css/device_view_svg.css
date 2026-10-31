@@ -87,8 +87,8 @@
 /* Partial connection: cable attached but far-end has no device */
 .dv-port.bg-warning    .dv-port-rect { fill: #ffc107; }
 
-/* Cable colour override — applied inline via JS (style attribute on .dv-port) */
-/* No rule needed; the JS sets fill on .dv-port-rect directly               */
+/* Ambiguous key: two or more components share it, so it links to none of them */
+.dv-port.dv-ambiguous  .dv-port-rect { fill: #adb5bd; stroke: #495057; stroke-dasharray: 3 2; }
 
 /* No-color (patch cable with no colour set) */
 .dv-port.nocolor .dv-port-rect {

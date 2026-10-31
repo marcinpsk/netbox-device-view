@@ -329,10 +329,11 @@ class DeviceDeviceView(generic.ObjectView):
     )
 
     def get_extra_context(self, request, instance):
-        return {
-            **(device_view_context(instance, request.user) or {}),
-            "cable_colors": request.GET.get("cable_colors", "off"),
-        }
+        cable_colors = request.GET.get("cable_colors", "off")
+        context = device_view_context(
+            instance, request.user, cable_colors=cable_colors == "on"
+        )
+        return {**(context or {}), "cable_colors": cable_colors}
 
     def get_object(self, **kwargs):
         return get_object_or_404(
