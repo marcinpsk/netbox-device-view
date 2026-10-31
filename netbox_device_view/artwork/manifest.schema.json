@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "netbox-device-view artwork manifest, schema 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "key",
+    "kind",
+    "title",
+    "hardware",
+    "license",
+    "authors",
+    "faces"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "key": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+([-_.][a-z0-9]+)*/[a-z0-9]+([-_.][a-z0-9]+)*$"
+    },
+    "kind": {
+      "enum": [
+        "device",
+        "module"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manufacturer",
+        "sku",
+        "references"
+      ],
+      "properties": {
+        "manufacturer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "references": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "edition",
+              "url"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "edition": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "figure": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 2048,
+                "pattern": "^https://"
+              }
+            }
+          }
+        }
+      }
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "faces": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "front": {
+          "$ref": "#/$defs/face"
+        },
+        "rear": {
+          "$ref": "#/$defs/face"
+        },
+        "installed": {
+          "$ref": "#/$defs/face"
+        }
+      }
+    },
+    "connectors": {
+      "type": "object",
+      "maxProperties": 2000,
+      "propertyNames": {
+        "pattern": "^con-[a-z0-9-]{1,60}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "face",
+          "type",
+          "bindings"
+        ],
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/face_name"
+          },
+          "type": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9+.-]{0,31}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "bindings": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "component",
+                "name"
+              ],
+              "properties": {
+                "component": {
+                  "enum": [
+                    "interface",
+                    "consoleport",
+                    "consoleserverport",
+                    "powerport",
+                    "poweroutlet",
+                    "frontport",
+                    "rearport"
+                  ]
+                },
+                "name": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bays": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "pattern": "^bay-[a-z0-9-]{1,60}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "face",
+          "module_bay"
+        ],
+        "properties": {
+          "face": {
+            "$ref": "#/$defs/face_name"
+          },
+          "module_bay": {
+            "$ref": "#/$defs/name"
+          },
+          "rotate": {
+            "enum": [
+              0,
+              90,
+              180,
+              270
+            ]
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "device"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "faces": {
+            "propertyNames": {
+              "enum": [
+                "front",
+                "rear"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "module"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "faces": {
+            "required": [
+              "installed"
+            ],
+            "propertyNames": {
+              "enum": [
+                "installed"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "face": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}\\.svg$"
+        }
+      }
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "face_name": {
+      "enum": [
+        "front",
+        "rear",
+        "installed"
+      ]
+    }
+  }
+}

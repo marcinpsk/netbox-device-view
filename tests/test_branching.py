@@ -1,12 +1,22 @@
 """Plugin behaviour in an active NetBox Branching branch; skipped when netbox-branching is not enabled."""
 
+import shutil
+import tempfile
 import unittest
 
+from core.models import ObjectType
+from django.apps import apps
 from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from users.models import ObjectPermission, User
 
-from netbox_device_view.models import DeviceView
+from netbox_device_view.artwork.branching import CATALOGUE
+from netbox_device_view.models import DefinitionRevision, DeviceView
 
+from .artwork_samples import bundle
+from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
 
@@ -44,3 +54,66 @@ class DataSourceImportInBranchTests(ConcurrentApplyTestBase):
             self.assertEqual(
                 DeviceView.objects.get().yaml_layout, EXAMPLE_YAML.read_text()
             )
+
+
+class CatalogueModelTests(SimpleTestCase):
+    def test_every_plugin_model_except_device_view_is_in_the_catalogue(self):
+        labels = {
+            model._meta.label_lower
+            for model in apps.get_app_config("netbox_device_view").get_models()
+        }
+
+        self.assertEqual(labels - CATALOGUE, {"netbox_device_view.deviceview"})
+
+
+@unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
+class ArtworkBranchTestCase(TransactionTestCase):
+    """An artwork importer whose test client works in a new branch."""
+
+    def setUp(self):
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        media_override = override_settings(MEDIA_ROOT=media)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
+        self.user = User.objects.create_user(username="importer")
+        self.client.force_login(self.user)
+        self.grant(DefinitionRevision, "view", "add")
+        self.branch = provision_branch("Artwork")
+        self.addCleanup(self.branch.deprovision)
+        self.client.cookies["active_branch"] = self.branch.schema_id
+
+    def grant(self, model, *actions):
+        permission = ObjectPermission.objects.create(
+            name=f"{model._meta.model_name}-{ObjectPermission.objects.count()}",
+            actions=list(actions),
+        )
+        permission.users.add(self.user)
+        permission.object_types.add(ObjectType.objects.get_for_model(model))
+
+    def upload(self):
+        return self.client.post(
+            reverse(ARTWORK_IMPORT_URL),
+            {"bundle": SimpleUploadedFile("sw24.zip", bundle())},
+        )
+
+
+class ArtworkImportInBranchTests(ArtworkBranchTestCase):
+    def test_a_bundle_import_in_a_branch_stores_the_revision_in_main(self):
+        response = self.upload()
+
+        self.assertContains(response, "Imported")
+        revision = DefinitionRevision.objects.get()
+        self.assertEqual(revision.definition.key, "acme/sw-24")
+        self.assertEqual(
+            sorted(revision.files.values_list("path", flat=True)),
+            ["front.svg", "manifest.yaml", "rear.svg"],
+        )
+        self.assertEqual(revision.imports.get().source_name, "sw24.zip")
+
+    def test_a_branch_merge_leaves_the_imported_revision_in_main(self):
+        self.upload()
+
+        self.branch.merge(user=self.user)
+
+        self.assertEqual(DefinitionRevision.objects.get().definition.key, "acme/sw-24")

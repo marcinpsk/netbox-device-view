@@ -7,11 +7,17 @@ app_name = "netbox_device_view"
 
 router = NetBoxRouter()
 router.register("device-view", views.DeviceViewViewSet)
+router.register("artwork-revisions", views.DefinitionRevisionViewSet)
 
 urlpatterns = router.urls + [
     path(
         "devices/<int:pk>/rendered-layout/",
         views.DeviceRenderedLayoutView.as_view(),
         name="device_rendered_layout",
+    ),
+    path(
+        "artwork-bundles/",
+        views.ArtworkBundleUploadView.as_view(),
+        name="artwork_bundle_upload",
     ),
 ]

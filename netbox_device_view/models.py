@@ -1,7 +1,12 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from netbox.models import NetBoxModel
+from django.urls import reverse
+from netbox.models import ChangeLoggedModel, NetBoxModel
+from utilities.querysets import RestrictedQuerySet
 
+from .artwork.manifest import FACES
+from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .layout.parser import LayoutParseError, parse
 
 
@@ -73,3 +78,121 @@ class DeviceView(NetBoxModel):
     def use_svg(self):
         """Return True when SVG rendering is selected AND a YAML layout is available."""
         return self.render_mode == RenderMode.SVG and self.has_yaml_layout
+
+
+class ImmutableModelError(TypeError):
+    """An attempt to change a stored artwork record."""
+
+
+class ImmutableMixin:
+    """Refuse every save of a stored row; artwork records are written once."""
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ImmutableModelError(
+                f"A stored {self._meta.verbose_name} cannot be changed."
+            )
+        super().save(*args, **kwargs)
+
+
+class VisualDefinition(models.Model):
+    """The stable definition key that all revisions of one definition share."""
+
+    key = models.CharField(
+        max_length=MANIFEST_SCHEMA["properties"]["key"]["maxLength"], unique=True
+    )
+    kind = models.CharField(
+        max_length=10,
+        choices=[
+            (kind, kind.title())
+            for kind in MANIFEST_SCHEMA["properties"]["kind"]["enum"]
+        ],
+    )
+
+    objects = RestrictedQuerySet.as_manager()
+
+    class Meta:
+        ordering = ("key",)
+
+    def __str__(self):
+        return self.key
+
+
+class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
+    """An immutable edition of a visual definition, identified by its content digest."""
+
+    definition = models.ForeignKey(
+        to=VisualDefinition, on_delete=models.PROTECT, related_name="revisions"
+    )
+    digest = models.CharField(max_length=64, unique=True)
+    manifest = models.JSONField()
+
+    class Meta:
+        ordering = ("definition", "-created", "pk")
+        verbose_name = "definition revision"
+
+    def __str__(self):
+        return f"{self.definition.key} @ {self.digest[:12]}"
+
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:definitionrevision", args=[self.pk])
+
+    @property
+    def face_names(self):
+        """The faces of the revision in physical order; JSON storage does not keep key order."""
+        return [face for face in FACES if face in self.manifest["faces"]]
+
+
+class ArtworkBlob(ImmutableMixin, models.Model):
+    """One content-addressed file in media storage."""
+
+    digest = models.CharField(max_length=64, primary_key=True)
+    size = models.PositiveIntegerField()
+    extension = models.CharField(max_length=8)
+    created = models.DateTimeField(auto_now_add=True)
+
+    ROOT = "artwork"
+
+    @property
+    def name(self):
+        return f"{self.ROOT}/{self.digest[:2]}/{self.digest}.{self.extension}"
+
+
+class RevisionFile(ImmutableMixin, models.Model):
+    """A file of a revision: its path in the definition directory and its blob."""
+
+    revision = models.ForeignKey(
+        to=DefinitionRevision, on_delete=models.CASCADE, related_name="files"
+    )
+    path = models.CharField(max_length=255)
+    blob = models.ForeignKey(to=ArtworkBlob, on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        ordering = ("revision", "path")
+        constraints = (
+            models.UniqueConstraint(
+                fields=("revision", "path"),
+                name="%(app_label)s_revisionfile_unique_path",
+            ),
+        )
+
+
+class RevisionImport(ImmutableMixin, models.Model):
+    """Provenance: one import of a revision. It is not part of the revision identity."""
+
+    revision = models.ForeignKey(
+        to=DefinitionRevision, on_delete=models.CASCADE, related_name="imports"
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(
+        to=settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+    )
+    user_name = models.CharField(max_length=150)
+    source_name = models.CharField(max_length=255)
+    path = models.CharField(max_length=255)
+
+    class Meta:
+        ordering = ("revision", "-created", "pk")
