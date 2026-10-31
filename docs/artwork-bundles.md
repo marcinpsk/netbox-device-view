@@ -212,6 +212,12 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 ---
 
+## NetBox Branching
+
+The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
+
+---
+
 ## Storage
 
 The plugin keeps the artwork files in NetBox media storage at `artwork/<xx>/<sha256>.<ext>`. Each file is written once. Identical files share one stored file. Each read checks the SHA-256 of the file. An import writes a missing or damaged file again.
