@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name="visualdefinition",
-            name="owner",
+            name="key_owner",
             field=models.ForeignKey(
                 blank=True,
                 null=True,

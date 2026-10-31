@@ -377,7 +377,7 @@ class DefinitionRevisionListView(generic.ObjectListView):
 
 
 class DefinitionRevisionView(generic.ObjectView):
-    queryset = models.DefinitionRevision.objects.select_related("definition__owner")
+    queryset = models.DefinitionRevision.objects.select_related("definition__key_owner")
     actions = (DeleteObject,)
 
     def get_extra_context(self, request, instance):

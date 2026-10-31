@@ -108,8 +108,8 @@ class VisualDefinition(models.Model):
             for kind in MANIFEST_SCHEMA["properties"]["kind"]["enum"]
         ],
     )
-    # The source that first imported the key; null means the offline uploads.
-    owner = models.ForeignKey(
+    # The only source that can import the key; null means the offline uploads.
+    key_owner = models.ForeignKey(
         to="core.DataSource",
         on_delete=models.CASCADE,
         null=True,
