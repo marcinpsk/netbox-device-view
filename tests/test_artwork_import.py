@@ -444,3 +444,5 @@ class PermissionTests(ArtworkTestCase):
         self.assertEqual(self.upload().status_code, 403)
         self.assertFalse(DefinitionRevision.objects.exists())
         self.assertFalse(VisualDefinition.objects.exists())
+        # A rollback does not remove media files, so the check runs before the writes.
+        self.assertEqual(self.stored_files(), [])
