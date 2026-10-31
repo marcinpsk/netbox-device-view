@@ -92,7 +92,7 @@ class SourceImportTests(SourceTestCase):
         revision = DefinitionRevision.objects.get()
         self.assertEqual(revision.digest, expected_digest(DEVICE_FILES))
         self.assertEqual(revision.definition.key, "acme/sw-24")
-        self.assertEqual(revision.definition.owner, self.source)
+        self.assertEqual(revision.definition.key_owner, self.source)
         event = RevisionImport.objects.get()
         self.assertEqual(event.data_source, self.source)
         self.assertEqual(event.source_name, "Artwork")
@@ -100,7 +100,7 @@ class SourceImportTests(SourceTestCase):
         self.assertEqual(event.last_synced, self.source.last_synced)
         self.assertEqual(event.user, self.user)
         self.assertEqual(self.source.status, DataSourceStatusChoices.COMPLETED)
-        self.assertFalse(VisualDefinition.objects.filter(owner=None).exists())
+        self.assertFalse(VisualDefinition.objects.filter(key_owner=None).exists())
 
     def test_a_sync_changes_no_revision(self):
         self.sync()
@@ -381,7 +381,7 @@ class OwnershipTests(SourceTestCase):
             "The key acme/sw-24 belongs to the offline uploads.",
             status_code=400,
         )
-        self.assertEqual(VisualDefinition.objects.get().owner, None)
+        self.assertEqual(VisualDefinition.objects.get().key_owner, None)
 
     def test_a_source_that_owns_revisions_cannot_be_deleted(self):
         self.sync()
