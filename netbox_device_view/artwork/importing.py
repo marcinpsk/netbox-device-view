@@ -42,11 +42,20 @@ def _definition(item: Definition) -> VisualDefinition:
     return visual
 
 
-def _import(user, bundle_name: str, item: Definition) -> ImportedRevision:
-    revision, created = DefinitionRevision.objects.get_or_create(
+def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
+    return DefinitionRevision.objects.get_or_create(
         digest=item.digest,
         defaults={"definition": _definition(item), "manifest": item.manifest.data},
     )
+
+
+def _import(
+    user,
+    bundle_name: str,
+    item: Definition,
+    revision: DefinitionRevision,
+    created: bool,
+) -> ImportedRevision:
     # Each import writes a missing or damaged blob again, also for a known revision.
     blobs = {
         path: store_blob(data, splitext(path)[1].lstrip("."))
@@ -80,9 +89,13 @@ def import_bundle(user, bundle_name: str, fileobj) -> list[ImportedRevision]:
             {d for item in definitions for d in item.file_digests.values()}
         ):
             lock_digest(digest)
-        results = [_import(user, bundle_name, item) for item in definitions]
-        pks = {result.revision.pk for result in results}
+        revisions = [_revision(item) for item in definitions]
+        # A rollback does not remove media files, so check the constraints before the writes.
+        pks = {revision.pk for revision, _ in revisions}
         permitted = DefinitionRevision.objects.restrict(user, "add").filter(pk__in=pks)
         if permitted.count() != len(pks):
             raise PermissionDenied
-    return results
+        return [
+            _import(user, bundle_name, item, *revision)
+            for item, revision in zip(definitions, revisions, strict=True)
+        ]
