@@ -1,7 +1,9 @@
 from collections.abc import Mapping
 
 from dcim.models import Device
+from django.core.exceptions import ValidationError
 from django.db import router, transaction
+from django.http import Http404
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import mixins, status
@@ -91,7 +93,14 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
             return super().update(request, *args, **kwargs)
 
     def get_object_with_snapshot(self):
-        models.VisualDefinition.lock([self.kwargs[self.lookup_field]])
+        # Coerce as the later lookup does; its get_object_or_404 cannot catch a ValueError here.
+        try:
+            pk = models.VisualDefinition._meta.pk.to_python(
+                self.kwargs[self.lookup_field]
+            )
+        except ValidationError:
+            raise Http404 from None
+        models.VisualDefinition.lock([pk])
         return super().get_object_with_snapshot()
 
     def perform_bulk_update(self, objects, update_data, partial):
