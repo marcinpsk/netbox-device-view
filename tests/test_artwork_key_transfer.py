@@ -275,6 +275,18 @@ class ApiTransferTests(TransferTestCase):
         self.assertEqual(response.status_code, 400, response.content)
         self.assertIn("key_owner", response.json())
 
+    def test_a_change_of_an_id_that_is_not_a_primary_key_answers_404(self):
+        for lookup in ("abc", "²", str(2**64)):
+            url = reverse(API_DETAIL, args=[lookup])
+            for response in (
+                self.api().patch(url, {"key_owner": None}, format="json"),
+                self.api().put(url, {"key_owner": None}, format="json"),
+            ):
+                with self.subTest(
+                    lookup=lookup, method=response.request["REQUEST_METHOD"]
+                ):
+                    self.assertEqual(response.status_code, 404, response.content)
+
     def test_a_bulk_patch_follows_the_same_rules(self):
         hidden = self.create_source("Hidden", self.root)
         self.limited_user(
