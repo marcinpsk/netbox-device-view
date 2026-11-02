@@ -10,7 +10,7 @@ When you visit a device of that type, the plugin:
 4. Finds the connection state of each port on the server
 5. Renders the layout using the configured render mode (CSS Grid or SVG), with the port status colours
 
-The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
+The Device View tab, the device page panel, the [rendered-layout API](rendered-layout-api.md) and the [artwork API](artwork-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
 
 A device type with an active artwork revision shows that artwork instead of its layout. See [Activate a revision](artwork-bundles.md#activate-a-revision).
 
