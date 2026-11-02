@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token
 
-from netbox_device_view.models import DeviceView
+from netbox_device_view.models import DeviceView, RenderMode
 
 from .permissions import grant
 from .test_api_rendered_layout import SVG_YAML
@@ -386,7 +386,9 @@ class AccessTests(ArtworkApiTestCase):
         self.assertEqual(self.member()["representation"], "artwork")
 
 
-class VirtualChassisApiTests(ArtworkApiTestCase):
+class ChassisApiTestCase(ArtworkApiTestCase):
+    """Two chassis members: sw1 of the artwork type and sw2 of type SW-48."""
+
     def setUp(self):
         super().setUp()
         self.chassis = VirtualChassis.objects.create(name="stack")
@@ -402,6 +404,8 @@ class VirtualChassisApiTests(ArtworkApiTestCase):
         )
         PowerPort.objects.create(device=self.member2, name="PSU1")
 
+
+class VirtualChassisApiTests(ChassisApiTestCase):
     def test_members_resolve_one_by_one(self):
         self.activate()
         body = self.get(self.member2)
@@ -451,3 +455,50 @@ class VirtualChassisApiTests(ArtworkApiTestCase):
         self.assertTrue(
             all(re.match(r"dv-a-d\d+-(front|rear)-", i) for i in all_ids), all_ids
         )
+
+
+# A stored layout from before the canvas rule; rows 0 made a filler fail with ValueError.
+ZERO_ROWS_YAML = (
+    "version: 1\ncanvas: {rows: 0}\nviews:\n  front:\n    rows:\n      - blank: 1\n"
+)
+
+
+class UnusableCanvasTests(ChassisApiTestCase):
+    def setUp(self):
+        super().setUp()
+        grant(self.user, DeviceView, "view")
+        DeviceView.objects.create(
+            device_type=self.member2.device_type,
+            yaml_layout=ZERO_ROWS_YAML,
+            render_mode=RenderMode.SVG,
+        )
+
+    def test_the_member_is_an_invalid_layout_beside_the_other_members(self):
+        self.activate()
+        members = self.get()["members"]
+        self.assertEqual(
+            [(m["representation"], m["reason"]) for m in members],
+            [("artwork", None), ("unavailable", "invalid_layout")],
+        )
+
+    def test_the_tab_shows_the_layout_error(self):
+        Device.objects.filter(pk=self.member2.pk).update(
+            virtual_chassis=None, vc_position=None
+        )
+        content = self.tab(self.member2)
+        self.assertIn("canvas.rows", content)
+
+    def test_the_rest_api_does_not_store_the_layout(self):
+        grant(self.user, DeviceView, "add")
+        DeviceView.objects.all().delete()
+        response = self.api.post(
+            reverse("plugins-api:netbox_device_view-api:deviceview-list"),
+            {
+                "device_type": self.member2.device_type.pk,
+                "grid_template_area": GRID,
+                "yaml_layout": ZERO_ROWS_YAML,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("canvas.rows", str(response.json()))
