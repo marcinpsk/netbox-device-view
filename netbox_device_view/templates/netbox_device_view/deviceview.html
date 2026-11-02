@@ -9,6 +9,7 @@
 	</div>
 </div>
 
+{% if not artwork_parts %}
 <div class="card">
 	<div class="card-header">
 		<h4>Options</h4>
@@ -22,4 +23,5 @@
 		</form>
 	</div>
 </div>
+{% endif %}
 {% endblock %}

@@ -19,7 +19,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet
 
 from . import datasource_import
-from .models import DeviceView, VisualDefinition
+from .models import Association, DeviceView, VisualDefinition
 from .utils import normalize_grid_template_area
 
 
@@ -187,6 +187,26 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
     class Meta:
         model = VisualDefinition
         fields = ("key_owner",)
+
+
+class ActivateRevisionForm(forms.Form):
+    device_type = DynamicModelChoiceField(
+        queryset=DeviceType.objects.all(),
+        label=_("Device type"),
+        help_text=_("The Device View of every device of this type shows the revision."),
+    )
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["device_type"].queryset = DeviceType.objects.restrict(user, "view")
+
+
+class AssociationFilterForm(SavedFiltersMixin, FilterForm):
+    model = Association
+    fieldsets = (FieldSet("q", "filter_id"), FieldSet("device_type_id"))
+    device_type_id = DynamicModelMultipleChoiceField(
+        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+    )
 
 
 class VisualDefinitionFilterForm(SavedFiltersMixin, FilterForm):
