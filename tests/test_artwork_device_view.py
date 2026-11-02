@@ -34,6 +34,7 @@ from lxml import etree
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.artwork.svg import transform_matrix
 from netbox_device_view.models import Association, DeviceView
 
@@ -204,6 +205,12 @@ class ArtworkTestCase(TestCase):
         permission.users.add(self.user)
         permission.object_types.add(ObjectType.objects.get_for_model(model))
 
+    def store_face(self, path, svg):
+        """Store ``svg`` for ``path`` of the revision without the import validator."""
+        self.revision.files.filter(path=path).update(
+            blob=store_blob(svg.encode(), "svg")
+        )
+
     def activate(self, device_type=None):
         return Association.objects.create(
             device_type=device_type or self.device_type, revision=self.revision
@@ -291,20 +298,14 @@ class ArtworkTabTests(ArtworkTestCase):
 
     def test_title_and_desc_keep_only_their_text(self):
         # In HTML, title and desc are integration points: an element in them is parsed as HTML.
-        nested = FRONT_SVG.replace(
-            "<defs>", '<desc>Front <g style="display:none"/>panel</desc>\n  <defs>'
-        )
-        admin = User.objects.get(username="admin")
-        [imported] = import_bundle(
-            admin,
-            "nested.zip",
-            io.BytesIO(
-                bundle(definition("ACME/SW-24", {**FILES, "front.svg": nested}))
+        # The import rejects this content now; an earlier import could store it.
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                "<defs>", '<desc>Front <g style="display:none"/>panel</desc>\n  <defs>'
             ),
         )
-        Association.objects.create(
-            device_type=self.device_type, revision=imported.revision
-        )
+        self.activate()
         front = faces(self.tab())[0]
         [desc] = front.iter(f"{{{SVG_NS}}}desc")
         self.assertEqual((len(desc), desc.text), (0, "Front panel"))
@@ -324,17 +325,8 @@ class ArtworkTabTests(ArtworkTestCase):
             )
             .replace("</linearGradient>", "</linearGradient></desc><defs>")
         )
-        admin = User.objects.get(username="admin")
-        [imported] = import_bundle(
-            admin,
-            "hidden.zip",
-            io.BytesIO(
-                bundle(definition("ACME/SW-24", {**FILES, "front.svg": hidden}))
-            ),
-        )
-        Association.objects.create(
-            device_type=self.device_type, revision=imported.revision
-        )
+        self.store_face("front.svg", hidden)
+        self.activate()
         front = faces(self.tab())[0]
         prefix = f"dv-o-d{self.device.pk}-front-"
         self.assertNotIn(f"{prefix}con-eth1", ids(front))
