@@ -16,8 +16,8 @@ meta:               # optional
   background: "#d9d9d9"   # default canvas background for all views
 
 canvas:             # optional — defaults shown
-  columns: 32       # total grid columns
-  rows: 2           # total grid rows
+  columns: 32       # total grid columns, 1 or more
+  rows: 2           # total grid rows, 1 or more
   cell_size: 20     # px per cell used by the SVG renderer
                     # set to 0 to enable patch-panel auto sizing
 
