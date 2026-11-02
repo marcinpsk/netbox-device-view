@@ -1,7 +1,7 @@
 """Activate a definition revision for a device type: the one writer of associations."""
 
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError, router, transaction
+from django.db import DEFAULT_DB_ALIAS, IntegrityError, router, transaction
 from django.utils.translation import gettext_lazy as _
 
 from ..models import Association
@@ -24,9 +24,12 @@ def can_activate(user) -> bool:
 
 def activate(user, revision, device_type) -> Association:
     """Make the revision the active one for the device type; return the association."""
-    # NetBox Branching routes Association to the connection of the active branch.
+    # NetBox Branching routes Association to the branch and its ChangeDiff rows to main.
     try:
-        with transaction.atomic(using=router.db_for_write(Association)):
+        with (
+            transaction.atomic(using=DEFAULT_DB_ALIAS),
+            transaction.atomic(using=router.db_for_write(Association)),
+        ):
             return _activate(user, revision, device_type)
     except IntegrityError as exc:
         # Only a concurrent first activation of the type is expected; other errors stay visible.

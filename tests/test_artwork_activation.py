@@ -1,9 +1,15 @@
 """Explicit activation of a definition revision for a device type, through the plugin pages."""
 
 import io
+import shutil
+import tempfile
+import threading
+import time
 
 from core.models import ObjectChange, ObjectType
-from dcim.models import DeviceType
+from dcim.models import DeviceType, Manufacturer
+from django.db import connection, transaction
+from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 from users.models import ObjectPermission, User
 
@@ -12,6 +18,7 @@ from netbox_device_view.models import Association, DefinitionRevision
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, MODULE_FILES, bundle, definition
 from .test_artwork_device_view import ArtworkTestCase, faces
+from .test_artwork_key_transfer import waiting_row_locks
 
 ACTIVATE_URL = "plugins:netbox_device_view:definitionrevision_activate"
 REVISION_URL = "plugins:netbox_device_view:definitionrevision"
@@ -101,6 +108,17 @@ class ActivationTests(ActivationTestCase):
             1,
         )
 
+    def test_change_constraints_apply_to_the_saved_association(self):
+        self.grant(Association, "view", "add")
+        self.post()
+        newer = self.import_files({**DEVICE_FILES, "front.svg": NEW_FRONT})
+        # The user may change the association only while it keeps the first revision.
+        self.grant(Association, "change", constraints={"revision": self.revision.pk})
+
+        self.assertEqual(self.post(newer).status_code, 403)
+
+        self.assertEqual(Association.objects.get().revision, self.revision)
+
     def test_permission_constraints_apply_to_the_activated_type(self):
         self.grant(Association, "add", constraints={"device_type__model": "Other"})
         self.assertEqual(self.post().status_code, 403)
@@ -169,3 +187,54 @@ class AssociationPageTests(ActivationTestCase):
         )
         self.assertFalse(Association.objects.exists())
         self.assertEqual(faces(self.tab()), [])
+
+
+class ActivationRaceTests(TransactionTestCase):
+    def setUp(self):
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        override = override_settings(MEDIA_ROOT=media)
+        override.enable()
+        self.addCleanup(override.disable)
+        self.user = User.objects.create_user(username="admin", is_superuser=True)
+        self.client.force_login(self.user)
+        [imported] = import_bundle(
+            self.user,
+            "sw24.zip",
+            io.BytesIO(bundle(definition("ACME/SW-24", DEVICE_FILES))),
+        )
+        self.revision = imported.revision
+        self.device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+
+    def test_a_first_activation_that_races_another_asks_to_try_again(self):
+        result = {}
+
+        def run():
+            try:
+                result["response"] = self.client.post(
+                    reverse(ACTIVATE_URL, args=[self.revision.pk]),
+                    {"device_type": self.device_type.pk},
+                )
+            finally:
+                connection.close()
+
+        with transaction.atomic():
+            Association.objects.create(
+                device_type=self.device_type, revision=self.revision
+            )
+            thread = threading.Thread(target=run)
+            thread.start()
+            deadline = time.monotonic() + 10
+            while waiting_row_locks() < 1 and thread.is_alive():
+                self.assertLess(
+                    time.monotonic(), deadline, "the activation did not wait"
+                )
+                time.sleep(0.05)
+        thread.join(30)
+
+        self.assertContains(result["response"], "Try again", status_code=409)
+        self.assertEqual(Association.objects.count(), 1)
