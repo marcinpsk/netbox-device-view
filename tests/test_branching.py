@@ -271,3 +271,29 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         self.branch.merge(user=self.user)
 
         self.assertEqual(Association.objects.get().device_type, self.device_type)
+
+    def test_a_rejected_activation_in_a_branch_leaves_no_change_record(self):
+        from netbox_branching.models import ChangeDiff
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        permission = ObjectPermission.objects.create(
+            name="constrained add",
+            actions=["view", "add"],
+            constraints={"device_type__model": "Other"},
+        )
+        permission.users.add(self.user)
+        permission.object_types.add(ObjectType.objects.get_for_model(Association))
+        self.grant(DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(
+            ChangeDiff.objects.using("default")
+            .filter(object_type=ObjectType.objects.get_for_model(Association))
+            .exists()
+        )

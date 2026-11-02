@@ -70,8 +70,8 @@ REAR_SVG = """\
   <g transform="translate(400 0)">
     <rect id="con-psu" x="-20" y="10" width="30" height="20" fill="#111"/>
   </g>
-  <g transform="scale(0.25)">
-    <rect id="con-f1" x="40" y="40" width="40" height="40" fill="#111"/>
+  <g transform="scale(0.25 0.5)">
+    <rect id="con-f1" x="40" y="20" width="40" height="20" fill="#111"/>
   </g>
 </svg>
 """
@@ -262,6 +262,31 @@ class ArtworkTabTests(ArtworkTestCase):
             ],
         )
 
+    def test_a_face_with_a_prefixed_svg_namespace_renders_as_svg(self):
+        prefixed = re.sub(r"<(/?)(\w)", r"<\1s:\2", FRONT_SVG).replace(
+            'xmlns="http://www.w3.org/2000/svg"',
+            'xmlns:s="http://www.w3.org/2000/svg"',
+        )
+        admin = User.objects.get(username="admin")
+        [imported] = import_bundle(
+            admin,
+            "prefixed.zip",
+            io.BytesIO(
+                bundle(definition("ACME/SW-24", {**FILES, "front.svg": prefixed}))
+            ),
+        )
+        Association.objects.create(
+            device_type=self.device_type, revision=imported.revision
+        )
+        content = self.tab()
+        markup = re.findall(
+            r'<svg[^>]*class="dv-art-face".*?</svg>', content, re.DOTALL
+        )
+        # The HTML parser reads s:rect as an unknown element, not as an SVG rect.
+        self.assertEqual(len(markup), 2)
+        self.assertNotRegex(markup[0], r"<\w+:\w+[ >/]")
+        self.assertIn(f'<rect id="dv-o-d{self.device.pk}-front-chassis"', markup[0])
+
     def test_the_face_is_serialized_from_the_parsed_tree(self):
         self.activate()
         content = self.tab()
@@ -381,17 +406,17 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(self.link()[1].get("class"), "dv-art-connector")
 
     def outline(self, face, name, key):
-        """Return (x, y, width, height, radius) of the outline filter of a connector."""
+        """Return (x, y, width, height, x radius, y radius) of the outline filter of a connector."""
         link = links(face)[f"dv-o-d{self.device.pk}-{name}-{key}"]
         [found] = [
             element
             for element in face.iter(f"{{{SVG_NS}}}filter")
             if element.get("id") == link.get("filter")[5:-1]
         ]
-        morphology = found.find(f"{{{SVG_NS}}}feMorphology")
+        radius = found.find(f"{{{SVG_NS}}}feMorphology").get("radius").split()
         return (
             *(float(found.get(name)) for name in ("x", "y", "width", "height")),
-            float(morphology.get("radius")),
+            *map(float, radius),
         )
 
     def test_the_outline_of_a_connector_in_a_transformed_group_is_not_clipped(self):
@@ -410,12 +435,14 @@ class CableOccupancyTests(ArtworkTestCase):
         radius = self.outline(front, "front", "con-eth1")[4]
         # con-psu is at x -20..10 inside translate(400 0): the region is the face in local units.
         self.assertEqual(
-            self.outline(rear, "rear", "con-psu"), (-400, 0, 440, 44, radius)
+            self.outline(rear, "rear", "con-psu"),
+            (-400, 0, 440, 44, radius, radius),
         )
-        # con-f1 is inside scale(0.25): the region and the radius are four times larger.
-        *region, scaled = self.outline(rear, "rear", "con-f1")
-        self.assertEqual(region, [0, 0, 1760, 176])
-        self.assertAlmostEqual(scaled, radius * 4, places=3)
+        # con-f1 is inside scale(0.25 0.5): each axis keeps the outline width of the face.
+        *region, x_radius, y_radius = self.outline(rear, "rear", "con-f1")
+        self.assertEqual(region, [0, 0, 1760, 88])
+        self.assertAlmostEqual(x_radius, radius * 4, places=3)
+        self.assertAlmostEqual(y_radius, radius * 2, places=3)
 
 
 class DamagedArtworkTests(ArtworkTestCase):
