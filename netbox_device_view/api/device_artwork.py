@@ -49,7 +49,7 @@ def _representation(member, revision, user) -> dict:
     if revision is not None:
         part = resolve_device(member, revision, user, view=API, plain=True)
         if part.representation == DAMAGED:
-            return _unavailable(DAMAGED_ARTWORK)
+            return _unavailable_member(DAMAGED_ARTWORK)
         return {
             "representation": ARTWORK,
             "reason": None,
@@ -59,18 +59,18 @@ def _representation(member, revision, user) -> dict:
     try:
         device_view = viewable_device_view(member.device_type, user)
     except DeviceView.DoesNotExist:
-        return _unavailable(UnavailableReason.NO_LAYOUT)
+        return _unavailable_member(UnavailableReason.NO_LAYOUT)
     if not device_view.has_yaml_layout:
-        return _unavailable(UnavailableReason.SVG_LAYOUT_REQUIRED)
+        return _unavailable_member(UnavailableReason.SVG_LAYOUT_REQUIRED)
     try:
         panels = member_panels(member, device_view, user)
     except LayoutParseError:
         logger.warning("Invalid YAML layout for device %s", member.pk)
-        return _unavailable(UnavailableReason.INVALID_LAYOUT)
+        return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
 
 
-def _unavailable(reason: str) -> dict:
+def _unavailable_member(reason: str) -> dict:
     return {
         "representation": UNAVAILABLE,
         "reason": reason,
@@ -80,7 +80,7 @@ def _unavailable(reason: str) -> dict:
 
 
 def _artwork(part) -> dict:
-    prefixes = {face.name: face.prefix for face in part.faces}
+    faces = {face.name: face for face in part.faces}
     return {
         "definition_key": part.revision.definition.key,
         "revision_id": part.revision.pk,
@@ -94,7 +94,7 @@ def _artwork(part) -> dict:
                 "key": connector.key,
                 "face": connector.face,
                 "label": connector.label,
-                "element_id": prefixes[connector.face] + connector.key,
+                "element_id": faces[connector.face].element_id(connector.key),
                 "bindings": [_binding(binding) for binding in connector.bindings],
             }
             for connector in part.connectors
