@@ -32,6 +32,9 @@ _CORE_TAGS = {
 # Unicode categories that no manifest string or bundle path may contain.
 UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
 MODULE_TOKEN = "{module}"
+DEVICE_KIND, MODULE_KIND = "device", "module"
+if {DEVICE_KIND, MODULE_KIND} != set(SCHEMA["properties"]["kind"]["enum"]):
+    raise ImportError("The definition kinds do not match manifest.schema.json.")
 
 
 @dataclass(frozen=True)
@@ -221,7 +224,7 @@ def _name_issues(manifest: dict) -> list[tuple[tuple, str]]:
                 )
             )
         seen_bays[bay["module_bay"]] = key
-    if manifest["kind"] != "module":
+    if manifest["kind"] != MODULE_KIND:
         issues.extend(
             (at, f"Only a module definition can use {MODULE_TOKEN}.")
             for at, name in names

@@ -14,7 +14,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils.html import escape, format_html, format_html_join
 from django.utils.safestring import mark_safe
 
-from .artwork.render import active_revisions, resolve_device
+from .artwork.render import active_revisions, has_active_artwork, resolve_device
 from .components import (
     AMBIGUOUS,
     CONNECTED,
@@ -391,7 +391,7 @@ def artwork_parts(obj, user):
 def has_device_view(obj, user):
     """Return True when the device type of ``obj`` has active artwork or a DeviceView that ``user`` can view."""
     return (
-        bool(active_revisions([obj.device_type_id]))
+        has_active_artwork(obj.device_type_id)
         or DeviceView.objects.restrict(user, "view")
         .filter(device_type=obj.device_type_id)
         .exists()
