@@ -17,6 +17,11 @@ urlpatterns = router.urls + [
         name="device_rendered_layout",
     ),
     path(
+        "devices/<int:pk>/artwork/",
+        views.DeviceArtworkView.as_view(),
+        name="device_artwork",
+    ),
+    path(
         "artwork-bundles/",
         views.ArtworkBundleUploadView.as_view(),
         name="artwork_bundle_upload",

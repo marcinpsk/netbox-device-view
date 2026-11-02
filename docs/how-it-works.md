@@ -10,7 +10,7 @@ When you visit a device of that type, the plugin:
 4. Finds the connection state of each port on the server
 5. Renders the layout using the configured render mode (CSS Grid or SVG), with the port status colours
 
-The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus a component that both the page and the API show has the same state on both. The page and the API do not always show the same components: in CSS mode, a virtual chassis member shows no front or rear ports (see [Shared stylenames](#shared-stylenames)), but the API draws them on their SVG faces.
+The Device View tab, the device page panel, the [rendered-layout API](rendered-layout-api.md) and the [artwork API](artwork-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus a component that both the page and an API show has the same state on both. The page and the APIs do not always show the same components: in CSS mode, a virtual chassis member shows no front or rear ports (see [Shared stylenames](#shared-stylenames)), but the rendered-layout API draws them on their SVG faces.
 
 A device type with an active artwork revision shows that artwork instead of its layout. A virtual chassis shows artwork only when every member that you can view has active artwork. See [Activate a revision](artwork-bundles.md#activate-a-revision).
 
