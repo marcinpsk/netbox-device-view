@@ -1,0 +1,400 @@
+"""The Device View tab and the device page panel draw the active artwork, bound to the components of each device."""
+
+import copy
+import io
+import re
+import shutil
+import tempfile
+from pathlib import Path
+
+from core.models import ObjectType
+from dcim.models import (
+    Cable,
+    ConsolePort,
+    Device,
+    DeviceRole,
+    DeviceType,
+    Interface,
+    Manufacturer,
+    Module,
+    ModuleBay,
+    ModuleType,
+    PowerPort,
+    Site,
+    VirtualChassis,
+)
+from django.conf import settings
+from django.test import TestCase, override_settings
+from django.urls import reverse
+from lxml import etree
+from users.models import ObjectPermission, User
+
+from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.models import Association, DeviceView
+
+from .artwork_samples import DEVICE_FILES, bundle, definition
+
+TAB_URL = "dcim:device_deviceview"
+SVG_NS = "http://www.w3.org/2000/svg"
+GRID = '.deviceview.area{grid-template-areas:"eth-1";}'
+
+# A front face with every kind of same-file reference that the profile allows.
+FRONT_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 440 44" width="440mm" height="44mm">
+  <!-- editor comment -->
+  <defs>
+    <linearGradient id="metal">
+      <stop offset="0" stop-color="#555"/><stop offset="1" stop-color="#222"/>
+    </linearGradient>
+    <clipPath id="edge"><rect x="0" y="0" width="440" height="44"/></clipPath>
+    <symbol id="led"><circle cx="2" cy="2" r="2" fill="#0f0"/></symbol>
+  </defs>
+  <rect id="chassis" x="0" y="0" width="440" height="44" fill="url(#metal)" clip-path="url(#edge)"/>
+  <use xlink:href="#led" x="5" y="5"/>
+  <g transform="translate(10 10)">
+    <rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>
+  </g>
+  <text x="30" y="20"><tspan>Port</tspan> <tspan>&lt;1&gt;</tspan></text>
+  <rect id="bay-nm" x="300" y="5" width="100" height="30" fill="none" stroke="#999"/>
+</svg>
+"""
+FILES = {**DEVICE_FILES, "front.svg": FRONT_SVG}
+
+
+def faces(content):
+    """Return the parsed artwork faces of a page, in page order."""
+    return [
+        etree.fromstring(markup)
+        for markup in re.findall(
+            r'<svg[^>]*class="dv-art-face".*?</svg>', content, re.DOTALL
+        )
+    ]
+
+
+def ids(face):
+    return [element.get("id") for element in face.iter() if element.get("id")]
+
+
+def references(face):
+    """Return every id that the face refers to through href or url(#id)."""
+    found = []
+    for element in face.iter():
+        for name, value in element.attrib.items():
+            if name == "href" and value.startswith("#"):
+                found.append(value[1:])
+            found.extend(re.findall(r"url\(#([^)]*)\)", value))
+    return found
+
+
+def links(face):
+    """Return {connector id: link element} for each connector that a link wraps."""
+    return {
+        child.get("id"): link
+        for link in face.iter(f"{{{SVG_NS}}}a")
+        for child in link
+        if child.get("id")
+    }
+
+
+class ArtworkTestCase(TestCase):
+    def setUp(self):
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        self.media = Path(media)
+        override = override_settings(MEDIA_ROOT=media)
+        override.enable()
+        self.addCleanup(override.disable)
+
+        self.manufacturer = Manufacturer.objects.create(name="ACME", slug="acme")
+        self.site = Site.objects.create(name="Site", slug="site")
+        self.role = DeviceRole.objects.create(name="Role", slug="role")
+        self.device_type = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="SW-24", slug="sw-24"
+        )
+        self.device = self.make_device("sw1")
+        self.eth1 = Interface.objects.create(
+            device=self.device, name="eth1", type="1000base-t"
+        )
+        self.psu = PowerPort.objects.create(device=self.device, name="PSU1")
+        # The same name as eth1 in another component type.
+        self.console = ConsolePort.objects.create(device=self.device, name="eth1")
+
+        admin = User.objects.create_user(username="admin", is_superuser=True)
+        [imported] = import_bundle(
+            admin, "sw24.zip", io.BytesIO(bundle(definition("ACME/SW-24", FILES)))
+        )
+        self.revision = imported.revision
+
+        self.user = User.objects.create_user(username="viewer")
+        for model in ("device", "interface", "powerport", "consoleport", "cable"):
+            self.grant("dcim", model)
+        self.client.force_login(self.user)
+
+    def make_device(self, name, device_type=None, **kwargs):
+        return Device.objects.create(
+            name=name,
+            device_type=device_type or self.device_type,
+            site=self.site,
+            role=self.role,
+            **kwargs,
+        )
+
+    def grant(self, app_label, model, constraints=None):
+        permission = ObjectPermission.objects.create(
+            name=f"view {app_label}.{model} {ObjectPermission.objects.count()}",
+            actions=["view"],
+            constraints=constraints,
+        )
+        permission.users.add(self.user)
+        permission.object_types.add(
+            ObjectType.objects.get_by_natural_key(app_label, model)
+        )
+
+    def activate(self, device_type=None):
+        return Association.objects.create(
+            device_type=device_type or self.device_type, revision=self.revision
+        )
+
+    def tab(self, device=None, status=200):
+        response = self.client.get(
+            reverse(TAB_URL, kwargs={"pk": (device or self.device).pk})
+        )
+        self.assertEqual(response.status_code, status)
+        return response.content.decode()
+
+
+class ArtworkTabTests(ArtworkTestCase):
+    def test_import_alone_changes_no_view(self):
+        DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
+        self.grant("netbox_device_view", "deviceview")
+        content = self.tab()
+        self.assertEqual(faces(content), [])
+        self.assertIn('class="deviceview area', content)
+
+    def test_active_artwork_shows_the_front_and_the_rear_face_together(self):
+        DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
+        self.activate()
+        content = self.tab()
+        front, rear = faces(content)
+        self.assertNotIn('class="deviceview area', content)
+        self.assertEqual(
+            re.findall(r'class="dv-art-face-name">(\w+)<', content), ["Front", "Rear"]
+        )
+        self.assertIn(f"dv-o-d{self.device.pk}-front-con-eth1", ids(front))
+        self.assertIn(f"dv-o-d{self.device.pk}-rear-con-psu", ids(rear))
+        # Below 768 px the faces stack; from 768 px they share one row.
+        self.assertEqual(content.count('<div class="col-12 col-md">'), 2)
+        # Only a virtual chassis marks the current device.
+        self.assertNotIn("active-device", content)
+
+    def test_the_tab_shows_artwork_without_a_device_view(self):
+        device_page = self.client.get(self.device.get_absolute_url()).content.decode()
+        self.assertNotIn(reverse(TAB_URL, kwargs={"pk": self.device.pk}), device_page)
+        self.activate()
+        device_page = self.client.get(self.device.get_absolute_url()).content.decode()
+        self.assertIn(reverse(TAB_URL, kwargs={"pk": self.device.pk}), device_page)
+        self.assertEqual(len(faces(self.tab())), 2)
+
+    def test_every_id_and_reference_gets_the_prefix_of_its_face(self):
+        self.activate()
+        for face, name in zip(faces(self.tab()), ("front", "rear"), strict=True):
+            prefix = f"dv-o-d{self.device.pk}-{name}-"
+            self.assertTrue(all(i.startswith(prefix) for i in ids(face)), ids(face))
+            self.assertLessEqual(set(references(face)), set(ids(face)))
+        front = faces(self.tab())[0]
+        self.assertEqual(
+            sorted(set(references(front))),
+            [
+                f"dv-o-d{self.device.pk}-front-{local}"
+                for local in ("edge", "led", "metal")
+            ],
+        )
+
+    def test_the_face_is_serialized_from_the_parsed_tree(self):
+        self.activate()
+        content = self.tab()
+        front = re.search(r'<svg[^>]*class="dv-art-face".*?</svg>', content, re.DOTALL)[
+            0
+        ]
+        self.assertNotIn("editor comment", front)
+        self.assertNotIn("xlink", front)
+        # The text keeps its spaces and stays escaped.
+        self.assertIn("<tspan>Port</tspan> <tspan>&lt;1&gt;</tspan>", front)
+        root = faces(content)[0]
+        self.assertEqual(root.get("viewBox"), "0 0 440 44")
+        self.assertIsNone(root.get("width"))
+
+    def test_a_connector_links_to_the_component_of_its_binding(self):
+        self.activate()
+        front, rear = faces(self.tab())
+        prefix = f"dv-o-d{self.device.pk}"
+        self.assertEqual(
+            links(front)[f"{prefix}-front-con-eth1"].get("href"),
+            self.eth1.get_absolute_url(),
+        )
+        self.assertEqual(
+            links(rear)[f"{prefix}-rear-con-psu"].get("href"),
+            self.psu.get_absolute_url(),
+        )
+        # The console port with the same name does not collide with the interface binding.
+        self.assertNotIn(self.console.get_absolute_url(), self.tab())
+
+    def test_decorative_artwork_has_no_link(self):
+        self.activate()
+        front = faces(self.tab())[0]
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        self.assertEqual(set(links(front)), {f"{prefix}con-eth1"})
+        self.assertEqual(len(list(front.iter(f"{{{SVG_NS}}}a"))), 1)
+
+    def test_a_connector_without_its_component_has_no_link(self):
+        self.psu.delete()
+        self.activate()
+        rear = faces(self.tab())[1]
+        self.assertEqual(links(rear), {})
+        self.assertIn(f"dv-o-d{self.device.pk}-rear-con-psu", ids(rear))
+
+    def test_a_component_that_the_user_cannot_view_is_a_missing_binding(self):
+        ObjectPermission.objects.filter(name__startswith="view dcim.powerport").delete()
+        self.activate()
+        self.assertEqual(links(faces(self.tab())[1]), {})
+
+    def test_a_module_component_does_not_bind_in_the_device_scope(self):
+        self.eth1.delete()
+        module = Module.objects.create(
+            device=self.device,
+            module_bay=ModuleBay.objects.create(device=self.device, name="Bay 1"),
+            module_type=ModuleType.objects.create(
+                manufacturer=self.manufacturer, model="NM-2X"
+            ),
+        )
+        Interface.objects.create(
+            device=self.device, module=module, name="eth1", type="1000base-t"
+        )
+        self.grant("dcim", "module")
+        self.activate()
+        self.assertEqual(links(faces(self.tab())[0]), {})
+
+
+class CableOccupancyTests(ArtworkTestCase):
+    def setUp(self):
+        super().setUp()
+        peer = self.make_device(
+            "server1",
+            DeviceType.objects.create(
+                manufacturer=self.manufacturer, model="Server", slug="server"
+            ),
+        )
+        Cable(
+            a_terminations=[self.eth1],
+            b_terminations=[
+                Interface.objects.create(device=peer, name="eth0", type="1000base-t")
+            ],
+        ).save()
+        self.activate()
+
+    def link(self):
+        front = faces(self.tab())[0]
+        return front, links(front)[f"dv-o-d{self.device.pk}-front-con-eth1"]
+
+    def test_a_cabled_connector_shows_its_occupancy(self):
+        front, link = self.link()
+        self.assertEqual(link.get("class"), "dv-art-connector dv-art-occupied")
+        self.assertIn(link.get("filter")[5:-1], ids(front))
+        self.assertIn("cable attached", link.find(f"{{{SVG_NS}}}title").text)
+
+    def test_a_connector_without_a_cable_shows_no_occupancy(self):
+        Cable.objects.all().delete()
+        front, link = self.link()
+        self.assertEqual(link.get("class"), "dv-art-connector")
+        self.assertIsNone(link.get("filter"))
+        self.assertEqual(list(front.iter(f"{{{SVG_NS}}}filter")), [])
+
+    def test_a_cable_that_the_user_cannot_view_is_no_occupancy(self):
+        ObjectPermission.objects.filter(name__startswith="view dcim.cable").delete()
+        self.assertEqual(self.link()[1].get("class"), "dv-art-connector")
+
+
+class DamagedArtworkTests(ArtworkTestCase):
+    def test_a_damaged_blob_shows_the_part_as_damaged(self):
+        self.activate()
+        blob = self.revision.files.get(path="front.svg").blob
+        (self.media / blob.name).write_text(FRONT_SVG.replace("#555", "#666"))
+        with self.assertLogs("netbox_device_view.artwork.render", "WARNING"):
+            content = self.tab()
+        self.assertIn("Artwork damaged", content)
+        self.assertEqual(faces(content), [])
+
+    def test_a_missing_blob_shows_the_part_as_damaged(self):
+        self.activate()
+        (self.media / self.revision.files.get(path="rear.svg").blob.name).unlink()
+        with self.assertLogs("netbox_device_view.artwork.render", "WARNING"):
+            self.assertIn("Artwork damaged", self.tab())
+
+
+class LocalAssetTests(ArtworkTestCase):
+    def test_the_artwork_refers_only_to_the_page_and_to_netbox(self):
+        self.activate()
+        for face in faces(self.tab()):
+            for element in face.iter():
+                self.assertNotIn(etree.QName(element).localname, ("image", "script"))
+                for name, value in element.attrib.items():
+                    if name == "href":
+                        self.assertRegex(value, r"^(#|/)")
+                    self.assertNotRegex(value, r"url\((?!#)")
+
+
+class VirtualChassisArtworkTests(ArtworkTestCase):
+    def setUp(self):
+        super().setUp()
+        chassis = VirtualChassis.objects.create(name="stack")
+        Device.objects.filter(pk=self.device.pk).update(
+            virtual_chassis=chassis, vc_position=1
+        )
+        self.device.refresh_from_db()
+        self.member = self.make_device("sw2", virtual_chassis=chassis, vc_position=2)
+        Interface.objects.create(device=self.member, name="eth1", type="1000base-t")
+
+    def test_two_devices_of_one_type_share_no_id_and_no_reference(self):
+        self.activate()
+        content = self.tab()
+        page_faces = faces(content)
+        self.assertEqual(len(page_faces), 4)
+        all_ids = [i for face in page_faces for i in ids(face)]
+        self.assertEqual(len(all_ids), len(set(all_ids)))
+        for face in page_faces:
+            self.assertLessEqual(set(references(face)), set(ids(face)))
+        hrefs = {
+            link.get("href")
+            for face in page_faces
+            for link in face.iter(f"{{{SVG_NS}}}a")
+        }
+        member_eth1 = Interface.objects.get(device=self.member, name="eth1")
+        self.assertTrue(
+            {self.eth1.get_absolute_url(), member_eth1.get_absolute_url()} <= hrefs
+        )
+        self.assertEqual(content.count('class="dv-art-part active-device"'), 1)
+
+    def test_a_member_without_artwork_keeps_the_layout_view(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="SW-48", slug="sw-48"
+        )
+        Device.objects.filter(pk=self.member.pk).update(device_type=other)
+        for device_type in (self.device_type, other):
+            DeviceView.objects.create(device_type=device_type, grid_template_area=GRID)
+        self.grant("netbox_device_view", "deviceview")
+        self.activate()
+        content = self.tab()
+        self.assertEqual(faces(content), [])
+        self.assertIn('class="deviceview area', content)
+
+
+class DevicePagePanelTests(ArtworkTestCase):
+    def test_the_device_page_panel_shows_the_artwork(self):
+        self.activate()
+        config = copy.deepcopy(settings.PLUGINS_CONFIG)
+        config["netbox_device_view"]["show_on_device_tab"] = True
+        with override_settings(PLUGINS_CONFIG=config):
+            content = self.client.get(self.device.get_absolute_url()).content.decode()
+        self.assertEqual(len(faces(content)), 2)
+        self.assertIn("device_view_artwork.js", content)
