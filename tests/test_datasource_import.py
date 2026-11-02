@@ -35,6 +35,8 @@ from netbox_device_view.models import DeviceView, RenderMode
 from netbox_device_view.utils import normalize_grid_template_area
 from netbox_device_view.views import DeviceViewDataSourceImportView
 
+from .permissions import grant
+
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXAMPLE_YAML = EXAMPLES / "yaml" / "Cisco" / "C9300-24T.yaml"
 EXAMPLE_PATH = "examples/yaml/Cisco/C9300-24T.yaml"
@@ -135,27 +137,18 @@ class DataSourceImportTestBase(TestCase):
 
         self.user = User.objects.create_user(username="importer")
         self.client.force_login(self.user)
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view")
-        self.grant(Manufacturer, "view")
-        self.grant(DeviceType, "view")
-        self.grant(Device, "view")
-        self.grant(DeviceView, "view")
-        self.grant(DeviceView, "add")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view")
+        grant(self.user, Manufacturer, "view")
+        grant(self.user, DeviceType, "view")
+        grant(self.user, Device, "view")
+        grant(self.user, DeviceView, "view")
+        grant(self.user, DeviceView, "add")
 
     def write_file(self, path, content):
         target = self.repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
-
-    def grant(self, model, action, constraints=None):
-        perm = ObjectPermission.objects.create(
-            name=f"{model._meta.model_name}-{action}-{ObjectPermission.objects.count()}",
-            actions=[action],
-            constraints=constraints,
-        )
-        perm.users.add(self.user)
-        perm.object_types.add(ObjectType.objects.get_for_model(model))
 
     def compete_before_save(self, device_type):
         """Create a device view for the type just before the import saves its own."""
@@ -1576,7 +1569,7 @@ class BulkImportTests(DataSourceImportTestBase):
         )
 
     def test_mixed_bulk_create_and_update_end_to_end(self):
-        self.grant(DeviceView, "change")
+        grant(self.user, DeviceView, "change")
         css_target = DeviceType.objects.get(model="C9300-48P")
         old_yaml = (EXAMPLES.parent / self.BULK_PATHS[2]).read_text()
         yaml_record = DeviceView.objects.create(
@@ -1873,7 +1866,7 @@ class ReplacementTestBase(DataSourceImportTestBase):
 
     def setUp(self):
         super().setUp()
-        self.grant(DeviceView, "change")
+        grant(self.user, DeviceView, "change")
 
     def existing(self, **fields):
         fields = {

@@ -12,7 +12,7 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.urls import reverse
-from users.models import ObjectPermission, User
+from users.models import User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
@@ -25,6 +25,7 @@ from netbox_device_view.models import (
 )
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
+from .permissions import grant
 from .test_artwork_activation import ACTIVATE_URL
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
@@ -134,18 +135,10 @@ class ArtworkBranchTestCase(TransactionTestCase):
         self.addCleanup(media_override.disable)
         self.user = User.objects.create_user(username="importer")
         self.client.force_login(self.user)
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
         self.branch = provision_branch("Artwork")
         self.addCleanup(self.branch.deprovision)
         self.client.cookies["active_branch"] = self.branch.schema_id
-
-    def grant(self, model, *actions):
-        permission = ObjectPermission.objects.create(
-            name=f"{model._meta.model_name}-{ObjectPermission.objects.count()}",
-            actions=list(actions),
-        )
-        permission.users.add(self.user)
-        permission.object_types.add(ObjectType.objects.get_for_model(model))
 
     def upload(self):
         return self.client.post(
@@ -187,8 +180,8 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
             name="Artwork", type="local", source_url=f"file://{root}", enabled=True
         )
         self.source.sync()
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view")
 
     def import_source(self):
         return self.client.post(
@@ -222,8 +215,8 @@ class KeyTransferInBranchTests(ArtworkBranchTestCase):
         source = DataSource.objects.create(
             name="Artwork", type="local", source_url="file:///artwork", enabled=True
         )
-        self.grant(VisualDefinition, "view", "change")
-        self.grant(DataSource, "view")
+        grant(self.user, VisualDefinition, "view", "change")
+        grant(self.user, DataSource, "view")
 
         response = self.client.post(
             reverse(DEFINITION_EDIT_URL, args=[visual.pk]), {"key_owner": source.pk}
@@ -255,8 +248,8 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
 
         self.upload()
         revision = DefinitionRevision.objects.get()
-        self.grant(Association, "view", "add")
-        self.grant(DeviceType, "view")
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
 
         response = self.client.post(
             reverse(ACTIVATE_URL, args=[revision.pk]),
@@ -277,14 +270,14 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
 
         self.upload()
         revision = DefinitionRevision.objects.get()
-        permission = ObjectPermission.objects.create(
-            name="constrained add",
-            actions=["view", "add"],
+        grant(
+            self.user,
+            Association,
+            "view",
+            "add",
             constraints={"device_type__model": "Other"},
         )
-        permission.users.add(self.user)
-        permission.object_types.add(ObjectType.objects.get_for_model(Association))
-        self.grant(DeviceType, "view")
+        grant(self.user, DeviceType, "view")
 
         response = self.client.post(
             reverse(ACTIVATE_URL, args=[revision.pk]),
