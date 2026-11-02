@@ -14,12 +14,15 @@ from dcim.models import (
     Device,
     DeviceRole,
     DeviceType,
+    FrontPort,
     Interface,
     Manufacturer,
     Module,
     ModuleBay,
     ModuleType,
+    PowerOutlet,
     PowerPort,
+    RearPort,
     Site,
     VirtualChassis,
 )
@@ -32,7 +35,7 @@ from users.models import ObjectPermission, User
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import Association, DeviceView
 
-from .artwork_samples import DEVICE_FILES, bundle, definition
+from .artwork_samples import DEVICE_MANIFEST, bundle, definition
 
 TAB_URL = "dcim:device_deviceview"
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -56,10 +59,44 @@ FRONT_SVG = """\
     <rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>
   </g>
   <text x="30" y="20"><tspan>Port</tspan> <tspan>&lt;1&gt;</tspan></text>
+  <rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>
   <rect id="bay-nm" x="300" y="5" width="100" height="30" fill="none" stroke="#999"/>
 </svg>
 """
-FILES = {**DEVICE_FILES, "front.svg": FRONT_SVG}
+# Connectors in transformed groups: negative local coordinates, and a scale.
+REAR_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 44">
+  <rect x="0" y="0" width="440" height="44" fill="#333"/>
+  <g transform="translate(400 0)">
+    <rect id="con-psu" x="-20" y="10" width="30" height="20" fill="#111"/>
+  </g>
+  <g transform="scale(0.25)">
+    <rect id="con-f1" x="40" y="40" width="40" height="40" fill="#111"/>
+  </g>
+</svg>
+"""
+# A physical face is independent of the front-port and rear-port types.
+MANIFEST = DEVICE_MANIFEST.replace(
+    "bays:\n",
+    """\
+  con-r1:
+    face: front
+    type: lc
+    bindings:
+      - {component: rearport, name: R1}
+  con-f1:
+    face: rear
+    type: lc
+    bindings:
+      - {component: frontport, name: F1}
+bays:
+""",
+)
+FILES = {
+    "manifest.yaml": MANIFEST,
+    "front.svg": FRONT_SVG,
+    "rear.svg": REAR_SVG,
+}
 
 
 def faces(content):
@@ -119,6 +156,12 @@ class ArtworkTestCase(TestCase):
         self.psu = PowerPort.objects.create(device=self.device, name="PSU1")
         # The same name as eth1 in another component type.
         self.console = ConsolePort.objects.create(device=self.device, name="eth1")
+        self.rear_port = RearPort.objects.create(
+            device=self.device, name="R1", type="lc"
+        )
+        self.front_port = FrontPort.objects.create(
+            device=self.device, name="F1", type="lc"
+        )
 
         admin = User.objects.create_user(username="admin", is_superuser=True)
         [imported] = import_bundle(
@@ -127,8 +170,16 @@ class ArtworkTestCase(TestCase):
         self.revision = imported.revision
 
         self.user = User.objects.create_user(username="viewer")
-        for model in ("device", "interface", "powerport", "consoleport", "cable"):
-            self.grant("dcim", model)
+        for model in (
+            Device,
+            Interface,
+            PowerPort,
+            ConsolePort,
+            FrontPort,
+            RearPort,
+            Cable,
+        ):
+            self.grant(model)
         self.client.force_login(self.user)
 
     def make_device(self, name, device_type=None, **kwargs):
@@ -140,16 +191,16 @@ class ArtworkTestCase(TestCase):
             **kwargs,
         )
 
-    def grant(self, app_label, model, constraints=None):
+    def grant(self, model, *actions, constraints=None):
+        """Grant ``actions`` (view by default) on ``model``; the name starts with its label."""
+        actions = actions or ("view",)
         permission = ObjectPermission.objects.create(
-            name=f"view {app_label}.{model} {ObjectPermission.objects.count()}",
-            actions=["view"],
+            name=f"{model._meta.label_lower} {actions} {ObjectPermission.objects.count()}",
+            actions=list(actions),
             constraints=constraints,
         )
         permission.users.add(self.user)
-        permission.object_types.add(
-            ObjectType.objects.get_by_natural_key(app_label, model)
-        )
+        permission.object_types.add(ObjectType.objects.get_for_model(model))
 
     def activate(self, device_type=None):
         return Association.objects.create(
@@ -167,7 +218,7 @@ class ArtworkTestCase(TestCase):
 class ArtworkTabTests(ArtworkTestCase):
     def test_import_alone_changes_no_view(self):
         DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
-        self.grant("netbox_device_view", "deviceview")
+        self.grant(DeviceView)
         content = self.tab()
         self.assertEqual(faces(content), [])
         self.assertIn('class="deviceview area', content)
@@ -240,24 +291,38 @@ class ArtworkTabTests(ArtworkTestCase):
         # The console port with the same name does not collide with the interface binding.
         self.assertNotIn(self.console.get_absolute_url(), self.tab())
 
+    def test_a_face_binds_front_and_rear_ports_of_either_type(self):
+        self.activate()
+        front, rear = faces(self.tab())
+        prefix = f"dv-o-d{self.device.pk}"
+        self.assertEqual(
+            links(front)[f"{prefix}-front-con-r1"].get("href"),
+            self.rear_port.get_absolute_url(),
+        )
+        self.assertEqual(
+            links(rear)[f"{prefix}-rear-con-f1"].get("href"),
+            self.front_port.get_absolute_url(),
+        )
+
     def test_decorative_artwork_has_no_link(self):
         self.activate()
         front = faces(self.tab())[0]
         prefix = f"dv-o-d{self.device.pk}-front-"
-        self.assertEqual(set(links(front)), {f"{prefix}con-eth1"})
-        self.assertEqual(len(list(front.iter(f"{{{SVG_NS}}}a"))), 1)
+        self.assertEqual(set(links(front)), {f"{prefix}con-eth1", f"{prefix}con-r1"})
+        self.assertEqual(len(list(front.iter(f"{{{SVG_NS}}}a"))), 2)
 
     def test_a_connector_without_its_component_has_no_link(self):
         self.psu.delete()
         self.activate()
         rear = faces(self.tab())[1]
-        self.assertEqual(links(rear), {})
+        self.assertNotIn(f"dv-o-d{self.device.pk}-rear-con-psu", links(rear))
         self.assertIn(f"dv-o-d{self.device.pk}-rear-con-psu", ids(rear))
 
     def test_a_component_that_the_user_cannot_view_is_a_missing_binding(self):
-        ObjectPermission.objects.filter(name__startswith="view dcim.powerport").delete()
+        ObjectPermission.objects.filter(name__startswith="dcim.powerport").delete()
         self.activate()
-        self.assertEqual(links(faces(self.tab())[1]), {})
+        rear = faces(self.tab())[1]
+        self.assertNotIn(f"dv-o-d{self.device.pk}-rear-con-psu", links(rear))
 
     def test_a_module_component_does_not_bind_in_the_device_scope(self):
         self.eth1.delete()
@@ -271,9 +336,10 @@ class ArtworkTabTests(ArtworkTestCase):
         Interface.objects.create(
             device=self.device, module=module, name="eth1", type="1000base-t"
         )
-        self.grant("dcim", "module")
+        self.grant(Module)
         self.activate()
-        self.assertEqual(links(faces(self.tab())[0]), {})
+        front = faces(self.tab())[0]
+        self.assertNotIn(f"dv-o-d{self.device.pk}-front-con-eth1", links(front))
 
 
 class CableOccupancyTests(ArtworkTestCase):
@@ -311,8 +377,45 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(list(front.iter(f"{{{SVG_NS}}}filter")), [])
 
     def test_a_cable_that_the_user_cannot_view_is_no_occupancy(self):
-        ObjectPermission.objects.filter(name__startswith="view dcim.cable").delete()
+        ObjectPermission.objects.filter(name__startswith="dcim.cable").delete()
         self.assertEqual(self.link()[1].get("class"), "dv-art-connector")
+
+    def outline(self, face, name, key):
+        """Return (x, y, width, height, radius) of the outline filter of a connector."""
+        link = links(face)[f"dv-o-d{self.device.pk}-{name}-{key}"]
+        [found] = [
+            element
+            for element in face.iter(f"{{{SVG_NS}}}filter")
+            if element.get("id") == link.get("filter")[5:-1]
+        ]
+        morphology = found.find(f"{{{SVG_NS}}}feMorphology")
+        return (
+            *(float(found.get(name)) for name in ("x", "y", "width", "height")),
+            float(morphology.get("radius")),
+        )
+
+    def test_the_outline_of_a_connector_in_a_transformed_group_is_not_clipped(self):
+        peer = Device.objects.get(name="server1")
+        Cable(
+            a_terminations=[self.psu],
+            b_terminations=[PowerOutlet.objects.create(device=peer, name="out1")],
+        ).save()
+        Cable(
+            a_terminations=[self.front_port],
+            b_terminations=[
+                Interface.objects.create(device=peer, name="eth9", type="1000base-t")
+            ],
+        ).save()
+        front, rear = faces(self.tab())
+        radius = self.outline(front, "front", "con-eth1")[4]
+        # con-psu is at x -20..10 inside translate(400 0): the region is the face in local units.
+        self.assertEqual(
+            self.outline(rear, "rear", "con-psu"), (-400, 0, 440, 44, radius)
+        )
+        # con-f1 is inside scale(0.25): the region and the radius are four times larger.
+        *region, scaled = self.outline(rear, "rear", "con-f1")
+        self.assertEqual(region, [0, 0, 1760, 176])
+        self.assertAlmostEqual(scaled, radius * 4, places=3)
 
 
 class DamagedArtworkTests(ArtworkTestCase):
@@ -382,7 +485,7 @@ class VirtualChassisArtworkTests(ArtworkTestCase):
         Device.objects.filter(pk=self.member.pk).update(device_type=other)
         for device_type in (self.device_type, other):
             DeviceView.objects.create(device_type=device_type, grid_template_area=GRID)
-        self.grant("netbox_device_view", "deviceview")
+        self.grant(DeviceView)
         self.activate()
         content = self.tab()
         self.assertEqual(faces(content), [])
