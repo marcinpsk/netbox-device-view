@@ -166,9 +166,10 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
     root.set("class", "dv-art-face")
     defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
-        if connector.target is None:
+        # A connector in title or desc is gone: a browser does not draw it either.
+        element = elements.get(connector.key)
+        if connector.target is None or element is None:
             continue
-        element = elements[connector.key]
         outline = None
         if connector.target.occupied:
             outline = _outline(
