@@ -77,6 +77,14 @@ class ActivationTests(ActivationTestCase):
         self.assertEqual(change.action, "create")
         self.assertEqual(change.user, self.user)
 
+    def test_without_view_permission_the_activation_returns_to_the_revision(self):
+        self.grant(Association, "add")
+
+        response = self.post()
+
+        self.assertRedirects(response, reverse(REVISION_URL, args=[self.revision.pk]))
+        self.assertTrue(Association.objects.exists())
+
     def test_a_later_activation_needs_change_permission(self):
         self.grant(Association, "view", "add")
         self.post()
