@@ -1,5 +1,6 @@
 from core.api.serializers import DataSourceSerializer
 from core.models import DataSource
+from dcim.api.serializers import DeviceTypeSerializer, ModuleTypeSerializer
 from netbox.api.serializers import (
     BaseModelSerializer,
     ChangeLogMessageSerializer,
@@ -9,6 +10,7 @@ from netbox.api.serializers import (
 from rest_framework import serializers
 
 from ..models import (
+    Association,
     DefinitionRevision,
     DeviceView,
     RevisionFile,
@@ -113,3 +115,25 @@ class VisualDefinitionSerializer(ChangeLogMessageSerializer, ValidatedModelSeria
         ):
             raise serializers.ValidationError("Select a Data Source that you can view.")
         return source
+
+
+class AssociationSerializer(BaseModelSerializer):
+    """The change events of an association; activation has no API."""
+
+    device_type = DeviceTypeSerializer(nested=True, read_only=True)
+    module_type = ModuleTypeSerializer(nested=True, read_only=True)
+    revision = DefinitionRevisionSerializer(nested=True, read_only=True)
+
+    class Meta:
+        model = Association
+        fields = (
+            "id",
+            "display",
+            "device_type",
+            "module_type",
+            "revision",
+            "created",
+            "last_updated",
+        )
+        brief_fields = ("id", "display", "revision")
+        read_only_fields = fields
