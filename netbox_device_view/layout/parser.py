@@ -290,6 +290,13 @@ class _Rules:
             raise LayoutParseError(f"{where}: must be an integer {bounds}.")
         return raw
 
+    def canvas_size(self, raw: Any, where: str, maximum: int | None = None) -> int:
+        """Return a canvas row or column count; lenient mode also rejects a count below one."""
+        value = self.integer(raw, where, 1, maximum)
+        if value < 1:
+            raise LayoutParseError(f"{where}: must be an integer 1 or more.")
+        return value
+
     def text(self, raw: Any, where: str, choices: tuple[str, ...] = ()) -> Any:
         """Return ``raw``; lenient mode rejects only an unhashable value, such as a list."""
         if self.strict:
@@ -548,9 +555,9 @@ def _parse_canvas(
     raw = rules.mapping(raw, "canvas", where)
     p = parent or CanvasConfig()
     canvas = CanvasConfig(
-        columns=rules.integer(raw.get("columns", p.columns), f"{where}.columns", 1),
-        rows=rules.integer(
-            raw.get("rows", p.rows), f"{where}.rows", 1, MAX_CANVAS_ROWS
+        columns=rules.canvas_size(raw.get("columns", p.columns), f"{where}.columns"),
+        rows=rules.canvas_size(
+            raw.get("rows", p.rows), f"{where}.rows", MAX_CANVAS_ROWS
         ),
         cell_size=rules.integer(
             raw.get("cell_size", p.cell_size), f"{where}.cell_size", 0, MAX_CELL_SIZE

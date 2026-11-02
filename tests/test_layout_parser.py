@@ -138,6 +138,16 @@ views:
         assert layout.front.canvas.columns == 8
         assert layout.front.canvas.rows == 1
 
+    @pytest.mark.parametrize(
+        "canvas", ["rows: 0", "rows: -1", "columns: 0", "columns: -2"]
+    )
+    def test_a_canvas_size_below_one_is_a_parse_error(self, canvas):
+        # Lenient parsing keeps other values; rows 0 made a filler fail with ValueError.
+        with pytest.raises(LayoutParseError, match=r"canvas\.(rows|columns)"):
+            _parse(
+                f"version: 1\ncanvas: {{{canvas}}}\nviews:\n  front:\n    rows:\n      - blank: 1\n"
+            )
+
     def test_canvas_background_propagates(self):
         yaml = """
 version: 1
