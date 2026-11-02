@@ -309,6 +309,36 @@ class ArtworkTabTests(ArtworkTestCase):
         for title in front.iter(f"{{{SVG_NS}}}title"):
             self.assertEqual(len(title), 0)
 
+    def test_a_connector_or_a_gradient_in_desc_is_not_drawn(self):
+        # A browser draws no content of desc; the face renders without it.
+        hidden = (
+            FRONT_SVG.replace(
+                '<rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>',
+                '<desc><rect id="con-eth1" width="12" height="10"/></desc>',
+            )
+            .replace(
+                '<linearGradient id="metal">',
+                '</defs><desc><linearGradient id="metal">',
+            )
+            .replace("</linearGradient>", "</linearGradient></desc><defs>")
+        )
+        admin = User.objects.get(username="admin")
+        [imported] = import_bundle(
+            admin,
+            "hidden.zip",
+            io.BytesIO(
+                bundle(definition("ACME/SW-24", {**FILES, "front.svg": hidden}))
+            ),
+        )
+        Association.objects.create(
+            device_type=self.device_type, revision=imported.revision
+        )
+        front = faces(self.tab())[0]
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        self.assertNotIn(f"{prefix}con-eth1", ids(front))
+        self.assertNotIn(f"{prefix}con-eth1", links(front))
+        self.assertIn(f"{prefix}con-r1", links(front))
+
     def test_the_face_is_serialized_from_the_parsed_tree(self):
         self.activate()
         content = self.tab()
