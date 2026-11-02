@@ -210,7 +210,7 @@ def _keywords_or(words: str, other: Callable[[str], object]) -> Callable[[str], 
     return check
 
 
-def _view_box(value: str) -> tuple[float, float, float, float]:
+def parse_view_box(value: str) -> tuple[float, float, float, float]:
     numbers = _number_list(value)
     if len(numbers) != 4:
         raise _Invalid("must be four numbers: min-x, min-y, width, height")
@@ -452,7 +452,7 @@ ATTRIBUTES: dict[str, Callable[[str], object]] = {
     "d": _path,
     "transform": _transform,
     "gradientTransform": _transform,
-    "viewBox": _view_box,
+    "viewBox": parse_view_box,
     "preserveAspectRatio": _aspect,
     "offset": _fraction,
     "gradientUnits": _UNITS,
@@ -803,7 +803,7 @@ class _Validator:
         if self.issues:
             raise ArtworkError(self.issues)
         return Face(
-            view_box=_view_box(root.get("viewBox").strip(_SPACE)),
+            view_box=parse_view_box(root.get("viewBox").strip(_SPACE)),
             connector_ids=frozenset(i for i in self.ids if i.startswith("con-")),
             bay_ids=frozenset(i for i in self.ids if i.startswith("bay-")),
             id_lines={
