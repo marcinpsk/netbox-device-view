@@ -148,6 +148,11 @@ def _connector(key, item, states) -> Connector:
 
 def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeString:
     root = etree.fromstring(data, safe_parser(remove_comments=True, remove_pis=True))
+    # HTML parses the content of title and desc as HTML, so they keep only their text.
+    for element in root.iter(f"{{{SVG_NS}}}title", f"{{{SVG_NS}}}desc"):
+        text = "".join(element.itertext())
+        element[:] = []
+        element.text = text
     elements = {}
     for element in root.iter(etree.Element):
         ident = element.get("id")
