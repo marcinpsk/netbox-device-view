@@ -69,7 +69,7 @@ def test_artwork_page_states_the_code_limits(statement):
     [
         f"at most {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} cells per canvas",
         f"at most {parser.MAX_EXPANDED_ELEMENTS} expanded elements per layout",
-        f"inside {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} columns",
+        f"`at` and `span` inside {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} columns",
         (
             f"at most {parser.MAX_RENDERED_CELLS} grid cells rendered and "
             f"{parser.MAX_PAINTED_CELLS} grid cells painted"
