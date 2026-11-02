@@ -95,10 +95,16 @@ class RenderedFace:
     # The prefix of every id in the face.
     prefix: str
     svg: SafeString
+    # The ids of the stored face that the face draws, without the prefix.
+    ids: frozenset[str]
 
     @property
     def label(self):
         return capfirst(self.name)
+
+    def element_id(self, key) -> str | None:
+        """Return the id of the element ``key`` in the face, or None when the face does not draw it."""
+        return self.prefix + key if key in self.ids else None
 
 
 @dataclass(frozen=True)
@@ -155,20 +161,17 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     except DamagedBlob as exc:
         logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
         return Part(device, DAMAGED, revision, (), connectors)
-    faces = tuple(
-        RenderedFace(
-            face,
-            face_prefix(view, device, face),
-            _face_svg(
-                data[face],
-                face_prefix(view, device, face),
-                [connector for connector in connectors if connector.face == face],
-                plain,
-            ),
+    faces = []
+    for face in revision.face_names:
+        prefix = face_prefix(view, device, face)
+        svg, ids = _face_svg(
+            data[face],
+            prefix,
+            [connector for connector in connectors if connector.face == face],
+            plain,
         )
-        for face in revision.face_names
-    )
-    return Part(device, ARTWORK, revision, faces, connectors)
+        faces.append(RenderedFace(face, prefix, svg, ids))
+    return Part(device, ARTWORK, revision, tuple(faces), connectors)
 
 
 def _connector(key, item, states) -> Connector:
@@ -187,7 +190,8 @@ def _connector(key, item, states) -> Connector:
 
 def _face_svg(
     data: bytes, prefix: str, connectors: list[Connector], plain: bool
-) -> SafeString:
+) -> tuple[SafeString, frozenset[str]]:
+    """Return the face markup and the ids of the stored face that it draws."""
     root = etree.fromstring(data, safe_parser(remove_comments=True, remove_pis=True))
     # HTML parses the content of title and desc as HTML, so they keep only their text.
     for element in root.iter(f"{{{SVG_NS}}}title", f"{{{SVG_NS}}}desc"):
@@ -206,7 +210,8 @@ def _face_svg(
     if not plain:
         _link_connectors(root, prefix, connectors, elements)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
-    return mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
+    svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
+    return svg, frozenset(elements)
 
 
 def _link_connectors(root, prefix, connectors, elements):

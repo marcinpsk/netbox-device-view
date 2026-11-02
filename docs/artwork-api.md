@@ -91,7 +91,7 @@ A client must reject an unknown `schema_version`. A breaking change gives a new 
 | `artwork` | object \| null | Set only for `"artwork"`. |
 | `panels` | array | Set only for `"layout"`. Otherwise empty. |
 
-Each member resolves alone. A member without artwork or a layout does not hide the others. The Device View tab shows artwork for a virtual chassis only when every member has it; the API gives artwork to each member that has it.
+Each member resolves alone. A member without artwork or a layout does not hide the others. The Device View tab shows artwork for a virtual chassis only when every visible member has it; the API gives artwork to each member that has it.
 
 Active artwork comes before a layout. A member gets `"layout"` when its device type has no active artwork and has a YAML `DeviceView` that the user can view. Its `panels` are the [panels of the rendered-layout API](rendered-layout-api.md#panel) for that device alone: the keys are `front` and `rear`, with no member prefix.
 
@@ -122,7 +122,7 @@ Each `svg` is the stored face, parsed and written again. It has only the element
 | `key` | string | The connector key of the manifest. |
 | `face` | string | The face that draws the connector. |
 | `label` | string \| null | The label of the manifest. |
-| `element_id` | string | The `id` of the connector element in the `svg` of its face. Draw state or find a tap target from this element. |
+| `element_id` | string \| null | The `id` of the connector element in the `svg` of its face. Draw state or find a tap target from this element. `null` when the face does not draw the element, for example in a face stored before the import rejected elements in `title` and `desc`. |
 | `bindings` | array | One entry per binding of the manifest, in manifest order. |
 
 The page links a connector to its component only when exactly one binding has `status: "found"`. A client should do the same.

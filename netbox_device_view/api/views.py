@@ -37,7 +37,20 @@ class DeviceViewViewSet(NetBoxModelViewSet):
     filterset_class = DeviceViewFilterSet
 
 
-class DeviceRenderedLayoutView(RetrieveAPIView):
+class DeviceCompositionView(RetrieveAPIView):
+    """Return ``compose(device, user)`` for a device that the user can view; others give 404."""
+
+    queryset = Device.objects.all()
+    compose = None
+
+    def get_queryset(self):
+        return super().get_queryset().restrict(self.request.user, "view")
+
+    def get(self, request, *args, **kwargs):
+        return Response(self.compose(self.get_object(), request.user))
+
+
+class DeviceRenderedLayoutView(DeviceCompositionView):
     """
     GET /api/plugins/device_view/devices/<pk>/rendered-layout/
 
@@ -62,17 +75,10 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
     ModelSerializer machinery that doesn't fit its shape.
     """
 
-    queryset = Device.objects.all()
-
-    def get_queryset(self):
-        return super().get_queryset().restrict(self.request.user, "view")
-
-    def get(self, request, *args, **kwargs):
-        device = self.get_object()
-        return Response(compose_rendered_layout(device, request.user))
+    compose = staticmethod(compose_rendered_layout)
 
 
-class DeviceArtworkView(DeviceRenderedLayoutView):
+class DeviceArtworkView(DeviceCompositionView):
     """
     GET /api/plugins/device_view/devices/<pk>/artwork/
 
@@ -80,9 +86,7 @@ class DeviceArtworkView(DeviceRenderedLayoutView):
     see docs/artwork-api.md. Device access is as for the rendered-layout API.
     """
 
-    def get(self, request, *args, **kwargs):
-        device = self.get_object()
-        return Response(compose_device_artwork(device, request.user))
+    compose = staticmethod(compose_device_artwork)
 
 
 class DefinitionRevisionViewSet(NetBoxModelViewSet):
