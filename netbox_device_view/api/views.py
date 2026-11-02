@@ -21,6 +21,7 @@ from ..filtersets import (
     VisualDefinitionFilterSet,
 )
 from ..forms import ArtworkSourceImportForm
+from .device_artwork import compose_device_artwork
 from .rendered_layout import compose_rendered_layout
 from .serializers import (
     DefinitionRevisionSerializer,
@@ -68,6 +69,19 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         device = self.get_object()
         return Response(compose_rendered_layout(device, request.user))
+
+
+class DeviceArtworkView(DeviceRenderedLayoutView):
+    """
+    GET /api/plugins/device_view/devices/<pk>/artwork/
+
+    The artwork, layout panels or reason of each member that the user can view;
+    see docs/artwork-api.md. Device access is as for the rendered-layout API.
+    """
+
+    def get(self, request, *args, **kwargs):
+        device = self.get_object()
+        return Response(compose_device_artwork(device, request.user))
 
 
 class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelViewSet):
