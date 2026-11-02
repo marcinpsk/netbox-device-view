@@ -29,6 +29,7 @@ from netbox_device_view.models import (
 from netbox_device_view.views import ArtworkSourceImportView
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
+from .permissions import grant
 from .test_artwork_import import DEVICE_DIR, ArtworkTestCase, expected_digest
 
 SOURCE_IMPORT_URL = "plugins:netbox_device_view:definitionrevision_source_import"
@@ -56,9 +57,9 @@ class SourceTestCase(ArtworkTestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.write(definition(DEVICE_DIR, DEVICE_FILES))
         self.source = self.create_source("Artwork", self.root)
-        self.grant(DefinitionRevision, "add", "view")
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view")
+        grant(self.user, DefinitionRevision, "add", "view")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view")
 
     def create_source(self, name, root):
         return DataSource.objects.create(
@@ -276,7 +277,7 @@ class SourceImportTests(SourceTestCase):
 
     def test_the_page_shows_the_source_state_and_a_check_for_updates_button(self):
         queue = private_sync_queue(self)
-        self.grant(DataSource, "sync")
+        grant(self.user, DataSource, "sync")
         page = self.client.get(
             reverse(SOURCE_IMPORT_URL), {"data_source": self.source.pk}
         )
@@ -297,7 +298,7 @@ class SourceImportTests(SourceTestCase):
         self.assertEqual(queue.count, 1)
 
     def test_check_for_updates_follows_the_sync_permission_constraints(self):
-        self.grant(DataSource, "sync", constraints={"name": "Other"})
+        grant(self.user, DataSource, "sync", constraints={"name": "Other"})
         page = self.client.get(
             reverse(SOURCE_IMPORT_URL), {"data_source": self.source.pk}
         )
@@ -311,7 +312,7 @@ class SourceImportTests(SourceTestCase):
         self.assertEqual(self.client.post(page.context["sync_url"]).status_code, 403)
 
     def test_the_sync_return_url_does_not_use_the_request_path(self):
-        self.grant(DataSource, "sync")
+        grant(self.user, DataSource, "sync")
         # The resolver does not route a path such as "//host/", so call the view directly.
         request = RequestFactory().get(
             reverse(SOURCE_IMPORT_URL),
@@ -418,9 +419,9 @@ class SourcePermissionTests(SourceTestCase):
     def test_hidden_files_block_the_import(self):
         self.user = User.objects.create_user(username="limited")
         self.client.force_login(self.user)
-        self.grant(DefinitionRevision, "add")
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view", constraints={"path__endswith": ".yaml"})
+        grant(self.user, DefinitionRevision, "add")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view", constraints={"path__endswith": ".yaml"})
         self.sync()
 
         response = self.import_source()
@@ -431,8 +432,8 @@ class SourcePermissionTests(SourceTestCase):
     def test_a_source_the_user_cannot_view_is_not_offered(self):
         self.user = User.objects.create_user(username="limited")
         self.client.force_login(self.user)
-        self.grant(DefinitionRevision, "add")
-        self.grant(DataFile, "view")
+        grant(self.user, DefinitionRevision, "add")
+        grant(self.user, DataFile, "view")
         self.sync()
 
         response = self.import_source()
@@ -444,8 +445,8 @@ class SourcePermissionTests(SourceTestCase):
     def test_the_import_needs_the_add_permission(self):
         self.user = User.objects.create_user(username="viewer")
         self.client.force_login(self.user)
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view")
         self.sync()
 
         self.assertEqual(self.import_source().status_code, 403)
