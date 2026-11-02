@@ -174,9 +174,21 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
         _link(element, connector.target, outline)
     if len(defs):
         root.insert(0, defs)
-    etree.cleanup_namespaces(root)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
-    return mark_safe(etree.tostring(root, encoding="unicode"))
+    return mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
+
+
+def _unprefixed(element, parent=None):
+    """Return a copy in the default SVG namespace; HTML reads a prefixed name as an unknown element."""
+    if parent is None:
+        copy = etree.Element(element.tag, nsmap={None: SVG_NS})
+    else:
+        copy = etree.SubElement(parent, element.tag)
+    copy.attrib.update(element.attrib)
+    copy.text, copy.tail = element.text, element.tail
+    for child in element:
+        _unprefixed(child, copy)
+    return copy
 
 
 def _rewrite_references(element, prefix: str):
@@ -260,8 +272,10 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
     ]
     xs, ys = [x for x, _ in corners], [y for _, y in corners]
     region = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-    radius = max(width, height) * _OUTLINE / math.sqrt(abs(determinant))
-    if not all(math.isfinite(value) for value in (*region, radius)):
+    # Each local axis keeps the face outline width: divide by the face length of its unit vector.
+    width_on_face = max(width, height) * _OUTLINE
+    radii = (width_on_face / math.hypot(a, b), width_on_face / math.hypot(c, d))
+    if not all(math.isfinite(value) for value in (*region, *radii)):
         return None
     outline = etree.Element(
         f"{{{SVG_NS}}}filter",
@@ -277,7 +291,7 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
         {
             "in": "SourceAlpha",
             "operator": "dilate",
-            "radius": f"{radius:g}",
+            "radius": f"{radii[0]:g} {radii[1]:g}",
             "result": "grown",
         },
     )
