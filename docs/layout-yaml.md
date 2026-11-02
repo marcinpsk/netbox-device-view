@@ -31,6 +31,19 @@ variants:           # optional — module overlays
 
 ---
 
+## Size limits
+
+Every layout must stay inside these limits, also a layout that you save in the form or with the API. A stored layout over a limit shows as an invalid layout:
+
+- at most 64 rows and 4096 cells per canvas;
+- at most 10000 expanded elements per layout;
+- an element position and span inside 64 rows and 4096 columns;
+- at most 16384 grid cells rendered and 65536 grid cells painted over all views and variants.
+
+The [Data Source import](import-from-data-source.md) also applies stricter rules.
+
+---
+
 ## View definition
 
 A view defines the layout for one face (front or rear). It uses either `rows:` (high-level, recommended) or `elements:` (explicit coordinates).

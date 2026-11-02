@@ -65,6 +65,15 @@ def strict(data):
     return parse(text, strict=True)
 
 
+# Resource limits apply in lenient mode too: a stored layout is parsed leniently on every render.
+BOTH_MODES = pytest.mark.parametrize("mode", ["strict", "lenient"])
+
+
+def parse_in(mode, data):
+    text = data if isinstance(data, str) else yaml.safe_dump(data)
+    return parse(text, strict=mode == "strict")
+
+
 def layout(change):
     data = copy.deepcopy(BASE)
     change(data)
@@ -102,17 +111,23 @@ def test_lenient_parse_is_unchanged():
 
 
 class TestLimits:
-    def test_canvas_cell_limit(self):
-        strict(layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2)))
+    @BOTH_MODES
+    def test_canvas_cell_limit(self, mode):
+        parse_in(
+            mode, layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2))
+        )
         with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
-            strict(
-                layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2 + 1))
+            parse_in(
+                mode,
+                layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2 + 1)),
             )
 
-    def test_view_canvas_cell_limit(self):
+    @BOTH_MODES
+    def test_view_canvas_cell_limit(self, mode):
         with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
-            strict(
-                layout(lambda d: front(d).update(canvas={"columns": 4096, "rows": 2}))
+            parse_in(
+                mode,
+                layout(lambda d: front(d).update(canvas={"columns": 4096, "rows": 2})),
             )
 
     @pytest.mark.parametrize(
@@ -124,13 +139,15 @@ class TestLimits:
             {"group": {"spacer": 10**12, "sections": [{"blank": 1}, {"blank": 1}]}},
         ],
     )
-    def test_expansion_is_checked_before_allocation(self, row):
+    @BOTH_MODES
+    def test_expansion_is_checked_before_allocation(self, mode, row):
         started = time.monotonic()
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(lambda d: front(d)["rows"].append(row)))
+            parse_in(mode, layout(lambda d: front(d)["rows"].append(row)))
         assert time.monotonic() - started < 5
 
-    def test_expansion_budget_spans_views_and_variants(self):
+    @BOTH_MODES
+    def test_expansion_budget_spans_views_and_variants(self, mode):
         # Each part fits a canvas; together they exceed the budget.
         part = MAX_EXPANDED_ELEMENTS // 4 + 1
         canvas = {"columns": part, "rows": 1, "cell_size": 0}
@@ -142,7 +159,7 @@ class TestLimits:
             d["variants"] = {name: {"rows": [sequence]} for name in ("A", "B", "C")}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
 
 class TestCycles:
@@ -560,16 +577,18 @@ class TestReviewFindings:
         with pytest.raises(LayoutParseError, match="css_classes"):
             strict(layout(lambda d: variant_element(d).update(css_classes=classes)))
 
-    def test_rendered_cells_are_bounded_across_variants(self):
+    @BOTH_MODES
+    def test_rendered_cells_are_bounded_across_variants(self, mode):
         # Each variant renders the whole canvas again, even with no elements.
         def change(d):
             d["canvas"] = {"columns": 2048, "rows": 2, "cell_size": 0}
             d["variants"] = {f"V{i}": {"elements": []} for i in range(40)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_RENDERED_CELLS} cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_painted_cells_are_bounded(self):
+    @BOTH_MODES
+    def test_painted_cells_are_bounded(self, mode):
         # Each element paints its whole span, so full-canvas elements multiply the cost.
         def change(d):
             d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
@@ -585,9 +604,10 @@ class TestReviewFindings:
             ]
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_base_elements_are_charged_in_every_variant(self):
+    @BOTH_MODES
+    def test_base_elements_are_charged_in_every_variant(self, mode):
         # Each variant renders the base elements again, also those that overlap.
         def change(d):
             d["canvas"] = {"columns": 1, "rows": 1}
@@ -596,33 +616,37 @@ class TestReviewFindings:
             d["variants"] = {f"V{i}": {"elements": []} for i in range(100)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_repeated_base_keys_are_charged_in_every_variant(self):
+    @BOTH_MODES
+    def test_repeated_base_keys_are_charged_in_every_variant(self, mode):
         # Each variant renders all base elements, also those that share a key.
         full = {"key": "p1", "span": {"rows": MAX_CANVAS_ROWS, "cols": 64}}
         data = flat((64, MAX_CANVAS_ROWS), [full] * 5)
         data["variants"] = {f"V{i}": {"elements": []} for i in range(3)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(data)
+            parse_in(mode, data)
 
-    def test_canvas_rows_are_bounded(self):
+    @BOTH_MODES
+    def test_canvas_rows_are_bounded(self, mode):
         with pytest.raises(LayoutParseError, match="rows"):
-            strict(
+            parse_in(
+                mode,
                 layout(
                     lambda d: d["canvas"].update(columns=1, rows=MAX_CANVAS_ROWS + 1)
-                )
+                ),
             )
 
-    def test_entries_without_elements_use_the_budget(self):
+    @BOTH_MODES
+    def test_entries_without_elements_use_the_budget(self, mode):
         def change(d):
             d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
             front(d)["rows"] = [{"spacer": 0}] * (MAX_EXPANDED_ELEMENTS + 1)
 
         started = time.monotonic()
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
         assert time.monotonic() - started < 5
 
     def test_deep_nesting_fails_fast(self):
@@ -706,7 +730,8 @@ class TestReviewFindings:
             ("span", "cols", MAX_CANVAS_CELLS),
         ],
     )
-    def test_element_position_and_span_are_bounded(self, field, value, limit):
+    @BOTH_MODES
+    def test_element_position_and_span_are_bounded(self, mode, field, value, limit):
         def place(n):
             def change(d):
                 d["canvas"] = (
@@ -719,9 +744,9 @@ class TestReviewFindings:
 
             return layout(change)
 
-        strict(place(limit))
+        parse_in(mode, place(limit))
         with pytest.raises(LayoutParseError, match=f"{field}.{value}"):
-            strict(place(limit + 1))
+            parse_in(mode, place(limit + 1))
 
     def test_huge_generated_key_number_is_rejected(self):
         huge = 10**3000

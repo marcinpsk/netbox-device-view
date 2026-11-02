@@ -9,6 +9,7 @@ from netbox_device_view.api import device_artwork
 from netbox_device_view.api.rendered_layout import UnavailableReason
 from netbox_device_view.artwork import limits
 from netbox_device_view.forms import DataSourceImportSourceForm
+from netbox_device_view.layout import parser
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,22 @@ MIB = 1024 * 1024
 )
 def test_artwork_page_states_the_code_limits(statement):
     assert statement in (ROOT / "docs" / "artwork-bundles.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"at most {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} cells per canvas",
+        f"at most {parser.MAX_EXPANDED_ELEMENTS} expanded elements per layout",
+        f"inside {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} columns",
+        (
+            f"at most {parser.MAX_RENDERED_CELLS} grid cells rendered and "
+            f"{parser.MAX_PAINTED_CELLS} grid cells painted"
+        ),
+    ],
+)
+def test_layout_page_states_the_size_limits(statement):
+    assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
 
 
 def test_artwork_api_page_states_the_values_of_the_code():
