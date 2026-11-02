@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from core.models import ObjectType
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -39,6 +38,7 @@ from netbox_device_view.artwork.svg import transform_matrix
 from netbox_device_view.models import Association, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
+from .permissions import grant
 
 TAB_URL = "dcim:device_deviceview"
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -182,7 +182,7 @@ class ArtworkTestCase(TestCase):
             RearPort,
             Cable,
         ):
-            self.grant(model)
+            grant(self.user, model, "view")
         self.client.force_login(self.user)
 
     def make_device(self, name, device_type=None, **kwargs):
@@ -193,17 +193,6 @@ class ArtworkTestCase(TestCase):
             role=self.role,
             **kwargs,
         )
-
-    def grant(self, model, *actions, constraints=None):
-        """Grant ``actions`` (view by default) on ``model``; the name starts with its label."""
-        actions = actions or ("view",)
-        permission = ObjectPermission.objects.create(
-            name=f"{model._meta.label_lower} {actions} {ObjectPermission.objects.count()}",
-            actions=list(actions),
-            constraints=constraints,
-        )
-        permission.users.add(self.user)
-        permission.object_types.add(ObjectType.objects.get_for_model(model))
 
     def store_face(self, path, svg):
         """Store ``svg`` for ``path`` of the revision without the import validator."""
@@ -227,7 +216,7 @@ class ArtworkTestCase(TestCase):
 class ArtworkTabTests(ArtworkTestCase):
     def test_import_alone_changes_no_view(self):
         DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
-        self.grant(DeviceView)
+        grant(self.user, DeviceView, "view")
         content = self.tab()
         self.assertEqual(faces(content), [])
         self.assertIn('class="deviceview area', content)
@@ -407,7 +396,7 @@ class ArtworkTabTests(ArtworkTestCase):
         Interface.objects.create(
             device=self.device, module=module, name="eth1", type="1000base-t"
         )
-        self.grant(Module)
+        grant(self.user, Module, "view")
         self.activate()
         front = faces(self.tab())[0]
         self.assertNotIn(f"dv-o-d{self.device.pk}-front-con-eth1", links(front))
@@ -558,7 +547,7 @@ class VirtualChassisArtworkTests(ArtworkTestCase):
         Device.objects.filter(pk=self.member.pk).update(device_type=other)
         for device_type in (self.device_type, other):
             DeviceView.objects.create(device_type=device_type, grid_template_area=GRID)
-        self.grant(DeviceView)
+        grant(self.user, DeviceView, "view")
         self.activate()
         content = self.tab()
         self.assertEqual(faces(content), [])

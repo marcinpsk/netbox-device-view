@@ -3,7 +3,6 @@
 import json
 import re
 
-from core.models import ObjectType
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -31,6 +30,8 @@ from users.models import ObjectPermission, Token, User
 
 from netbox_device_view.layout.renderers.svg import COLOUR_PORT_DEFAULT
 from netbox_device_view.models import DeviceView, RenderMode
+
+from .permissions import grant
 
 GRID = '.deviceview.area{grid-template-areas:"gi-1 gi-2 te-1";}'
 LAYOUT = """
@@ -99,25 +100,14 @@ class ViewPermissionTests(TestCase):
             ),
         )
         cls.user = User.objects.create_user(username="viewer")
-        cls._grant(cls.user, "dcim.view_device", {"name": "sw1"})
-        cls._grant(
+        grant(cls.user, Device, "view", constraints={"name": "sw1"})
+        grant(
             cls.user,
-            "dcim.view_interface",
-            {"device__name": "sw1", "name__in": ["Gi1", "Te1/1"]},
+            Interface,
+            "view",
+            constraints={"device__name": "sw1", "name__in": ["Gi1", "Te1/1"]},
         )
-        cls._grant(cls.user, "netbox_device_view.view_deviceview")
-
-    @staticmethod
-    def _grant(user, name, constraints=None):
-        app_label, action_model = name.split(".")
-        action, model = action_model.split("_", 1)
-        permission = ObjectPermission.objects.create(
-            name=f"{name} {constraints}", actions=[action], constraints=constraints
-        )
-        permission.users.add(user)
-        permission.object_types.add(
-            ObjectType.objects.get_by_natural_key(app_label, model)
-        )
+        grant(cls.user, DeviceView, "view")
 
     def _api(self, device=None):
         token = Token.objects.create(user=self.user)
@@ -175,7 +165,7 @@ class ViewPermissionTests(TestCase):
 
     def test_api_gives_no_hotspot_and_no_status_fill_for_a_hidden_component(self):
         # With cable view, a leaked status of Gi2 shows as the colour of its cable.
-        self._grant(self.user, "dcim.view_cable")
+        grant(self.user, Cable, "view")
         body = self._api()
         self.assertNotIn("Gi2", self._hotspots(body))
         self.assertNotIn("#00ff00", body["panels"][0]["svg"])
@@ -183,7 +173,7 @@ class ViewPermissionTests(TestCase):
 
     def test_api_leaves_out_a_peer_that_the_user_cannot_view(self):
         self.assertEqual(self._hotspots(self._api())["Gi1"]["peer_labels"], [])
-        self._grant(self.user, "dcim.view_interface", {"device__name": "peer1"})
+        grant(self.user, Interface, "view", constraints={"device__name": "peer1"})
         self.assertEqual(
             self._hotspots(self._api())["Gi1"]["peer_labels"], ["peer1 | eth-Gi1"]
         )
@@ -192,7 +182,7 @@ class ViewPermissionTests(TestCase):
         body = self._api()
         self.assertIsNone(self._hotspots(body)["Gi1"]["cable_color"])
         self.assertNotIn("#ff0000", body["panels"][0]["svg"])
-        self._grant(self.user, "dcim.view_cable")
+        grant(self.user, Cable, "view")
         body = self._api()
         self.assertEqual(self._hotspots(body)["Gi1"]["cable_color"], "ff0000")
         self.assertIn("#ff0000", body["panels"][0]["svg"])
@@ -245,7 +235,7 @@ class ViewPermissionTests(TestCase):
 
     def test_api_ignores_a_module_that_the_user_cannot_view(self):
         self.assertNotIn("Te1/1", self._hotspots(self._api()))
-        self._grant(self.user, "dcim.view_module")
+        grant(self.user, Module, "view")
         self.assertIn("Te1/1", self._hotspots(self._api()))
 
     def test_api_reports_no_layout_for_a_device_view_that_the_user_cannot_view(self):
@@ -271,7 +261,7 @@ class ViewPermissionTests(TestCase):
                 self.assertNotIn("area d2", panel)
 
     def test_tab_leaves_out_a_component_that_the_user_cannot_view(self):
-        self._grant(self.user, "dcim.view_cable")
+        grant(self.user, Cable, "view")
         for render_mode in (RenderMode.SVG, RenderMode.CSS):
             with self.subTest(render_mode):
                 panel = self._panel(render_mode, cable_colors="on")
@@ -283,7 +273,7 @@ class ViewPermissionTests(TestCase):
         for render_mode in (RenderMode.SVG, RenderMode.CSS):
             with self.subTest(render_mode):
                 self.assertNotIn("peer1", self._panel(render_mode))
-        self._grant(self.user, "dcim.view_interface", {"device__name": "peer1"})
+        grant(self.user, Interface, "view", constraints={"device__name": "peer1"})
         for render_mode in (RenderMode.SVG, RenderMode.CSS):
             with self.subTest(render_mode):
                 self.assertIn("peer1 | eth-Gi1", self._panel(render_mode))
@@ -294,7 +284,7 @@ class ViewPermissionTests(TestCase):
                 panel = self._panel(render_mode, cable_colors="on")
                 self.assertIn("Gi1", panel)
                 self.assertNotIn("ff0000", panel)
-        self._grant(self.user, "dcim.view_cable")
+        grant(self.user, Cable, "view")
         for render_mode in (RenderMode.SVG, RenderMode.CSS):
             with self.subTest(render_mode):
                 self.assertIn("ff0000", self._panel(render_mode, cable_colors="on"))
@@ -311,7 +301,7 @@ class ViewPermissionTests(TestCase):
     def test_tab_ignores_a_module_that_the_user_cannot_view(self):
         self.assertNotIn("moduleNIM-HIDDEN", self._panel(RenderMode.CSS))
         self.assertNotIn("te-1", self._panel(RenderMode.SVG).split("<script>")[0])
-        self._grant(self.user, "dcim.view_module")
+        grant(self.user, Module, "view")
         self.assertIn("moduleNIM-HIDDEN", self._panel(RenderMode.CSS))
         self.assertIn("te-1", self._panel(RenderMode.SVG).split("<script>")[0])
 
@@ -347,5 +337,5 @@ class ViewPermissionTests(TestCase):
 
     def test_device_page_panel_names_virtual_chassis_only_when_viewable(self):
         self.assertIn("Deviceview sw1<", self._device_page_panel())
-        self._grant(self.user, "dcim.view_virtualchassis")
+        grant(self.user, VirtualChassis, "view")
         self.assertIn("Deviceview vc1<", self._device_page_panel())
