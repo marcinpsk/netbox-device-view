@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
 from core.models import ObjectType
 from dcim.models import (
     Cable,
@@ -33,6 +34,7 @@ from lxml import etree
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.svg import transform_matrix
 from netbox_device_view.models import Association, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
@@ -580,3 +582,27 @@ class DevicePagePanelTests(ArtworkTestCase):
             content = self.client.get(self.device.get_absolute_url()).content.decode()
         self.assertEqual(len(faces(content)), 2)
         self.assertIn("device_view_artwork.js", content)
+
+
+def apply(matrix, x, y):
+    a, b, c, d, e, f = matrix
+    return (round(a * x + c * y + e, 6), round(b * x + d * y + f, 6))
+
+
+@pytest.mark.parametrize(
+    ("transform", "point", "expected"),
+    [
+        ("translate(400 0)", (-20, 10), (380, 10)),
+        ("scale(0.25 0.5)", (40, 20), (10, 10)),
+        ("rotate(90 10 0)", (10, 0), (10, 0)),
+        ("rotate(90)", (1, 0), (0, 1)),
+        ("skewX(45)", (0, 2), (2, 2)),
+        ("skewY(45)", (2, 0), (2, 2)),
+        ("matrix(1 2 3 4 5 6)", (1, 1), (9, 12)),
+        # The functions of a list apply right to left.
+        ("translate(10 0) scale(2)", (1, 1), (12, 2)),
+        ("scale(2) translate(10 0)", (1, 1), (22, 2)),
+    ],
+)
+def test_transform_matrix_maps_a_point_as_svg_does(transform, point, expected):
+    assert apply(transform_matrix(transform), *point) == expected
