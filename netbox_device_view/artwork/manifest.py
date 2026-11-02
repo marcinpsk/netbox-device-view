@@ -33,6 +33,9 @@ _CORE_TAGS = {
 UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
 MODULE_TOKEN = "{module}"
 _MODULE_TOKEN_ONLY = f"Only a module definition can use {MODULE_TOKEN}."
+DEVICE_KIND, MODULE_KIND = "device", "module"
+if {DEVICE_KIND, MODULE_KIND} != set(SCHEMA["properties"]["kind"]["enum"]):
+    raise ImportError("The definition kinds do not match manifest.schema.json.")
 
 
 @dataclass(frozen=True)
@@ -222,7 +225,7 @@ def _name_issues(manifest: dict) -> list[tuple[tuple, str]]:
                 )
             )
         seen_bays[bay["module_bay"]] = key
-    if manifest["kind"] != "module":
+    if manifest["kind"] != MODULE_KIND:
         issues.extend(
             (at, _MODULE_TOKEN_ONLY) for at, name in names if MODULE_TOKEN in name
         )

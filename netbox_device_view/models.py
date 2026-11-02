@@ -5,7 +5,7 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
-from .artwork.manifest import FACES
+from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .layout.parser import LayoutParseError, parse
 
@@ -212,7 +212,7 @@ class Association(ChangeLoggedModel):
     @property
     def kind(self):
         """The definition kind that the hardware type needs."""
-        return "device" if self.device_type_id is not None else "module"
+        return DEVICE_KIND if self.device_type_id is not None else MODULE_KIND
 
     def clean(self):
         super().clean()

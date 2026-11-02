@@ -36,6 +36,7 @@ from . import datasource_import, filtersets, forms, models, tables
 from .artwork import activation
 from .artwork import importing as artwork_importing
 from .artwork.errors import ArtworkError
+from .artwork.manifest import DEVICE_KIND
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -392,7 +393,7 @@ class ActivateRevision(ObjectAction):
     @classmethod
     def render(cls, context, obj, **kwargs):
         # Module definitions are activated for module types with module composition.
-        if obj.definition.kind != "device" or not activation.can_activate(
+        if obj.definition.kind != DEVICE_KIND or not activation.can_activate(
             context["request"].user
         ):
             return ""
