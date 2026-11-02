@@ -462,7 +462,14 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
                 type=association.device_type, revision=revision
             ),
         )
-        return redirect(association.get_absolute_url())
+        # The association page needs view permission on it; the revision page needs none more.
+        if (
+            models.Association.objects.restrict(request.user, "view")
+            .filter(pk=association.pk)
+            .exists()
+        ):
+            return redirect(association.get_absolute_url())
+        return redirect(revision.get_absolute_url())
 
 
 class AssociationListView(generic.ObjectListView):
