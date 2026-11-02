@@ -6,6 +6,7 @@ bytes reach the page as they are. Every id gets the prefix of its occurrence,
 """
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 
@@ -17,7 +18,15 @@ from lxml import etree
 from ..components import BINDABLE_MODELS, ComponentState, device_components, find
 from ..models import Association, DefinitionRevision
 from .storage import DamagedBlob, read_blob
-from .svg import SVG_NS, XLINK_NS, parse_view_box
+from .svg import (
+    IDENTITY,
+    SVG_NS,
+    XLINK_NS,
+    multiply,
+    parse_view_box,
+    safe_parser,
+    transform_matrix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +34,16 @@ ARTWORK = "artwork"
 DAMAGED = "damaged"
 FOUND = "found"
 MISSING = "missing"
+# The view part of an id: "o" for the overview of a device.
 OVERVIEW = "o"
 _MODELS = {model._meta.model_name: model for model in BINDABLE_MODELS}
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
 # A generated local id starts with "-"; an author id starts with a letter.
-_OCCUPIED = "-occupied"
+_OCCUPIED = "-occupied-"
+# The outline width as a part of the larger face dimension.
+_OUTLINE = 1 / 300
 
 
 @dataclass(frozen=True)
@@ -74,6 +86,14 @@ class Part:
     revision: DefinitionRevision
     faces: tuple[RenderedFace, ...]
     connectors: tuple[Connector, ...]
+
+    @property
+    def damaged(self):
+        return self.representation == DAMAGED
+
+
+def has_active_artwork(device_type_id) -> bool:
+    return Association.objects.filter(device_type=device_type_id).exists()
 
 
 def active_revisions(device_type_ids) -> dict[int, DefinitionRevision]:
@@ -126,19 +146,8 @@ def _connector(key, item, states) -> Connector:
     return Connector(key, item["face"], item.get("label"), tuple(bindings))
 
 
-def _parser():
-    return etree.XMLParser(
-        resolve_entities=False,
-        no_network=True,
-        huge_tree=False,
-        load_dtd=False,
-        remove_comments=True,
-        remove_pis=True,
-    )
-
-
 def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeString:
-    root = etree.fromstring(data, _parser())
+    root = etree.fromstring(data, safe_parser(remove_comments=True, remove_pis=True))
     elements = {}
     for element in root.iter(etree.Element):
         ident = element.get("id")
@@ -150,13 +159,21 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
     for name in ("x", "y", "width", "height"):
         root.attrib.pop(name, None)
     root.set("class", "dv-art-face")
-    occupied = False
+    defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
-        if connector.target is not None:
-            _link(elements[connector.key], connector.target, prefix)
-            occupied = occupied or connector.target.occupied
-    if occupied:
-        root.insert(0, _occupied_filter(prefix, view_box))
+        if connector.target is None:
+            continue
+        element = elements[connector.key]
+        outline = None
+        if connector.target.occupied:
+            outline = _outline(
+                f"{prefix}{_OCCUPIED}{connector.key}", view_box, _user_space(element)
+            )
+        if outline is not None:
+            defs.append(outline)
+        _link(element, connector.target, outline)
+    if len(defs):
+        root.insert(0, defs)
     etree.cleanup_namespaces(root)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
     return mark_safe(etree.tostring(root, encoding="unicode"))
@@ -194,7 +211,7 @@ def _style_token(token, prefix: str) -> str:
     return tinycss2.serialize([token])
 
 
-def _link(element, state: ComponentState, prefix: str):
+def _link(element, state: ComponentState, outline):
     """Wrap the connector element in a link to its component."""
     component = state.component
     link = etree.Element(f"{{{SVG_NS}}}a")
@@ -203,30 +220,56 @@ def _link(element, state: ComponentState, prefix: str):
     title = f"{capfirst(component._meta.verbose_name)} {component.name}"
     if state.occupied:
         link.set("class", "dv-art-connector dv-art-occupied")
-        link.set("filter", f"url(#{prefix}{_OCCUPIED})")
         title += ", cable attached"
+    if outline is not None:
+        link.set("filter", f"url(#{outline.get('id')})")
     etree.SubElement(link, f"{{{SVG_NS}}}title").text = title
     link.tail, element.tail = element.tail, None
     element.addprevious(link)
     link.append(element)
 
 
-def _occupied_filter(prefix: str, view_box) -> etree._Element:
-    """Return a defs element with the filter that outlines an occupied connector."""
+def _user_space(element):
+    """Return the matrix from the user space of the element's parent to face coordinates."""
+    matrix = IDENTITY
+    for ancestor in reversed(list(element.iterancestors())):
+        value = ancestor.get("transform")
+        if value is not None:
+            matrix = multiply(matrix, transform_matrix(value))
+    return matrix
+
+
+def _outline(ident: str, view_box, matrix) -> etree._Element | None:
+    """Return the filter that outlines a connector, in the user space that ``matrix`` maps to the face.
+
+    None when the matrix cannot be inverted: the connector is not drawn.
+    """
+    a, b, c, d, e, f = matrix
+    determinant = a * d - b * c
+    if not math.isfinite(determinant) or determinant == 0:
+        return None
     min_x, min_y, width, height = view_box
-    defs = etree.Element(f"{{{SVG_NS}}}defs")
-    region = {
-        "x": f"{min_x:g}",
-        "y": f"{min_y:g}",
-        "width": f"{width:g}",
-        "height": f"{height:g}",
-    }
-    outline = etree.SubElement(
-        defs,
+    # The face corners in the local user space.
+    corners = [
+        (
+            (d * (x - e) - c * (y - f)) / determinant,
+            (a * (y - f) - b * (x - e)) / determinant,
+        )
+        for x in (min_x, min_x + width)
+        for y in (min_y, min_y + height)
+    ]
+    xs, ys = [x for x, _ in corners], [y for _, y in corners]
+    region = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+    radius = max(width, height) * _OUTLINE / math.sqrt(abs(determinant))
+    if not all(math.isfinite(value) for value in (*region, radius)):
+        return None
+    outline = etree.Element(
         f"{{{SVG_NS}}}filter",
-        id=f"{prefix}{_OCCUPIED}",
+        id=ident,
         filterUnits="userSpaceOnUse",
-        **region,
+        **dict(
+            zip(("x", "y", "width", "height"), (f"{v:g}" for v in region), strict=True)
+        ),
     )
     etree.SubElement(
         outline,
@@ -234,7 +277,7 @@ def _occupied_filter(prefix: str, view_box) -> etree._Element:
         {
             "in": "SourceAlpha",
             "operator": "dilate",
-            "radius": f"{max(width, height) / 300:g}",
+            "radius": f"{radius:g}",
             "result": "grown",
         },
     )
@@ -251,4 +294,4 @@ def _occupied_filter(prefix: str, view_box) -> etree._Element:
     merge = etree.SubElement(outline, f"{{{SVG_NS}}}feMerge")
     for source in ("outline", "SourceGraphic"):
         etree.SubElement(merge, f"{{{SVG_NS}}}feMergeNode", {"in": source})
-    return defs
+    return outline
