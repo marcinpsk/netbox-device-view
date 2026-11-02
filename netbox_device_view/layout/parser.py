@@ -130,7 +130,7 @@ _PORT_KINDS = {
 }
 
 
-# ── Strict rules (parse(..., strict=True), used by the Data Source import) ────
+# ── Limits: the resource limits apply in both modes, the rest only in strict mode ──
 MAX_CANVAS_CELLS = 4096
 MAX_CANVAS_ROWS = 64
 MAX_EXPANDED_ELEMENTS = 10000
@@ -225,7 +225,11 @@ def _is_identifier(value: Any) -> bool:
 
 @dataclass
 class _Rules:
-    """The strict import rules; with strict=False each check keeps the lenient behaviour."""
+    """The strict import rules; with strict=False each check keeps the lenient behaviour.
+
+    The resource limits (canvas size, element placement, expanded elements, rendered and
+    painted cells) apply in both modes.
+    """
 
     strict: bool = False
     elements_left: int = MAX_EXPANDED_ELEMENTS
@@ -291,10 +295,16 @@ class _Rules:
         return raw
 
     def canvas_size(self, raw: Any, where: str, maximum: int | None = None) -> int:
-        """Return a canvas row or column count; lenient mode also rejects a count below one."""
+        """Return a canvas row or column count from 1 to ``maximum`` in both modes."""
         value = self.integer(raw, where, 1, maximum)
         if value < 1:
             raise LayoutParseError(f"{where}: must be an integer 1 or more.")
+        return self.bounded(value, where, maximum)
+
+    def bounded(self, value: int, where: str, maximum: int | None) -> int:
+        """Apply a resource maximum that lenient parsing does not check in ``integer``."""
+        if maximum is not None and value > maximum:
+            raise LayoutParseError(f"{where}: must be an integer {maximum} or less.")
         return value
 
     def text(self, raw: Any, where: str, choices: tuple[str, ...] = ()) -> Any:
@@ -365,8 +375,6 @@ class _Rules:
 
     def take(self, count: int) -> None:
         """Reserve ``count`` elements before they are allocated; an empty entry costs one."""
-        if not self.strict:
-            return
         self.elements_left -= max(count, 1)
         if self.elements_left < 0:
             raise LayoutParseError(
@@ -375,8 +383,6 @@ class _Rules:
 
     def render(self, canvas: CanvasConfig, where: str) -> None:
         """Reserve the grid cells that the CSS renderer writes for one view or variant."""
-        if not self.strict:
-            return
         self.cells_left -= canvas.columns * canvas.rows
         if self.cells_left < 0:
             raise LayoutParseError(
@@ -437,6 +443,8 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     _compile_variants(raw_variants, layout.views, canvas_cfg, rules)
     if strict:
         _check_elements(layout)
+    else:
+        _check_painted_cells(layout)
     return layout
 
 
@@ -566,7 +574,7 @@ def _parse_canvas(
             raw.get("background", global_bg or p.background), where
         ),
     )
-    if rules.strict and canvas.columns * canvas.rows > MAX_CANVAS_CELLS:
+    if canvas.columns * canvas.rows > MAX_CANVAS_CELLS:
         raise LayoutParseError(
             f"{where}: the canvas has more than {MAX_CANVAS_CELLS} cells."
         )
@@ -1093,17 +1101,29 @@ def _expand_element(
     span = rules.optional_mapping(raw.get("span"), "span", f"{where}.span")
 
     # Strict mode also checks the canvas of the view in _check_inside_canvas.
-    row = rules.integer(
-        at.get("row", default_row), f"{where}.at.row", 1, MAX_CANVAS_ROWS
+    row = rules.bounded(
+        rules.integer(
+            at.get("row", default_row), f"{where}.at.row", 1, MAX_CANVAS_ROWS
+        ),
+        f"{where}.at.row",
+        MAX_CANVAS_ROWS,
     )
-    col = rules.integer(
-        at.get("col", default_col), f"{where}.at.col", 1, MAX_CANVAS_CELLS
+    col = rules.bounded(
+        rules.integer(
+            at.get("col", default_col), f"{where}.at.col", 1, MAX_CANVAS_CELLS
+        ),
+        f"{where}.at.col",
+        MAX_CANVAS_CELLS,
     )
-    row_span = rules.integer(
-        span.get("rows", 1), f"{where}.span.rows", 1, MAX_CANVAS_ROWS
+    row_span = rules.bounded(
+        rules.integer(span.get("rows", 1), f"{where}.span.rows", 1, MAX_CANVAS_ROWS),
+        f"{where}.span.rows",
+        MAX_CANVAS_ROWS,
     )
-    col_span = rules.integer(
-        span.get("cols", 1), f"{where}.span.cols", 1, MAX_CANVAS_CELLS
+    col_span = rules.bounded(
+        rules.integer(span.get("cols", 1), f"{where}.span.cols", 1, MAX_CANVAS_CELLS),
+        f"{where}.span.cols",
+        MAX_CANVAS_CELLS,
     )
 
     # key is required for port-like elements; optional for spacers/blanks

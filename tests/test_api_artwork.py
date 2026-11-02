@@ -1,6 +1,7 @@
 """The artwork API gives each visible member of a device its artwork, layout panels or reason."""
 
 import re
+import time
 
 from dcim.models import (
     Cable,
@@ -463,6 +464,13 @@ ZERO_ROWS_YAML = (
 )
 
 
+# Lenient parsing once expanded this until the request timed out.
+HUGE_YAML = (
+    "version: 1\nviews:\n  front:\n    rows:\n"
+    "      - sequence: {kind: port, prefix: p, count: 1000000000000}\n"
+)
+
+
 class UnusableCanvasTests(ChassisApiTestCase):
     def setUp(self):
         super().setUp()
@@ -502,3 +510,22 @@ class UnusableCanvasTests(ChassisApiTestCase):
         )
         self.assertEqual(response.status_code, 400, response.content)
         self.assertIn("canvas.rows", str(response.json()))
+
+    def test_a_layout_over_the_element_limit_is_not_stored_or_rendered(self):
+        DeviceView.objects.update(yaml_layout=HUGE_YAML)
+        started = time.monotonic()
+        self.activate()
+        members = self.get()["members"]
+        self.assertEqual(members[1]["reason"], "invalid_layout")
+        grant(self.user, DeviceView, "change")
+        response = self.api.patch(
+            reverse(
+                "plugins-api:netbox_device_view-api:deviceview-detail",
+                kwargs={"pk": DeviceView.objects.get().pk},
+            ),
+            {"yaml_layout": HUGE_YAML},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("elements", str(response.json()))
+        self.assertLess(time.monotonic() - started, 5)
