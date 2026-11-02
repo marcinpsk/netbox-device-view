@@ -201,6 +201,9 @@ def test_issue_count_is_bounded():
         (svg("<g><!-- c -->tail</g>"), "text", 2),
         (svg("<rect>x</rect>"), "text", 2),
         (svg('<g version="1.1"/>'), "attribute version", 2),
+        (svg("<title>Front\n<g/></title>"), "<title> may contain only text", 3),
+        (svg('<desc><rect id="con-eth1"/></desc>'), "<desc> may contain only text", 2),
+        (svg("<desc><tspan>1</tspan></desc>"), "<desc> may contain only text", 2),
     ],
 )
 def test_structure_rejections(data, match, line):
@@ -213,6 +216,7 @@ def test_structure_rejections(data, match, line):
         "<g><rect/></g>",
         "<text>Port <tspan>1</tspan> tail</text>",
         "<title>Front</title><desc>Panel</desc>",
+        "<desc>Front <!-- c -->panel</desc>",
         '<g xml:space="preserve"><text xml:space="default">a</text></g>',
         "<defs><symbol><rect/></symbol><clipPath><rect/></clipPath></defs>",
         "<linearGradient><stop/></linearGradient><radialGradient/>",
