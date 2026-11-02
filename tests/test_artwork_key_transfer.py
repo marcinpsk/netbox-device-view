@@ -11,13 +11,14 @@ from django.db import connection, transaction
 from django.test import Client, TransactionTestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
-from users.models import ObjectPermission, User
+from users.models import User
 
 from netbox_device_view.artwork.errors import ArtworkError
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import DefinitionRevision, VisualDefinition
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
+from .permissions import grant
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_source_import import SourceTestCase
 
@@ -37,7 +38,7 @@ OFFLINE_KEY = "The key acme/sw-24 belongs to the offline uploads."
 class TransferTestCase(SourceTestCase):
     def setUp(self):
         super().setUp()
-        self.grant(VisualDefinition, "view", "change")
+        grant(self.user, VisualDefinition, "view", "change")
         self.upload()
         self.visual = VisualDefinition.objects.get()
 
@@ -58,7 +59,7 @@ class TransferTestCase(SourceTestCase):
         self.user = User.objects.create_user(username="limited")
         self.client.force_login(self.user)
         for model, actions, constraints in grants:
-            self.grant(model, *actions, constraints=constraints)
+            grant(self.user, model, *actions, constraints=constraints)
 
     def owner(self):
         self.visual.refresh_from_db()
@@ -97,7 +98,7 @@ class UiTransferTests(TransferTestCase):
         self.assertEqual(self.visual.revisions.count(), 2)
 
     def test_the_changelog_records_the_transfer(self):
-        self.grant(ObjectChange, "view")
+        grant(self.user, ObjectChange, "view")
 
         self.transfer(self.source)
 
@@ -318,7 +319,7 @@ class ApiTransferTests(TransferTestCase):
         self.assertEqual((self.visual.key, self.visual.kind), ("acme/sw-24", "device"))
 
     def test_definitions_cannot_be_created_or_deleted(self):
-        self.grant(VisualDefinition, "add", "delete")
+        grant(self.user, VisualDefinition, "add", "delete")
         client = self.api()
 
         created = client.post(reverse(API_LIST), {"key": "acme/new"}, format="json")
@@ -409,13 +410,7 @@ class TransferPermissionRaceTests(TransactionTestCase):
             (VisualDefinition, {"key_owner__isnull": True}),
             (DataSource, None),
         ):
-            permission = ObjectPermission.objects.create(
-                name=model._meta.model_name,
-                actions=["view", "change"],
-                constraints=constraints,
-            )
-            permission.users.add(self.user)
-            permission.object_types.add(ObjectType.objects.get_for_model(model))
+            grant(self.user, model, "view", "change", constraints=constraints)
 
     def transfer_back_during_a_transfer_to_the_source(self, send):
         result = {}

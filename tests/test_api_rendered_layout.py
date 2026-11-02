@@ -8,7 +8,6 @@ system, cable/interface relationships, and Django URL routing — none of
 which can be exercised with SimpleNamespace mocks.
 """
 
-from core.models import ObjectType
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -19,6 +18,7 @@ from dcim.models import (
     FrontPort,
     Interface,
     Manufacturer,
+    Module,
     RearPort,
     Site,
     VirtualChassis,
@@ -30,9 +30,11 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
-from users.models import ObjectPermission, Token, User
+from users.models import Token, User
 
 from netbox_device_view.models import DeviceView, RenderMode
+
+from .permissions import grant
 
 SVG_YAML = """
 version: 1
@@ -100,29 +102,20 @@ class RenderedLayoutTestBase(TestCase):
         self.user = User.objects.create_user(username="tester")
         self.client = APIClient()
 
-    def _grant(self, name, constraints=None):
-        app_label, action_model = name.split(".")
-        action, model = action_model.split("_", 1)
-        object_type = ObjectType.objects.get_by_natural_key(app_label, model)
-        perm = ObjectPermission(name=name, actions=[action], constraints=constraints)
-        perm.save()
-        perm.users.add(self.user)
-        perm.object_types.add(object_type)
-
     def _grant_layout(self):
         """Grant view on the device and on every object type of its layout."""
-        for name in (
-            "dcim.view_device",
-            "dcim.view_interface",
-            "dcim.view_consoleport",
-            "dcim.view_consoleserverport",
-            "dcim.view_frontport",
-            "dcim.view_rearport",
-            "dcim.view_module",
-            "dcim.view_cable",
-            "netbox_device_view.view_deviceview",
+        for model in (
+            Device,
+            Interface,
+            ConsolePort,
+            ConsoleServerPort,
+            FrontPort,
+            RearPort,
+            Module,
+            Cable,
+            DeviceView,
         ):
-            self._grant(name)
+            grant(self.user, model, "view")
 
     def _authenticate(self):
         # v2 (the non-deprecated token format — v1 is deprecated as of
@@ -170,7 +163,7 @@ class AuthenticationTests(RenderedLayoutTestBase):
 
     def test_authenticated_with_permission_succeeds(self):
         self._authenticate()
-        self._grant("dcim.view_device")
+        grant(self.user, Device, "view")
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -186,7 +179,7 @@ class ObjectPermissionTests(RenderedLayoutTestBase):
             status="active",
         )
         self._authenticate()
-        self._grant("dcim.view_device", constraints={"site__slug": self.site.slug})
+        grant(self.user, Device, "view", constraints={"site__slug": self.site.slug})
 
         in_scope = self.client.get(self._url(self.device))
         self.assertEqual(in_scope.status_code, status.HTTP_200_OK)
@@ -196,7 +189,7 @@ class ObjectPermissionTests(RenderedLayoutTestBase):
 
     def test_missing_device_is_404(self):
         self._authenticate()
-        self._grant("dcim.view_device")
+        grant(self.user, Device, "view")
         response = self.client.get(self._url(device=type("D", (), {"pk": 999999})()))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 

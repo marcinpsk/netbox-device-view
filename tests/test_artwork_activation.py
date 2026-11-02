@@ -17,6 +17,7 @@ from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import Association, DefinitionRevision
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, MODULE_FILES, bundle, definition
+from .permissions import grant
 from .test_artwork_device_view import ArtworkTestCase, faces
 from .test_artwork_key_transfer import waiting_row_locks
 
@@ -32,8 +33,8 @@ class ActivationTestCase(ArtworkTestCase):
     def setUp(self):
         super().setUp()
         self.admin = User.objects.get(username="admin")
-        self.grant(DefinitionRevision, "view")
-        self.grant(DeviceType, "view")
+        grant(self.user, DefinitionRevision, "view")
+        grant(self.user, DeviceType, "view")
 
     def import_files(self, files, directory="ACME/SW-24"):
         [imported] = import_bundle(
@@ -60,7 +61,7 @@ class ActivationTests(ActivationTestCase):
         self.assertFalse(Association.objects.exists())
 
     def test_a_first_activation_needs_add_and_shows_the_artwork(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         page = self.client.get(reverse(REVISION_URL, args=[self.revision.pk]))
         self.assertContains(page, reverse(ACTIVATE_URL, args=[self.revision.pk]))
 
@@ -78,7 +79,7 @@ class ActivationTests(ActivationTestCase):
         self.assertEqual(change.user, self.user)
 
     def test_without_view_permission_the_activation_returns_to_the_revision(self):
-        self.grant(Association, "add")
+        grant(self.user, Association, "add")
 
         response = self.post()
 
@@ -86,14 +87,14 @@ class ActivationTests(ActivationTestCase):
         self.assertTrue(Association.objects.exists())
 
     def test_a_later_activation_needs_change_permission(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         self.post()
         newer = self.import_files({**DEVICE_FILES, "front.svg": NEW_FRONT})
 
         self.assertEqual(self.post(newer).status_code, 403)
         self.assertEqual(Association.objects.get().revision, self.revision)
 
-        self.grant(Association, "change")
+        grant(self.user, Association, "change")
         self.assertEqual(self.post(newer).status_code, 302)
         self.assertEqual(Association.objects.get().revision, newer)
         change = ObjectChange.objects.filter(
@@ -104,10 +105,10 @@ class ActivationTests(ActivationTestCase):
         self.assertEqual(change.postchange_data["revision"], newer.pk)
 
     def test_the_same_revision_again_needs_change_permission_and_changes_nothing(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         self.post()
         self.assertEqual(self.post().status_code, 403)
-        self.grant(Association, "change")
+        grant(self.user, Association, "change")
         self.assertEqual(self.post().status_code, 302)
         self.assertEqual(
             ObjectChange.objects.filter(
@@ -117,23 +118,27 @@ class ActivationTests(ActivationTestCase):
         )
 
     def test_change_constraints_apply_to_the_saved_association(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         self.post()
         newer = self.import_files({**DEVICE_FILES, "front.svg": NEW_FRONT})
         # The user may change the association only while it keeps the first revision.
-        self.grant(Association, "change", constraints={"revision": self.revision.pk})
+        grant(
+            self.user, Association, "change", constraints={"revision": self.revision.pk}
+        )
 
         self.assertEqual(self.post(newer).status_code, 403)
 
         self.assertEqual(Association.objects.get().revision, self.revision)
 
     def test_permission_constraints_apply_to_the_activated_type(self):
-        self.grant(Association, "add", constraints={"device_type__model": "Other"})
+        grant(
+            self.user, Association, "add", constraints={"device_type__model": "Other"}
+        )
         self.assertEqual(self.post().status_code, 403)
         self.assertFalse(Association.objects.exists())
 
     def test_a_module_definition_cannot_be_activated_for_a_device_type(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         module_revision = self.import_files(MODULE_FILES, "ACME/NM-2X")
         page = self.client.get(reverse(REVISION_URL, args=[module_revision.pk]))
         self.assertNotContains(page, reverse(ACTIVATE_URL, args=[module_revision.pk]))
@@ -148,7 +153,7 @@ class ActivationTests(ActivationTestCase):
         self.assertFalse(Association.objects.exists())
 
     def test_a_revision_or_a_device_type_that_the_user_cannot_view_is_rejected(self):
-        self.grant(Association, "view", "add")
+        grant(self.user, Association, "view", "add")
         ObjectPermission.objects.filter(name__startswith="dcim.devicetype").update(
             constraints={"model": "Other"}
         )
@@ -166,7 +171,7 @@ class AssociationPageTests(ActivationTestCase):
         self.association = Association.objects.create(
             device_type=self.device_type, revision=self.revision
         )
-        self.grant(Association, "view", "delete")
+        grant(self.user, Association, "view", "delete")
 
     def test_the_list_and_the_detail_page_show_the_association(self):
         listing = self.client.get(reverse(LIST_URL))
@@ -177,7 +182,7 @@ class AssociationPageTests(ActivationTestCase):
         self.assertContains(detail, self.device_type.get_absolute_url())
 
     def test_an_active_revision_cannot_be_deleted(self):
-        self.grant(DefinitionRevision, "delete")
+        grant(self.user, DefinitionRevision, "delete")
         response = self.client.post(
             reverse(
                 "plugins:netbox_device_view:definitionrevision_delete",
