@@ -34,6 +34,7 @@ ALLOWED_NAMESPACES = frozenset({SVG_NS, XLINK_NS})
 SHAPES = frozenset({"path", "rect", "circle", "ellipse", "line", "polyline", "polygon"})
 GRADIENTS = frozenset({"linearGradient", "radialGradient"})
 TEXT_ELEMENTS = frozenset({"text", "tspan", "title", "desc"})
+TEXT_ONLY = frozenset({"title", "desc"})
 USE_TARGETS = SHAPES | {"symbol", "g", "text"}
 CONNECTOR_ELEMENTS = SHAPES | {"g", "use", "text"}
 DEFINITIONS = GRADIENTS | {"defs", "symbol", "clipPath"}
@@ -630,7 +631,10 @@ class _Validator:
             elif child.tag is etree.Entity:
                 self.add(child.sourceline, "entity references are not allowed")
             elif child.tag is not etree.Comment:
-                self.element(child, element, inner)
+                if tag in TEXT_ONLY:
+                    self.add(child.sourceline, f"<{tag}> may contain only text")
+                else:
+                    self.element(child, element, inner)
             self.text(child.tail, tag, child.sourceline)
 
     def namespaces(self, element: etree._Element, parent: etree._Element | None):
