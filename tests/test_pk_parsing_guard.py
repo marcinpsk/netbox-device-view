@@ -31,26 +31,44 @@ def isdigit_calls(source):
     return found
 
 
+def is_self_kwargs(node):
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "kwargs"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def direct_url_read(arg):
+    """Return the self.kwargs node of a self.kwargs[...] or self.kwargs.get(...) argument."""
+    if isinstance(arg, ast.Subscript) and is_self_kwargs(arg.value):
+        return arg.value
+    if (
+        isinstance(arg, ast.Call)
+        and isinstance(arg.func, ast.Attribute)
+        and arg.func.attr == "get"
+        and is_self_kwargs(arg.func.value)
+    ):
+        return arg.func.value
+    return None
+
+
 def raw_url_kwargs(source):
-    """Return the line of each self.kwargs read that no to_python() call coerces."""
+    """Return the line of each self.kwargs read that is not a direct to_python() argument."""
     tree = ast.parse(source)
     coerced = {
-        id(inner)
+        id(direct_url_read(arg))
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "to_python"
         for arg in node.args
-        for inner in ast.walk(arg)
     }
     return sorted(
         node.lineno
         for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "kwargs"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "self"
-        and id(node) not in coerced
+        if is_self_kwargs(node) and id(node) not in coerced
     )
 
 
@@ -72,4 +90,6 @@ def test_api_code_coerces_url_ids_before_a_query():
 def test_the_guard_finds_a_raw_url_id():
     found = raw_url_kwargs("lock([self.kwargs['pk']])\nself.kwargs.get('pk')\n")
     assert found == [1, 2]
+    assert raw_url_kwargs("field.to_python(lock([self.kwargs['pk']]))\n") == [1]
     assert raw_url_kwargs("pk = field.to_python(self.kwargs.get('pk'))\n") == []
+    assert raw_url_kwargs("pk = field.to_python(self.kwargs['pk'])\n") == []
