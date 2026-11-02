@@ -287,6 +287,28 @@ class ArtworkTabTests(ArtworkTestCase):
         self.assertNotRegex(markup[0], r"<\w+:\w+[ >/]")
         self.assertIn(f'<rect id="dv-o-d{self.device.pk}-front-chassis"', markup[0])
 
+    def test_title_and_desc_keep_only_their_text(self):
+        # In HTML, title and desc are integration points: an element in them is parsed as HTML.
+        nested = FRONT_SVG.replace(
+            "<defs>", '<desc>Front <g style="display:none"/>panel</desc>\n  <defs>'
+        )
+        admin = User.objects.get(username="admin")
+        [imported] = import_bundle(
+            admin,
+            "nested.zip",
+            io.BytesIO(
+                bundle(definition("ACME/SW-24", {**FILES, "front.svg": nested}))
+            ),
+        )
+        Association.objects.create(
+            device_type=self.device_type, revision=imported.revision
+        )
+        front = faces(self.tab())[0]
+        [desc] = front.iter(f"{{{SVG_NS}}}desc")
+        self.assertEqual((len(desc), desc.text), (0, "Front panel"))
+        for title in front.iter(f"{{{SVG_NS}}}title"):
+            self.assertEqual(len(title), 0)
+
     def test_the_face_is_serialized_from_the_parsed_tree(self):
         self.activate()
         content = self.tab()
