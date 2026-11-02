@@ -21,6 +21,7 @@ from netbox_device_view.models import DeviceView
 from .permissions import grant
 from .test_api_rendered_layout import SVG_YAML
 from .test_artwork_device_view import (
+    FRONT_SVG,
     GRID,
     SVG_NS,
     ArtworkTestCase,
@@ -204,6 +205,30 @@ class ArtworkResponseTests(ArtworkApiTestCase):
                 "connection_state": "connected",
             },
         )
+
+    def test_a_connector_that_the_face_does_not_draw_has_no_element_id(self):
+        # The import rejects this face now; an earlier import could store it.
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>',
+                '<desc><rect id="con-eth1" width="12" height="10"/></desc>',
+            ),
+        )
+        self.activate()
+        connectors = self.connectors(self.member())
+        self.assertIsNone(connectors["con-eth1"]["element_id"])
+        self.assertEqual(
+            connectors["con-r1"]["element_id"], f"dv-a-d{self.device.pk}-front-con-r1"
+        )
+
+    def test_a_found_and_a_missing_binding_have_the_same_fields(self):
+        self.activate()
+        self.psu.delete()
+        connectors = self.connectors(self.member())
+        [found] = connectors["con-eth1"]["bindings"]
+        [missing] = connectors["con-psu"]["bindings"]
+        self.assertEqual(list(found), list(missing))
 
     def test_damaged_artwork_is_unavailable(self):
         self.activate()
