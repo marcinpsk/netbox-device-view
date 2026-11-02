@@ -12,6 +12,8 @@ When you visit a device of that type, the plugin:
 
 The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
 
+A device type with an active artwork revision shows that artwork instead of its layout. See [Activate a revision](artwork-bundles.md#activate-a-revision).
+
 ---
 
 ## Port / Interface name → stylename
@@ -90,4 +92,4 @@ The Device View tab and the device page panel show only the objects that you can
 - A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the popover.
 - A module that you cannot view does not select a module variant, and its ports are not in the panel.
 
-The tab needs the **view** permission on **Device View**. The [rendered-layout API](rendered-layout-api.md#object-permissions) uses the same rule.
+The tab needs the **view** permission on the device. A layout also needs the **view** permission on **Device View**. The [rendered-layout API](rendered-layout-api.md#object-permissions) uses the same rule. Active artwork needs no permission of its own.

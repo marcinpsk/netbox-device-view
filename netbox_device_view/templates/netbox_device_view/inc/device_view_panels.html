@@ -1,4 +1,8 @@
 {# The panels of a device view. utils.device_view_context() gives the context and the state of every port. #}
+{% if artwork_parts %}
+{# Outside spaceless: it would remove the spaces between the tspan elements of the artwork. #}
+{% include 'netbox_device_view/inc/device_view_artwork.html' %}
+{% else %}
 {% spaceless %}
 {% if layout_error %}
 {% include 'netbox_device_view/inc/layout_error.html' %}
@@ -40,6 +44,7 @@
 {% endfor %}
 {% endif %}
 {% endspaceless %}
+{% endif %}
 
 <script>
 // Manual trigger: the popover stays open while the pointer is on the port or on the popover.

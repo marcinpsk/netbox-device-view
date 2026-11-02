@@ -3,7 +3,13 @@
 	rel="stylesheet"
 	href="{% static 'netbox_device_view/css/device_view.css' %}"
 />
-{% if use_svg %}
+{% if artwork_parts %}
+<link
+	rel="stylesheet"
+	href="{% static 'netbox_device_view/css/device_view_artwork.css' %}"
+/>
+<script src="{% static 'netbox_device_view/js/device_view_artwork.js' %}" defer></script>
+{% elif use_svg %}
 <link
 	rel="stylesheet"
 	href="{% static 'netbox_device_view/css/device_view_svg.css' %}"

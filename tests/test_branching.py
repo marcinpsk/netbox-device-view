@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
-from dcim.models import DeviceType
+from dcim.models import DeviceType, Manufacturer
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -17,9 +17,15 @@ from users.models import ObjectPermission, User
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
-from netbox_device_view.models import DefinitionRevision, DeviceView, VisualDefinition
+from netbox_device_view.models import (
+    Association,
+    DefinitionRevision,
+    DeviceView,
+    VisualDefinition,
+)
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
+from .test_artwork_activation import ACTIVATE_URL
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import EDIT_URL as DEFINITION_EDIT_URL
@@ -103,13 +109,17 @@ class DataSourceImportInBranchTests(ConcurrentApplyTestBase):
 
 
 class CatalogueModelTests(SimpleTestCase):
-    def test_every_plugin_model_except_device_view_is_in_the_catalogue(self):
+    def test_every_plugin_model_that_refers_to_no_type_is_in_the_catalogue(self):
         labels = {
             model._meta.label_lower
             for model in apps.get_app_config("netbox_device_view").get_models()
         }
 
-        self.assertEqual(labels - CATALOGUE, {"netbox_device_view.deviceview"})
+        # A branch can change device types and module types, so their links are branched too.
+        self.assertEqual(
+            labels - CATALOGUE,
+            {"netbox_device_view.deviceview", "netbox_device_view.association"},
+        )
 
 
 @unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
@@ -228,3 +238,36 @@ class KeyTransferInBranchTests(ArtworkBranchTestCase):
             .count(),
             1,
         )
+
+
+class ActivationInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        self.device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        super().setUp()
+
+    def test_an_activation_in_a_branch_changes_main_at_the_merge(self):
+        from netbox_branching.utilities import activate_branch
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        self.grant(Association, "view", "add")
+        self.grant(DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Association.objects.exists())
+        with activate_branch(self.branch):
+            self.assertEqual(Association.objects.get().revision_id, revision.pk)
+
+        self.branch.merge(user=self.user)
+
+        self.assertEqual(Association.objects.get().device_type, self.device_type)

@@ -29,6 +29,11 @@ menu_items = (
         permissions=["netbox_device_view.view_visualdefinition"],
     ),
     PluginMenuItem(
+        link="plugins:netbox_device_view:association_list",
+        link_text="Artwork Associations",
+        permissions=["netbox_device_view.view_association"],
+    ),
+    PluginMenuItem(
         link="plugins:netbox_device_view:definitionrevision_list",
         link_text="Artwork Revisions",
         permissions=["netbox_device_view.view_definitionrevision"],
