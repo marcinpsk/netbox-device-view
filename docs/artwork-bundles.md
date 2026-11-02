@@ -84,6 +84,7 @@ Rules:
 Each face is one SVG file. The `viewBox` is in millimetres of the real face. The import rejects SVG content that is not in the profile. It never removes or repairs content.
 
 - Elements: `svg` (root only), `g`, `defs`, `symbol`, `use`, `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `text`, `tspan`, `title`, `desc`, `linearGradient`, `radialGradient`, `stop`, `clipPath`.
+- `title` and `desc` contain only text.
 - Not allowed: scripts, `style` elements, `image`, links, masks, filters, patterns, markers, `foreignObject`, animation, event attributes, `class`, a DOCTYPE, entities and processing instructions. Only the SVG and XLink namespaces are allowed, so export plain SVG from your editor.
 - Styling: presentation attributes and `style` attributes with presentation properties only. A paint `url()` can name only a gradient in the same file. A `clip-path` can name only a `clipPath` in the same file.
 - References: `href` and `xlink:href` are `#id` references in the same file. Reference cycles fail.
