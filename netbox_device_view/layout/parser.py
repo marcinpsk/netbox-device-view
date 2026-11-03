@@ -463,7 +463,8 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     ``strict=True`` also applies the strict rules of a save or an import.
     Raises LayoutParseError on schema violations.
     """
-    if len(yaml_text.encode()) > MAX_LAYOUT_BYTES:
+    # The YAML reader rejects a lone surrogate, which a JSON import can give.
+    if len(yaml_text.encode(errors="surrogatepass")) > MAX_LAYOUT_BYTES:
         raise LayoutParseError(
             f"The layout is larger than {MAX_LAYOUT_BYTES // 1024} KiB."
         )
