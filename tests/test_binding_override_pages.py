@@ -454,6 +454,25 @@ class PermissionTests(OverridePageTestCase):
         self.override.refresh_from_db()
         self.assertEqual(self.override.bindings, [{"component": ETH, "name": "eth2"}])
 
+    def test_an_override_of_a_scope_that_the_user_cannot_view_cannot_be_edited(self):
+        grant(self.user, BindingOverride, "change")
+        override = BindingOverride.objects.create(
+            device=self.sw2,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=[],
+        )
+        ObjectPermission.objects.filter(name__startswith="dcim.device ").update(
+            constraints={"name": "sw1"}
+        )
+
+        self.assertEqual(
+            self.client.get(reverse(EDIT_URL, args=[override.pk])).status_code, 404
+        )
+        self.assertEqual(self.edit(override, (ETH, "eth1")).status_code, 404)
+        override.refresh_from_db()
+        self.assertEqual(override.bindings, [])
+
     def test_an_override_outside_the_change_constraints_cannot_be_edited(self):
         grant(
             self.user, BindingOverride, "change", constraints={"device__isnull": False}

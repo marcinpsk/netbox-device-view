@@ -9,14 +9,17 @@ import time
 from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
-from users.models import ObjectPermission, User
+from rest_framework.test import APIClient
+from users.constants import TOKEN_PREFIX
+from users.models import ObjectPermission, Token, User
+from utilities.exceptions import AbortRequest
 
 from netbox_device_view.artwork import overrides
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.artwork.type_lock import lock_types
+from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_types
 from netbox_device_view.models import Association, BindingOverride
 
 from .artwork_samples import bundle, definition
@@ -24,6 +27,8 @@ from .permissions import grant
 from .test_artwork_activation import ACTIVATE_URL, ActivationTestCase
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 from .test_artwork_import_concurrency import waiting_advisory_locks
+from .test_binding_override_api import DETAIL as API_DETAIL
+from .test_binding_override_api import LIST as API_LIST
 
 ETH1 = """\
   con-eth1:
@@ -135,6 +140,47 @@ class ActivationBlockTests(ActivationTestCase):
         )
         self.assertNotContains(response, "· con-eth1", status_code=409)
 
+    def test_a_blocking_override_of_a_device_that_the_user_cannot_view_is_not_named(
+        self,
+    ):
+        add_override(device=self.device)
+        ObjectPermission.objects.filter(name__startswith="dcim.device ").update(
+            constraints={"name": "other"}
+        )
+
+        response = self.post(self.candidate)
+
+        self.assertContains(
+            response,
+            "Your permissions do not cover every affected object.",
+            status_code=409,
+        )
+        self.assertNotContains(response, "sw1 · con-eth1", status_code=409)
+
+
+class WriterTests(ActivationTestCase):
+    def test_the_writer_checks_the_type_of_a_device_that_changed_its_type(self):
+        Association.objects.create(device_type=self.device_type, revision=self.revision)
+        other_type = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="SW-48", slug="sw-48"
+        )
+        device = Device.objects.select_related("device_type").get(pk=self.device.pk)
+        # A concurrent NetBox edit changes the type after the writer read the device.
+        Device.objects.filter(pk=device.pk).update(device_type=other_type)
+
+        with self.assertRaises(AbortRequest) as raised:
+            overrides.save(
+                self.admin,
+                BindingOverride(
+                    device=device, connector_key="con-eth1", bindings=REPLACEMENT
+                ),
+            )
+        # NetBox marks the message of an AbortRequest safe, so it holds no name.
+        self.assertEqual(
+            raised.exception.message, "The type of the scope changed. Try again."
+        )
+        self.assertFalse(BindingOverride.objects.exists())
+
 
 class ImportTests(ActivationTestCase):
     def test_a_new_revision_import_does_not_change_or_delete_an_override(self):
@@ -184,8 +230,27 @@ class TypeLockTests(TransactionTestCase):
         )
         Association.objects.create(device_type=self.device_type, revision=self.revision)
 
-    def while_locked(self, change, waiter):
-        """Run ``waiter`` in a thread while a transaction holds the type lock; ``change`` runs in that transaction."""
+    def stored(self, connector_key="con-eth1"):
+        return BindingOverride.objects.create(
+            device=self.device,
+            definition=self.revision.definition,
+            connector_key=connector_key,
+            bindings=REPLACEMENT,
+        )
+
+    def api(self):
+        token = Token.objects.create(user=self.user)
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
+        )
+        return client
+
+    def while_locked(self, change, waiter, lock=None, while_waiting=None):
+        """Run ``waiter`` in a thread while a transaction holds a lock, the type lock by default.
+
+        ``change`` runs in that transaction before the thread starts, ``while_waiting`` while the thread waits.
+        """
         result = {}
 
         def run():
@@ -197,7 +262,10 @@ class TypeLockTests(TransactionTestCase):
                 connection.close()
 
         with transaction.atomic():
-            lock_types([self.device_type], "default")
+            if lock is None:
+                lock_types([self.device_type], "default")
+            else:
+                lock()
             change()
             thread = threading.Thread(target=run)
             thread.start()
@@ -206,6 +274,8 @@ class TypeLockTests(TransactionTestCase):
                 self.assertLess(time.monotonic(), deadline, "the writer did not wait")
                 self.assertTrue(thread.is_alive(), result)
                 time.sleep(0.05)
+            if while_waiting is not None:
+                result["while_waiting"] = while_waiting()
         thread.join(30)
         return result
 
@@ -262,4 +332,103 @@ class TypeLockTests(TransactionTestCase):
         result = self.while_locked(lambda: None, override.delete)
 
         self.assertNotIn("error", result)
+        self.assertFalse(BindingOverride.objects.exists())
+
+    def test_a_bulk_api_write_waits_for_another_writer_of_several_overrides(self):
+        first, second = self.stored(), self.stored("con-psu")
+        api = self.api()
+
+        result = self.while_locked(
+            lambda: None,
+            lambda: api.patch(
+                reverse(API_LIST),
+                [{"id": first.pk, "bindings": []}, {"id": second.pk, "bindings": []}],
+                format="json",
+            ),
+            lock=lambda: lock_bulk_writes("default"),
+        )
+
+        self.assertEqual(result["value"].status_code, 200, result)
+        self.assertEqual(
+            list(BindingOverride.objects.values_list("bindings", flat=True)), [[], []]
+        )
+
+    def test_an_api_change_takes_the_type_lock_before_the_row_lock(self):
+        override = self.stored()
+        api = self.api()
+        etag = api.get(reverse(API_DETAIL, args=[override.pk])).get("ETag")
+        headers = {"HTTP_IF_MATCH": etag} if etag else {}
+
+        def row_is_free():
+            try:
+                with transaction.atomic():
+                    list(
+                        BindingOverride.objects.select_for_update(nowait=True)
+                        .filter(pk=override.pk)
+                        .values_list("pk")
+                    )
+            except DatabaseError:
+                return False
+            return True
+
+        result = self.while_locked(
+            lambda: None,
+            lambda: api.patch(
+                reverse(API_DETAIL, args=[override.pk]),
+                {"bindings": []},
+                format="json",
+                **headers,
+            ),
+            while_waiting=row_is_free,
+        )
+
+        self.assertTrue(result["while_waiting"])
+        self.assertEqual(result["value"].status_code, 200, result)
+
+    def test_a_writer_stops_at_once_when_the_device_is_locked(self):
+        result = {}
+        override = self.stored()
+        with transaction.atomic():
+            # A NetBox edit of the device holds its row.
+            list(
+                Device.objects.select_for_update()
+                .filter(pk=self.device.pk)
+                .values_list("pk")
+            )
+            thread = threading.Thread(target=lambda: self._delete(override, result))
+            thread.start()
+            thread.join(5)
+            waited = thread.is_alive()
+        thread.join(30)
+
+        self.assertFalse(waited, "the writer waited for the device row")
+        self.assertIsInstance(result.get("error"), AbortRequest)
+        self.assertTrue(BindingOverride.objects.filter(pk=override.pk).exists())
+
+    @staticmethod
+    def _delete(override, result):
+        try:
+            override.delete()
+        except Exception as exc:  # noqa: BLE001  (the test checks the outcome)
+            result["error"] = exc
+        finally:
+            connection.close()
+
+    def test_an_add_that_waits_for_the_type_lock_checks_the_scope_again(self):
+        user = User.objects.create_user(username="limited")
+        grant(user, BindingOverride, "add", "view")
+        grant(user, Device, "view", constraints={"name": "sw1"})
+
+        result = self.while_locked(
+            lambda: Device.objects.filter(pk=self.device.pk).update(name="hidden"),
+            lambda: overrides.save(
+                user,
+                BindingOverride(
+                    device=self.device, connector_key="con-eth1", bindings=REPLACEMENT
+                ),
+            ),
+        )
+
+        self.assertIsInstance(result.get("error"), ValidationError, result)
+        self.assertIn("Select a device that you can view.", str(result["error"]))
         self.assertFalse(BindingOverride.objects.exists())
