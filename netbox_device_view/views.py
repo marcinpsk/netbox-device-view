@@ -6,16 +6,14 @@ from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ValidationError
 from django.db import router, transaction
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
-from django.utils.html import escape
 from django.utils.http import urlencode
-from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
 from django.views import View
@@ -31,8 +29,6 @@ from netbox.object_actions import (
 )
 from netbox.views import generic
 from netbox.views.generic import BulkImportView, ObjectChangeLogView
-from utilities.exceptions import AbortRequest, PermissionsViolation
-from utilities.forms import restrict_form_fields
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
@@ -624,47 +620,6 @@ class BindingOverrideEditView(generic.ObjectEditView):
         if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
             raise Http404
         return obj
-
-    def post(self, request, *args, **kwargs):
-        """Save through the override writer, which takes the type lock and checks the saved row."""
-        obj = self.get_object(**kwargs)
-        if obj.pk:
-            obj.snapshot()
-        form = self.form(data=request.POST, instance=obj)
-        restrict_form_fields(form, request.user)
-        if form.is_valid():
-            obj._changelog_message = form.cleaned_data.pop("changelog_message", "")
-            created = obj._state.adding
-            try:
-                obj = overrides.save(request.user, obj)
-            except ValidationError as exc:
-                form.add_error(None, exc)
-            except AbortRequest as exc:
-                form.add_error(None, exc.message)
-            except PermissionDenied:
-                form.add_error(None, PermissionsViolation.message)
-            else:
-                verb = _("Created") if created else _("Modified")
-                messages.success(
-                    request,
-                    mark_safe(
-                        f'{verb} {obj._meta.verbose_name} <a href="{obj.get_absolute_url()}">{escape(obj)}</a>'
-                    ),
-                )
-                if "_addanother" in request.POST:
-                    return redirect(request.path)
-                return redirect(self.get_return_url(request, obj))
-        return render(
-            request,
-            self.template_name,
-            {
-                "model": self.queryset.model,
-                "object": obj,
-                "form": form,
-                "return_url": self.get_return_url(request, obj),
-                **self.get_extra_context(request, obj),
-            },
-        )
 
 
 class BindingOverrideDeleteView(generic.ObjectDeleteView):
