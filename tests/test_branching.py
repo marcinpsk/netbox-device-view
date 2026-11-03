@@ -19,6 +19,7 @@ from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.models import (
     Association,
+    BindingOverride,
     DefinitionRevision,
     DeviceView,
     VisualDefinition,
@@ -31,6 +32,8 @@ from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import EDIT_URL as DEFINITION_EDIT_URL
 from .test_artwork_source_import import SOURCE_IMPORT_URL
+from .test_binding_override_pages import ADD_URL as OVERRIDE_ADD_URL
+from .test_binding_override_pages import rows
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
 
@@ -292,5 +295,70 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         self.assertFalse(
             ChangeDiff.objects.using("default")
             .filter(object_type=ObjectType.objects.get_for_model(Association))
+            .exists()
+        )
+
+
+class BindingOverrideInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        from netbox_branching.utilities import activate_branch
+
+        # The branch copies main when it is provisioned.
+        self.device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        super().setUp()
+        self.upload()
+        with activate_branch(self.branch):
+            Association.objects.create(
+                device_type=self.device_type, revision=DefinitionRevision.objects.get()
+            )
+        grant(self.user, DeviceType, "view")
+
+    def add_override(self):
+        return self.client.post(
+            reverse(OVERRIDE_ADD_URL),
+            {
+                "device_type": self.device_type.pk,
+                "connector_key": "con-eth1",
+                **rows(("interface", "eth2")),
+            },
+        )
+
+    def test_an_override_in_a_branch_changes_main_at_the_merge(self):
+        from netbox_branching.utilities import activate_branch
+
+        grant(self.user, BindingOverride, "view", "add")
+
+        response = self.add_override()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(BindingOverride.objects.exists())
+        with activate_branch(self.branch):
+            self.assertEqual(BindingOverride.objects.get().connector_key, "con-eth1")
+
+        self.branch.merge(user=self.user)
+
+        self.assertEqual(BindingOverride.objects.get().device_type, self.device_type)
+
+    def test_a_rejected_override_in_a_branch_leaves_no_change_record(self):
+        from netbox_branching.models import ChangeDiff
+
+        grant(
+            self.user,
+            BindingOverride,
+            "view",
+            "add",
+            constraints={"connector_key": "con-psu"},
+        )
+
+        response = self.add_override()
+
+        self.assertContains(response, "permissions violation")
+        self.assertFalse(
+            ChangeDiff.objects.using("default")
+            .filter(object_type=ObjectType.objects.get_for_model(BindingOverride))
             .exists()
         )

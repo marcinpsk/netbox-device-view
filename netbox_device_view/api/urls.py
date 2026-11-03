@@ -9,6 +9,7 @@ router = NetBoxRouter()
 router.register("device-view", views.DeviceViewViewSet)
 router.register("artwork-definitions", views.VisualDefinitionViewSet)
 router.register("artwork-revisions", views.DefinitionRevisionViewSet)
+router.register("binding-overrides", views.BindingOverrideViewSet)
 
 urlpatterns = router.urls + [
     path(

@@ -1,6 +1,7 @@
 from core.models import DataSource
-from dcim.models import DeviceType, Manufacturer
+from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django import forms
+from django.core.exceptions import ValidationError
 from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
 from netbox.forms import (
@@ -16,10 +17,18 @@ from utilities.forms.fields import (
     DynamicModelMultipleChoiceField,
     TagFilterField,
 )
-from utilities.forms.rendering import FieldSet
+from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
-from .models import Association, DeviceView, VisualDefinition
+from .artwork.manifest import BINDING_COMPONENTS, MAX_BINDING_NAME_LENGTH, MAX_BINDINGS
+from .components import BINDING_MODELS
+from .models import (
+    SCOPE_FIELDS,
+    Association,
+    BindingOverride,
+    DeviceView,
+    VisualDefinition,
+)
 from .utils import normalize_grid_template_area
 
 
@@ -218,3 +227,155 @@ class VisualDefinitionFilterForm(SavedFiltersMixin, FilterForm):
         null_option=capfirst(VisualDefinition.OFFLINE_UPLOADS),
         label=_("Key owner"),
     )
+
+
+class BindingRowForm(forms.Form):
+    """One binding of an override: a component type and a name."""
+
+    component = forms.ChoiceField(
+        choices=[
+            ("", "---------"),
+            *(
+                (name, capfirst(BINDING_MODELS[name]._meta.verbose_name))
+                for name in BINDING_COMPONENTS
+            ),
+        ],
+        required=False,
+        label=_("Component type"),
+        # A plain select, as the script cannot give a new row the select of NetBox.
+        widget=forms.Select(attrs={"class": "form-select no-ts"}),
+    )
+    name = forms.CharField(
+        max_length=MAX_BINDING_NAME_LENGTH,
+        required=False,
+        label=_("Name"),
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+    )
+
+    def clean(self):
+        data = super().clean()
+        if bool(data.get("component")) != bool(data.get("name")):
+            raise ValidationError(
+                _("Give the component type and the name, or clear both.")
+            )
+        return data
+
+
+class BaseBindingRows(forms.BaseFormSet):
+    @property
+    def bindings(self):
+        """Return the binding list of the rows; an empty row is left out."""
+        return [
+            {
+                "component": form.cleaned_data["component"],
+                "name": form.cleaned_data["name"],
+            }
+            for form in self.forms
+            if form.cleaned_data.get("component")
+        ]
+
+
+BindingRows = forms.formset_factory(
+    BindingRowForm,
+    formset=BaseBindingRows,
+    extra=1,
+    max_num=MAX_BINDINGS,
+    absolute_max=MAX_BINDINGS,
+    validate_max=True,
+)
+
+
+class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
+    """The scope and the connector of a new override, and the binding rows; only the rows change later."""
+
+    device_type = DynamicModelChoiceField(
+        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+    )
+    module_type = DynamicModelChoiceField(
+        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
+    )
+    device = DynamicModelChoiceField(
+        queryset=Device.objects.all(), required=False, selector=True, label=_("Device")
+    )
+    module = DynamicModelChoiceField(
+        queryset=Module.objects.all(),
+        required=False,
+        selector=True,
+        label=_("Installed module"),
+    )
+    connector_key = forms.CharField(
+        label=_("Connector key"),
+        help_text=_(
+            "The key of the connector in the active artwork, for example con-eth1. The"
+            " revision page lists the keys."
+        ),
+    )
+    # The binding rows give the value; the field shows the errors of the list.
+    bindings = forms.JSONField(required=False, disabled=True, widget=forms.HiddenInput)
+
+    fieldsets = (
+        FieldSet(
+            TabbedGroups(
+                FieldSet("device_type", name=_("Device type")),
+                FieldSet("module_type", name=_("Module type")),
+                FieldSet("device", name=_("Device")),
+                FieldSet("module", name=_("Installed module")),
+            ),
+            name=_("Scope"),
+        ),
+        FieldSet("connector_key", name=_("Connector")),
+    )
+
+    class Meta:
+        model = BindingOverride
+        fields = (*SCOPE_FIELDS, "connector_key", "bindings")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.binding_rows = BindingRows(
+            self.data if self.is_bound else None,
+            prefix="binding",
+            initial=self.instance.bindings,
+        )
+        if not self.instance._state.adding:
+            for name in (*SCOPE_FIELDS, "connector_key"):
+                self.fields[name].disabled = True
+
+    def clean_bindings(self):
+        if not self.binding_rows.is_valid():
+            raise ValidationError(_("Correct the bindings."))
+        return self.binding_rows.bindings
+
+    def clean(self):
+        data = super().clean()
+        # The model form keeps the stored list for an empty value that the POST omits.
+        if "bindings" in data:
+            self.instance.bindings = data["bindings"]
+        return data
+
+
+class BindingOverrideFilterForm(SavedFiltersMixin, FilterForm):
+    model = BindingOverride
+    fieldsets = (
+        FieldSet("q", "filter_id"),
+        FieldSet(*(f"{name}_id" for name in SCOPE_FIELDS), name=_("Scope")),
+        FieldSet("definition_id", "connector_key", name=_("Connector")),
+    )
+    device_type_id = DynamicModelMultipleChoiceField(
+        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+    )
+    module_type_id = DynamicModelMultipleChoiceField(
+        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
+    )
+    device_id = DynamicModelMultipleChoiceField(
+        queryset=Device.objects.all(), required=False, label=_("Device")
+    )
+    module_id = DynamicModelMultipleChoiceField(
+        queryset=Module.objects.all(), required=False, label=_("Installed module")
+    )
+    definition_id = DynamicModelMultipleChoiceField(
+        queryset=VisualDefinition.objects.all(),
+        required=False,
+        label=_("Definition key"),
+    )
+    connector_key = forms.CharField(required=False, label=_("Connector key"))

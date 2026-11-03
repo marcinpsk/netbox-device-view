@@ -17,6 +17,7 @@ from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
 from ..filtersets import (
+    BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
     DeviceViewFilterSet,
     VisualDefinitionFilterSet,
@@ -25,6 +26,7 @@ from ..forms import ArtworkSourceImportForm
 from .device_artwork import compose_device_artwork
 from .rendered_layout import compose_rendered_layout
 from .serializers import (
+    BindingOverrideSerializer,
     DefinitionRevisionSerializer,
     DeviceViewSerializer,
     VisualDefinitionSerializer,
@@ -130,6 +132,22 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
         with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
             models.VisualDefinition.lock(update_data)
             return super().perform_bulk_update(objects, update_data, partial)
+
+
+class BindingOverrideViewSet(NetBoxModelViewSet):
+    """The serializer saves through the override writer; BindingOverride.delete() takes the type lock."""
+
+    queryset = models.BindingOverride.objects.select_related(
+        "device_type__manufacturer",
+        "module_type__manufacturer",
+        "device__device_type",
+        "module__device",
+        "module__module_bay",
+        "module__module_type",
+        "definition__key_owner",
+    )
+    serializer_class = BindingOverrideSerializer
+    filterset_class = BindingOverrideFilterSet
 
 
 def _error_response(exc: ArtworkError):
