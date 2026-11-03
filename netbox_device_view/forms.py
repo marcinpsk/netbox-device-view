@@ -1,15 +1,17 @@
 from core.models import DataSource
 from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django import forms
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
+from netbox.context import current_request
 from netbox.forms import (
     NetBoxModelFilterSetForm,
     NetBoxModelForm,
     NetBoxModelImportForm,
 )
 from netbox.forms.mixins import ChangelogMessageMixin, SavedFiltersMixin
+from utilities.exceptions import AbortRequest, PermissionsViolation
 from utilities.forms import FilterForm
 from utilities.forms.fields import (
     CSVModelChoiceField,
@@ -20,6 +22,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
+from .artwork import overrides
 from .artwork.manifest import BINDING_COMPONENTS, MAX_BINDING_NAME_LENGTH, MAX_BINDINGS
 from .components import BINDING_MODELS
 from .models import (
@@ -345,6 +348,20 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         if not self.binding_rows.is_valid():
             raise ValidationError(_("Correct the bindings."))
         return self.binding_rows.bindings
+
+    def save(self, commit=True):
+        """Save through the override writer, which takes the type lock and checks the saved row."""
+        if not commit:
+            raise ValueError("A binding override saves only through its writer.")
+        # ObjectEditView gives the form no user; NetBox sets the request of each view.
+        user = current_request.get().user
+        try:
+            return overrides.save(user, self.instance)
+        except ValidationError as exc:
+            # ObjectEditView shows an AbortRequest or a PermissionsViolation on the form.
+            raise AbortRequest(" ".join(exc.messages)) from exc
+        except PermissionDenied as exc:
+            raise PermissionsViolation from exc
 
     def clean(self):
         data = super().clean()
