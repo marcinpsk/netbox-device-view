@@ -1,6 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 438.15 43.56">
   <title>Avocent ACS6048DAC-G2, rear</title>
-  <rect x="0" y="0" width="438.15" height="43.56" rx="0.8" fill="#c9cdcf" stroke="#7d8184" stroke-width="0.5"/>
+  <defs>
+    <linearGradient id="panel-silver" x1="0" y1="0" x2="0.08" y2="1">
+      <stop offset="0" stop-color="#eef0f1"/>
+      <stop offset="0.18" stop-color="#c6cacd"/>
+      <stop offset="0.42" stop-color="#e2e5e7"/>
+      <stop offset="0.55" stop-color="#d3d6d9"/>
+      <stop offset="0.8" stop-color="#b4b9bc"/>
+      <stop offset="1" stop-color="#d0d3d6"/>
+    </linearGradient>
+    <linearGradient id="shield-metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b3ada1"/>
+      <stop offset="0.3" stop-color="#8a857b"/>
+      <stop offset="0.5" stop-color="#a49e92"/>
+      <stop offset="0.7" stop-color="#868177"/>
+      <stop offset="1" stop-color="#9d978b"/>
+    </linearGradient>
+    <linearGradient id="bar-metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c2bcaf"/>
+      <stop offset="0.5" stop-color="#9a9488"/>
+      <stop offset="1" stop-color="#b1ab9f"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="438.15" height="43.56" rx="0.8" fill="url(#panel-silver)" stroke="#7d8184" stroke-width="0.5"/>
   <g>
     <rect x="1" y="1.2" width="21" height="40.8" rx="0.6" fill="#2a2a2c"/>
     <rect x="3.5" y="2.4" width="16" height="6.2" rx="0.6" fill="#8e9094"/>
@@ -22,8 +44,8 @@
     <rect x="31.7" y="31.6" width="4.4" height="1.6" fill="#c8c8c8"/>
     <text x="12" y="42.6" style="font-family:Arial, Helvetica, sans-serif" font-size="0.9" font-weight="bold" text-anchor="start" fill="#cfcfcf">2X 100-240VAC~50/60Hz</text>
   </g>
-  <rect x="47.7" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
-  <rect x="48.3" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="47.7" y="8.9" width="116.1" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="48.3" y="20.75" width="114.9" height="2.6" fill="url(#bar-metal)"/>
   <rect x="54.6" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="54.6" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
     <text x="56" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">1</text>
@@ -120,8 +142,8 @@
       <path d="M151.43 24H157.83V26H161.03V34.2H148.23V26H151.43Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="151.83" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
     </g>
-  <rect x="167" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
-  <rect x="167.6" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="167" y="8.9" width="116.1" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="167.6" y="20.75" width="114.9" height="2.6" fill="url(#bar-metal)"/>
   <rect x="173.9" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="173.9" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
     <text x="175.3" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">17</text>
@@ -218,8 +240,8 @@
       <path d="M270.73 24H277.13V26H280.33V34.2H267.53V26H270.73Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="271.13" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
     </g>
-  <rect x="286.2" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
-  <rect x="286.8" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="286.2" y="8.9" width="116.1" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="286.8" y="20.75" width="114.9" height="2.6" fill="url(#bar-metal)"/>
   <rect x="293.1" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="293.1" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
     <text x="294.5" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">33</text>
@@ -316,8 +338,8 @@
       <path d="M389.93 24H396.33V26H399.53V34.2H386.73V26H389.93Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="390.33" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
     </g>
-  <rect x="405.5" y="8.9" width="31.6" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
-  <rect x="406.1" y="20.75" width="30.4" height="2.6" fill="#9c968a"/>
+  <rect x="405.5" y="8.9" width="31.6" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="406.1" y="20.75" width="30.4" height="2.6" fill="url(#bar-metal)"/>
   <rect x="412.3" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="412.3" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
     <g id="con-eth1">
