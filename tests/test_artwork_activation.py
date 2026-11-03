@@ -7,7 +7,7 @@ import threading
 import time
 
 from core.models import ObjectChange, ObjectType
-from dcim.models import DeviceType, Manufacturer
+from dcim.models import DeviceType, Manufacturer, ModuleType
 from django.db import connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
@@ -180,6 +180,19 @@ class AssociationPageTests(ActivationTestCase):
         detail = self.client.get(reverse(ASSOCIATION_URL, args=[self.association.pk]))
         self.assertContains(detail, self.revision.digest)
         self.assertContains(detail, self.device_type.get_absolute_url())
+
+    def test_the_list_links_the_module_type_of_a_module_association(self):
+        module_type = ModuleType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="NM-2X"
+        )
+        Association.objects.create(
+            module_type=module_type,
+            revision=self.import_files(MODULE_FILES, "ACME/NM-2X"),
+        )
+        listing = self.client.get(reverse(LIST_URL))
+        self.assertContains(
+            listing, f'<a href="{module_type.get_absolute_url()}">NM-2X</a>', html=True
+        )
 
     def test_an_active_revision_cannot_be_deleted(self):
         grant(self.user, DefinitionRevision, "delete")
