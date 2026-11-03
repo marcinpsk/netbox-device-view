@@ -22,6 +22,7 @@ from dcim.models import (
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from lxml import etree
 from users.models import User
 
 from netbox_device_view.artwork.importing import import_bundle
@@ -93,7 +94,8 @@ class ReferenceArtworkTests(TestCase):
         self.assertEqual(manifest["license"], "MIT")
         self.assertEqual(len(manifest["connectors"]), 54)
 
-    def test_each_bound_connector_links_to_its_component(self):
+    def activate(self):
+        """Return a device of the community type, and the revision that is its active artwork."""
         device_type = community_device_type()
         device = Device.objects.create(
             name="acs1",
@@ -105,6 +107,26 @@ class ReferenceArtworkTests(TestCase):
             self.admin, "acs6048.zip", io.BytesIO(definition_bundle())
         )
         Association.objects.create(device_type=device_type, revision=imported.revision)
+        return device, imported.revision
+
+    def tab_faces(self, device):
+        content = self.client.get(reverse(TAB_URL, kwargs={"pk": device.pk}))
+        return faces(content.content.decode())
+
+    def test_each_face_has_its_real_size_and_the_page_scales_it(self):
+        for name in ("front", "rear"):
+            root = etree.fromstring((DEFINITION / f"{name}.svg").read_bytes())
+            self.assertEqual(root.get("viewBox"), "0 0 438.15 43.56")
+            # A viewer outside the plugin shows the face at its size on the unit.
+            self.assertEqual(
+                (root.get("width"), root.get("height")), ("438.15mm", "43.56mm")
+            )
+        device, _ = self.activate()
+        for face in self.tab_faces(device):
+            self.assertEqual((face.get("width"), face.get("height")), (None, None))
+
+    def test_each_bound_connector_links_to_its_component(self):
+        device, revision = self.activate()
         components = {
             "interface": device.interfaces,
             "consoleport": device.consoleports,
@@ -115,12 +137,11 @@ class ReferenceArtworkTests(TestCase):
             f"dv-o-d{device.pk}-rear-{key}": components[binding["component"]]
             .get(name=binding["name"])
             .get_absolute_url()
-            for key, connector in imported.revision.manifest["connectors"].items()
+            for key, connector in revision.manifest["connectors"].items()
             for binding in connector["bindings"]
         }
 
-        content = self.client.get(reverse(TAB_URL, kwargs={"pk": device.pk}))
-        front, rear = faces(content.content.decode())
+        front, rear = self.tab_faces(device)
 
         self.assertEqual(len(expected), 54)
         self.assertEqual(
