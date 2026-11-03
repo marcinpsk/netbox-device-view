@@ -67,6 +67,10 @@ def _representation(member, revision, user) -> dict:
     except LayoutParseError:
         logger.warning("Invalid YAML layout for device %s", member.pk)
         return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
+    except Exception:
+        # As in compose_rendered_layout: one member that fails does not fail the others.
+        logger.exception("Unexpected error composing panels for device %s", member.pk)
+        return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
 
 
