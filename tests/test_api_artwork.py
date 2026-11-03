@@ -315,7 +315,7 @@ class BrowserAgreementTests(ArtworkApiTestCase):
                 self.assertEqual(binding["object_id"], component.pk)
                 self.assertEqual(link.get("href"), component.get_absolute_url())
                 self.assertEqual(
-                    "dv-art-occupied" in link.get("class"),
+                    "dv-art-cable-" in link.get("class"),
                     binding["cable_status"] is not None,
                 )
                 linked += 1
@@ -327,9 +327,9 @@ class BrowserAgreementTests(ArtworkApiTestCase):
             ids(etree.fromstring(face["svg"]))
             for face in self.member()["artwork"]["faces"]
         ]
-        # The page adds the outline and the focus ring filters of its links.
+        # The page adds the mark and the focus ring filters of its connectors.
         page = [
-            [i for i in face if "-occupied-" not in i and "-focus-" not in i]
+            [i for i in face if "-marks-" not in i and "-focus-" not in i]
             for face in page
         ]
         self.assertEqual(
