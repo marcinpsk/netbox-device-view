@@ -305,6 +305,13 @@ class BrowserAgreementTests(ArtworkApiTestCase):
         [binding] = self.connectors(self.member())["con-eth1"]["bindings"]
         self.assertEqual((binding["status"], binding["object_id"]), ("missing", None))
 
+    def test_a_visible_cable_to_a_hidden_peer_is_occupied_with_no_label(self):
+        ObjectPermission.objects.filter(name__startswith="dcim.interface").update(
+            constraints={"device__name": "sw1"}
+        )
+        [binding] = self.connectors(self.member())["con-eth1"]["bindings"]
+        self.assertEqual((binding["occupied"], binding["peer_labels"]), (True, []))
+
     def test_a_hidden_cable_is_no_occupancy_and_a_hidden_peer_no_label(self):
         ObjectPermission.objects.filter(name__startswith="dcim.cable").delete()
         ObjectPermission.objects.filter(name__startswith="dcim.interface").update(
