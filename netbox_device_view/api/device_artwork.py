@@ -8,11 +8,11 @@ import logging
 
 from dcim.models import Device
 
-from ..artwork.render import API, DAMAGED, FOUND, active_revisions, resolve_device
+from ..artwork.render import API, DAMAGED, active_revisions, resolve_device
 from ..components import panel_members, viewable_device_view
 from ..layout.parser import LayoutParseError
 from ..models import DeviceView
-from .rendered_layout import UnavailableReason, component_fields, member_panels
+from .rendered_layout import UnavailableReason, member_panels
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,8 @@ UNAVAILABLE = "unavailable"
 # Reserved for a generic schematic (#47); no member gets it yet.
 SCHEMATIC = "schematic"
 DAMAGED_ARTWORK = "damaged_artwork"
+# The ComponentState facts that a binding gives as they are.
+_FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_complete")
 
 
 def compose_device_artwork(device: Device, user) -> dict:
@@ -107,21 +109,24 @@ def _artwork(part) -> dict:
 
 
 def _binding(binding) -> dict:
-    if binding.status == FOUND:
+    """Return one binding with each connectivity fact in its own field."""
+    state = binding.state
+    if state is None:
         return {
             "status": binding.status,
-            **component_fields(binding.state),
-            "occupied": binding.state.occupied,
+            "object_type": binding.model._meta.label_lower,
+            "object_id": None,
+            "name": binding.name,
+            **dict.fromkeys(_FACTS),
+            "peer_labels": [],
+            "trace_supported": False,
         }
     return {
         "status": binding.status,
-        "object_type": binding.model._meta.label_lower,
-        "object_id": None,
-        "name": binding.name,
-        "enabled": None,
-        "connection_state": None,
-        "cable_color": None,
-        "peer_labels": [],
-        "trace_supported": False,
-        "occupied": False,
+        "object_type": state.object_type,
+        "object_id": state.component.pk,
+        "name": state.component.name,
+        **{fact: getattr(state, fact) for fact in _FACTS},
+        "peer_labels": state.peer_labels,
+        "trace_supported": state.trace_supported,
     }
