@@ -1,13 +1,16 @@
 """The documentation states limits and versions that the code defines; keep them equal."""
 
+import re
 from pathlib import Path
 
 import pytest
+from dcim.models import Interface
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.api import device_artwork
 from netbox_device_view.api.rendered_layout import UnavailableReason
 from netbox_device_view.artwork import limits
+from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
 from netbox_device_view.layout import parser
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
@@ -119,3 +122,16 @@ def test_artwork_api_page_states_the_values_of_the_code():
         line.split("`")[1] for line in table.splitlines() if line.startswith("| `")
     }
     assert documented == reasons
+
+
+def test_artwork_api_page_documents_each_binding_field():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    table = text.split("### Binding", 1)[1].split("###", 1)[0]
+    documented = {
+        name
+        for line in table.splitlines()
+        if line.startswith("| `")
+        for name in re.findall(r"`(\w+)`", line.split("|")[1])
+    }
+    missing = Binding(Interface, "eth1", MISSING, None)
+    assert documented == set(device_artwork._binding(missing))
