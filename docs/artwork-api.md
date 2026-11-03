@@ -52,11 +52,12 @@ The artwork needs no permission on the artwork association or the revision. Comp
                 "object_id": 456,
                 "name": "eth1",
                 "enabled": true,
-                "connection_state": "connected",
+                "cable_status": "connected",
                 "cable_color": "ff0000",
+                "marked_connected": false,
+                "path_complete": true,
                 "peer_labels": ["server1 | eth0"],
-                "trace_supported": true,
-                "occupied": true
+                "trace_supported": true
               }
             ]
           }
@@ -135,8 +136,14 @@ The page links a connector to its component only when exactly one binding has `s
 | `object_type` | string | `app_label.model_name` of the bound type, for example `"dcim.interface"` or `"dcim.powerport"`. Set for a missing binding too. |
 | `object_id` | int \| null | The component. `null` when missing. |
 | `name` | string | The component name. For a missing binding, the name in the manifest. |
-| `enabled`, `connection_state`, `cable_color`, `peer_labels`, `trace_supported` | | As in a [rendered-layout hotspot](rendered-layout-api.md#hotspot). A missing binding has `null`, `null`, `null`, `[]` and `false`. |
-| `occupied` | bool | `true` when the component has a cable that the user can view. The page outlines such a connector. |
+| `enabled` | bool \| null | The administrative state of an interface. `null` for the other types, which have no `enabled` field. |
+| `cable_status` | string \| null | The status of the cable that the user can view: `"connected"`, `"planned"` or `"decommissioning"`. `null` without a cable, or with a cable that the user cannot view. |
+| `cable_color` | string \| null | As in a [rendered-layout hotspot](rendered-layout-api.md#hotspot). |
+| `marked_connected` | bool \| null | The **Mark connected** flag of the component. |
+| `path_complete` | bool \| null | `true` when the cable path of the component is complete. `null` for a type without a cable path, for example a front or rear port. A cable that the user cannot view is no cable, so its path gives `false`. |
+| `peer_labels`, `trace_supported` | | As in a [rendered-layout hotspot](rendered-layout-api.md#hotspot). |
+
+Each fact is its own field, and no field combines them. A disabled interface with a cable has `enabled: false` and a `cable_status`. A missing binding has `null` for each fact, `peer_labels: []` and `trace_supported: false`.
 
 ---
 
