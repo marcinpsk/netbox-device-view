@@ -74,9 +74,27 @@ def test_artwork_page_states_the_code_limits(statement):
             f"at most {parser.MAX_RENDERED_CELLS} grid cells rendered and "
             f"{parser.MAX_PAINTED_CELLS} grid cells painted"
         ),
+        f"at most {parser.MAX_MERGED_KEYS} keys and references that YAML merge keys",
+        f"integers of at most {parser.MAX_INTEGER_DIGITS} digits",
+        f"at most {parser.MAX_LAYOUT_BYTES // 1024} KiB of YAML text",
     ],
 )
 def test_layout_page_states_the_size_limits(statement):
+    assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"deeper than {parser._MAX_YAML_DEPTH} levels",
+        f"`{parser.IDENTIFIER.pattern}`, or has more than {parser.MAX_KEY_LENGTH} characters",
+        f"more than {parser.MAX_CSS_CLASSES} CSS classes",
+        f"printable text of at most {parser.MAX_LABEL_LENGTH} characters",
+        f"`{parser.VARIANT_NAME.pattern}`",
+        f"`cell_size` is more than {parser.MAX_CELL_SIZE}",
+    ],
+)
+def test_layout_page_states_the_save_rules(statement):
     assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
 
 

@@ -408,11 +408,14 @@ def _url(value: str, kinds: frozenset[str]) -> _Reference | None:
 
 
 def _css(function, *args, **kwargs):
-    """Call a tinycss2 function; it recurses into nested blocks, so deep nesting fails."""
+    """Call a tinycss2 function; deep nesting and very long numbers fail."""
     try:
         return function(*args, **kwargs)
     except RecursionError:
         raise _Invalid("CSS blocks are nested too deeply") from None
+    except ValueError:
+        # tinycss2 raises ValueError for a number of over 4300 digits.
+        raise _Invalid("a CSS number is too long") from None
 
 
 def _is_color(value: str) -> bool:

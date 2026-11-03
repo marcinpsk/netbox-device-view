@@ -18,6 +18,7 @@ from netbox_device_view.layout.parser import (
     MAX_CSS_CLASSES,
     MAX_EXPANDED_ELEMENTS,
     MAX_KEY_LENGTH,
+    MAX_LAYOUT_BYTES,
     MAX_PAINTED_CELLS,
     MAX_RENDERED_CELLS,
     LayoutParseError,
@@ -108,6 +109,132 @@ def test_lenient_parse_is_unchanged():
     assert parse("views: {}").views == {}
     with pytest.raises(LayoutParseError, match="grid area"):
         strict("views: {}")
+
+
+HUGE_INT = "0x" + "f" * 3600
+# Each alias doubles the value: its repr has 2**24 items and takes seconds.
+ALIAS_BOMB = (
+    "["
+    + ", ".join(["&a0 [0]"] + [f"&a{i} [*a{i - 1}, *a{i - 1}]" for i in range(1, 25)])
+    + "]"
+)
+FRONT = "views:\n  front:\n    "
+
+
+@BOTH_MODES
+@pytest.mark.parametrize("value", [HUGE_INT, ALIAS_BOMB], ids=["integer", "aliases"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "version: {}\n" + FRONT + "elements: [{{key: a}}]\n",
+        FRONT + "elements: [{{key: {}}}]\n",
+        FRONT + "elements: [{{key: a, kind: {}}}]\n",
+        FRONT + "rows:\n      - sequence: {{prefix: p, count: 2, pattern: {}}}\n",
+        FRONT + "rows:\n      - sequence: {{prefix: p, count: 2, start: {}}}\n",
+    ],
+    ids=["version", "key", "kind", "pattern", "start"],
+)
+def test_a_large_value_is_a_parse_error(mode, value, text):
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError):
+        parse_in(mode, text.format(value))
+    assert time.monotonic() - started < 1
+
+
+def _wide_merge():
+    wide = ", ".join(f"k{i}: 0" for i in range(8000))
+    return FRONT + f"elements: [&a {{{wide}}}, {{<<: [{', '.join(['*a'] * 16000)}]}}]\n"
+
+
+def _doubling_merge():
+    anchors = ["&a0 {key: p}"]
+    anchors += [f"&a{i} {{<<: [*a{i - 1}, *a{i - 1}]}}" for i in range(1, 22)]
+    return FRONT + f"elements: [{', '.join(anchors)}]\n"
+
+
+def _empty_merges():
+    aliases = ", ".join(["*e"] * 10000)
+    return f"e: &e {{}}\ns: &s [{aliases}]\nitems:\n" + "  - {<<: *s}\n" * 100
+
+
+@BOTH_MODES
+@pytest.mark.parametrize(
+    "build",
+    [_wide_merge, _doubling_merge, _empty_merges],
+    ids=["wide", "doubling", "empty"],
+)
+def test_merge_keys_have_a_budget(mode, build):
+    # Without the budget, each input takes seconds or more in both loaders.
+    text = build()
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="merge keys copy"):
+        parse_in(mode, text)
+    assert time.monotonic() - started < 1
+
+
+@BOTH_MODES
+def test_a_layout_has_at_most_256_kib(mode):
+    text = FRONT + "elements: [{key: a}]\n"
+    parse_in(mode, text + " " * (MAX_LAYOUT_BYTES - len(text)))
+    with pytest.raises(LayoutParseError, match="256 KiB"):
+        parse_in(mode, text + " " * (MAX_LAYOUT_BYTES - len(text) + 1))
+
+
+def test_strict_mapping_keys_with_one_hash_are_rejected_at_once():
+    # On 64-bit Python each of these integers hashes to 0.
+    text = "".join(f"{i * (2**61 - 1)}: 0\n" for i in range(9000))
+    assert len(text) <= MAX_LAYOUT_BYTES
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="keys must be strings"):
+        strict(text)
+    assert time.monotonic() - started < 1
+
+
+def test_a_long_aliased_key_is_checked_in_linear_time():
+    head = "s: &s " + "x" * 128 * 1024 + "\nitems:\n"
+    text = head + "- {*s: 0}\n" * ((MAX_LAYOUT_BYTES - len(head)) // 10)
+    # Lenient parsing reads the same text without the key check.
+    started = time.monotonic()
+    parse(text)
+    lenient = time.monotonic() - started
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="unknown key"):
+        strict(text)
+    assert time.monotonic() - started < 2 * lenient + 0.2
+
+
+def test_strict_mapping_keys_are_strings():
+    with pytest.raises(LayoutParseError, match="keys must be strings"):
+        strict(FRONT + "elements: [{key: a}]\n1: x\n")
+
+
+@BOTH_MODES
+@pytest.mark.parametrize("start", [2**64, 10**62], ids=["64-bit", "63-digit"])
+def test_both_modes_accept_the_same_large_integers(mode, start):
+    parse_in(
+        mode,
+        FRONT + f"rows:\n      - sequence: {{prefix: p, count: 1, start: {start}}}\n",
+    )
+
+
+@BOTH_MODES
+def test_an_integer_has_at_most_64_digits(mode):
+    with pytest.raises(LayoutParseError, match="64 digits"):
+        parse_in(
+            mode,
+            FRONT
+            + f"rows:\n      - sequence: {{prefix: p, count: 1, step: {10**64}}}\n",
+        )
+
+
+@BOTH_MODES
+def test_a_merge_key_still_works(mode):
+    layout = parse_in(
+        mode,
+        FRONT + "elements:\n      - &p {key: p1, label: x, at: {row: 1, col: 1}}\n"
+        "      - {<<: *p, key: p2, at: {row: 1, col: 2}}\n",
+    )
+    assert [e.label for e in layout.views["front"].elements] == ["x", "x"]
 
 
 class TestLimits:
@@ -250,6 +377,11 @@ class TestFields:
             (lambda d: d["canvas"].update(background=5), "background"),
             (lambda d: front(d).update(background="url(x)"), "background"),
             (lambda d: d["meta"].update(background="notacolor"), "background"),
+            (lambda d: d["meta"].update(background="color()"), "background"),
+            (
+                lambda d: d["meta"].update(background=f"rgb({'9' * 4400} 0 0)"),
+                "too long",
+            ),
             (lambda d: d["meta"].update(background="red /*"), "background"),
             (lambda d: d["meta"].update(background="/**/red"), "background"),
             (lambda d: d["meta"].update(background="red blue"), "background"),
@@ -751,5 +883,5 @@ class TestReviewFindings:
     def test_huge_generated_key_number_is_rejected(self):
         huge = 10**3000
         sequence = {"prefix": "p", "count": huge, "step": huge}
-        with pytest.raises(LayoutParseError, match="prefix"):
+        with pytest.raises(LayoutParseError, match="64 digits"):
             strict(layout(lambda d: front(d)["rows"].append({"sequence": sequence})))

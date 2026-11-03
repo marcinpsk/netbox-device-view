@@ -7,6 +7,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils.html import escape
 from rest_framework.test import APIClient
 from users.models import User
 
@@ -18,6 +19,28 @@ INVALID_YAML = (
     "version: 1\nviews:\n  front:\n    elements:\n      - {key: a, label: 5}\n"
 )
 INVALID_ERROR = "views.front.elements[0].label: must be a string."
+SAVE_ERROR = (
+    "views.front: element 'a': the label must be printable text of at most 64 "
+    "characters."
+)
+# Layouts that only the strict rules reject; lenient parsing reads each one.
+STRICT_ONLY = {
+    "unknown key": (
+        "views:\n  front:\n    elements:\n      - {key: p1, extra: 1}\n",
+        "views.front.elements[0]: unknown key extra.",
+    ),
+    "long key": (
+        f"views:\n  front:\n    elements:\n      - {{key: {'a' * 10000}}}\n",
+        "views.front.elements[0]: the element key",
+    ),
+    "long integer": (
+        (
+            f"canvas: {{cell_size: 0x{'f' * 3600}}}\n"
+            "views:\n  front:\n    elements: [{key: a}]\n"
+        ),
+        "canvas.cell_size: must be an integer from 0 to 100.",
+    ),
+}
 
 
 class SaveValidationTests(TestCase):
@@ -46,9 +69,7 @@ class SaveValidationTests(TestCase):
     def test_add_form_rejects_a_layout_that_does_not_parse(self):
         response = self._add(INVALID_YAML)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.context["form"].errors["yaml_layout"], [INVALID_ERROR]
-        )
+        self.assertEqual(response.context["form"].errors["yaml_layout"], [SAVE_ERROR])
         self.assertFalse(DeviceView.objects.exists())
 
     def test_add_form_accepts_a_valid_or_empty_layout(self):
@@ -68,7 +89,7 @@ class SaveValidationTests(TestCase):
             {"import_method": "direct", "data": row, "format": "yaml"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, f"yaml_layout: {INVALID_ERROR}")
+        self.assertContains(response, f"yaml_layout: {escape(SAVE_ERROR)}")
         self.assertFalse(DeviceView.objects.exists())
 
     def test_api_rejects_a_layout_that_does_not_parse_on_create_and_update(self):
@@ -85,7 +106,7 @@ class SaveValidationTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {"yaml_layout": [INVALID_ERROR]})
+        self.assertEqual(response.json(), {"yaml_layout": [SAVE_ERROR]})
         self.assertFalse(DeviceView.objects.exists())
 
         device_view = DeviceView.objects.create(
@@ -100,9 +121,52 @@ class SaveValidationTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {"yaml_layout": [INVALID_ERROR]})
+        self.assertEqual(response.json(), {"yaml_layout": [SAVE_ERROR]})
         device_view.refresh_from_db()
         self.assertEqual(device_view.yaml_layout, "")
+
+    def test_every_save_applies_the_strict_rules(self):
+        api = APIClient()
+        api.force_authenticate(self.user)
+        for name, (yaml_layout, error) in STRICT_ONLY.items():
+            with self.subTest(name):
+                response = self._add(yaml_layout)
+                self.assertEqual(response.status_code, 200)
+                (message,) = response.context["form"].errors["yaml_layout"]
+                self.assertTrue(message.startswith(error), message)
+                response = api.post(
+                    reverse("plugins-api:netbox_device_view-api:deviceview-list"),
+                    {
+                        "device_type": self.device_type.pk,
+                        "grid_template_area": GRID,
+                        "yaml_layout": yaml_layout,
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400)
+                (message,) = response.json()["yaml_layout"]
+                self.assertTrue(message.startswith(error), message)
+                self.assertFalse(DeviceView.objects.exists())
+
+    def test_a_stored_layout_that_breaks_a_strict_rule_must_be_fixed_on_save(self):
+        yaml_layout, error = STRICT_ONLY["unknown key"]
+        device_view = DeviceView.objects.create(
+            device_type=self.device_type,
+            grid_template_area=GRID,
+            yaml_layout=yaml_layout,
+        )
+        api = APIClient()
+        api.force_authenticate(self.user)
+        response = api.patch(
+            reverse(
+                "plugins-api:netbox_device_view-api:deviceview-detail",
+                kwargs={"pk": device_view.pk},
+            ),
+            {"render_mode": RenderMode.SVG},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"yaml_layout": [error]})
 
     def test_api_patch_without_the_layout_still_checks_a_stored_invalid_layout(self):
         device_view = DeviceView.objects.create(
@@ -121,7 +185,7 @@ class SaveValidationTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {"yaml_layout": [INVALID_ERROR]})
+        self.assertEqual(response.json(), {"yaml_layout": [SAVE_ERROR]})
         device_view.refresh_from_db()
         self.assertEqual(device_view.render_mode, RenderMode.CSS)
 
@@ -152,7 +216,7 @@ class FieldValidationTests(TestCase):
             self.device_view(yaml_layout=INVALID_YAML, render_mode="bogus").full_clean(
                 validate_unique=False
             )
-        self.assertEqual(caught.exception.message_dict["yaml_layout"], [INVALID_ERROR])
+        self.assertEqual(caught.exception.message_dict["yaml_layout"], [SAVE_ERROR])
         self.assertIn("render_mode", caught.exception.message_dict)
 
 

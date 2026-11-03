@@ -164,6 +164,8 @@ def test_accepted_declarations(declaration):
         ("background: linear-gradient(red, blue);", "background: must be one"),
         ("background: #000 no-repeat;", "background: must be one"),
         ("background-color: notacolor;", "background-color: must be one"),
+        ("background-color: color();", "background-color: must be one"),
+        pytest.param(f"grid-auto-rows: {'9' * 4400}px;", "too long", id="long"),
         ("background-color: ;", "background-color: must be one"),
     ],
 )

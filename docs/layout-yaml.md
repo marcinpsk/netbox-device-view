@@ -31,16 +31,35 @@ variants:           # optional — module overlays
 
 ---
 
-## Size limits
+## Validation
 
-Every layout must stay inside these limits, also a layout that you save in the form or with the API. A stored layout over a limit shows as an invalid layout:
+The edit form, the bulk import, the REST API and the [Data Source import](import-from-data-source.md) apply the same rules. They reject a YAML layout when:
 
+- it has a key that this page does not define, or a value of the wrong type or range;
+- the YAML nests deeper than 32 levels, has a mapping key that is not a string, or has an alias that refers to itself;
+- an element key or a CSS class does not match `[A-Za-z_][A-Za-z0-9_-]*`, or has more than 64 characters;
+- an element has more than 8 CSS classes, or a label that is not printable text of at most 64 characters;
+- a variant name does not match `[A-Za-z0-9_-]+`;
+- a `cell_size` is more than 100;
+- an element of a view or a variant is not fully inside the canvas of its view;
+- an element with another key covers a cell of a port in a view, or in a variant together with its view. A `spacer`, a `blank` or a `label` can be covered;
+- the cells of a key do not make one rectangle in a view, or in a variant together with its view. Overlapping elements are the usual cause;
+- it has variants and both a front and a rear view;
+- a variant names a view that is not in `views`.
+
+A layout that an earlier plugin version stored can break these rules. It still renders. The edit form and the REST API reject the next save of its device view until the layout passes, also a save that changes only another field.
+
+### Size limits
+
+Every layout must stay inside these limits. A stored layout over a limit shows as an invalid layout:
+
+- at most 256 KiB of YAML text;
 - at most 64 rows and 4096 cells per canvas;
 - at most 10000 expanded elements per layout;
 - an explicit element `at` and `span` inside 64 rows and 4096 columns;
-- at most 16384 grid cells rendered and 65536 grid cells painted over all views and variants.
-
-The [Data Source import](import-from-data-source.md) also applies stricter rules.
+- at most 16384 grid cells rendered and 65536 grid cells painted over all views and variants;
+- at most 10000 keys and references that YAML merge keys (`<<`) copy per layout;
+- integers of at most 64 digits.
 
 ---
 
@@ -316,7 +335,7 @@ cd /opt/netbox/netbox
 python manage.py css_to_yaml
 ```
 
-This converts every DeviceView that has a CSS layout but no YAML layout, writes the result into the **YAML Layout** field, and leaves the original CSS untouched. After running it, set **Render Mode → SVG** on the DeviceViews you want to upgrade.
+This converts every DeviceView that has a CSS layout but no YAML layout, writes the result into the **YAML Layout** field, and leaves the original CSS untouched. The command does not store a result that breaks a [validation](#validation) rule: it reports the error and continues with the next DeviceView. After running it, set **Render Mode → SVG** on the DeviceViews you want to upgrade.
 
 ---
 
