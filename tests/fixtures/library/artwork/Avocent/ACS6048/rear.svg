@@ -57,6 +57,7 @@
     <g id="con-ttys2">
       <path d="M52.8 24H59.2V26H62.4V34.2H49.6V26H52.8Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="53.2" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M52.85 33.3L52.55 29.8 M53.75 33.3L53.45 29.8 M54.65 33.3L54.35 29.8 M55.55 33.3L55.25 29.8 M56.45 33.3L56.15 29.8 M57.35 33.3L57.05 29.8 M58.25 33.3L57.95 29.8 M59.15 33.3L58.85 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="68.69" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="68.69" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -69,6 +70,7 @@
     <g id="con-ttys4">
       <path d="M66.89 24H73.29V26H76.49V34.2H63.69V26H66.89Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="67.29" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M66.94 33.3L66.64 29.8 M67.84 33.3L67.54 29.8 M68.74 33.3L68.44 29.8 M69.64 33.3L69.34 29.8 M70.54 33.3L70.24 29.8 M71.44 33.3L71.14 29.8 M72.34 33.3L72.04 29.8 M73.24 33.3L72.94 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="82.78" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="82.78" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -81,6 +83,7 @@
     <g id="con-ttys6">
       <path d="M80.98 24H87.38V26H90.58V34.2H77.78V26H80.98Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="81.38" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M81.03 33.3L80.73 29.8 M81.93 33.3L81.63 29.8 M82.83 33.3L82.53 29.8 M83.73 33.3L83.43 29.8 M84.63 33.3L84.33 29.8 M85.53 33.3L85.23 29.8 M86.43 33.3L86.13 29.8 M87.33 33.3L87.03 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="96.87" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="96.87" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -93,6 +96,7 @@
     <g id="con-ttys8">
       <path d="M95.07 24H101.47V26H104.67V34.2H91.87V26H95.07Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="95.47" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M95.12 33.3L94.82 29.8 M96.02 33.3L95.72 29.8 M96.92 33.3L96.62 29.8 M97.82 33.3L97.52 29.8 M98.72 33.3L98.42 29.8 M99.62 33.3L99.32 29.8 M100.52 33.3L100.22 29.8 M101.42 33.3L101.12 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="110.96" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="110.96" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -105,6 +109,7 @@
     <g id="con-ttys10">
       <path d="M109.16 24H115.56V26H118.76V34.2H105.96V26H109.16Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="109.56" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M109.21 33.3L108.91 29.8 M110.11 33.3L109.81 29.8 M111.01 33.3L110.71 29.8 M111.91 33.3L111.61 29.8 M112.81 33.3L112.51 29.8 M113.71 33.3L113.41 29.8 M114.61 33.3L114.31 29.8 M115.51 33.3L115.21 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="125.05" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="125.05" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -117,6 +122,7 @@
     <g id="con-ttys12">
       <path d="M123.25 24H129.65V26H132.85V34.2H120.05V26H123.25Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="123.65" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M123.3 33.3L123 29.8 M124.2 33.3L123.9 29.8 M125.1 33.3L124.8 29.8 M126 33.3L125.7 29.8 M126.9 33.3L126.6 29.8 M127.8 33.3L127.5 29.8 M128.7 33.3L128.4 29.8 M129.6 33.3L129.3 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="139.14" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="139.14" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -129,6 +135,7 @@
     <g id="con-ttys14">
       <path d="M137.34 24H143.74V26H146.94V34.2H134.14V26H137.34Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="137.74" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M137.39 33.3L137.09 29.8 M138.29 33.3L137.99 29.8 M139.19 33.3L138.89 29.8 M140.09 33.3L139.79 29.8 M140.99 33.3L140.69 29.8 M141.89 33.3L141.59 29.8 M142.79 33.3L142.49 29.8 M143.69 33.3L143.39 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="153.23" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="153.23" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -141,6 +148,7 @@
     <g id="con-ttys16">
       <path d="M151.43 24H157.83V26H161.03V34.2H148.23V26H151.43Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="151.83" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M151.48 33.3L151.18 29.8 M152.38 33.3L152.08 29.8 M153.28 33.3L152.98 29.8 M154.18 33.3L153.88 29.8 M155.08 33.3L154.78 29.8 M155.98 33.3L155.68 29.8 M156.88 33.3L156.58 29.8 M157.78 33.3L157.48 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="167" y="8.9" width="116.1" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
   <rect x="167.6" y="20.75" width="114.9" height="2.6" fill="url(#bar-metal)"/>
@@ -155,6 +163,7 @@
     <g id="con-ttys18">
       <path d="M172.1 24H178.5V26H181.7V34.2H168.9V26H172.1Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="172.5" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M172.15 33.3L171.85 29.8 M173.05 33.3L172.75 29.8 M173.95 33.3L173.65 29.8 M174.85 33.3L174.55 29.8 M175.75 33.3L175.45 29.8 M176.65 33.3L176.35 29.8 M177.55 33.3L177.25 29.8 M178.45 33.3L178.15 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="187.99" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="187.99" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -167,6 +176,7 @@
     <g id="con-ttys20">
       <path d="M186.19 24H192.59V26H195.79V34.2H182.99V26H186.19Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="186.59" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M186.24 33.3L185.94 29.8 M187.14 33.3L186.84 29.8 M188.04 33.3L187.74 29.8 M188.94 33.3L188.64 29.8 M189.84 33.3L189.54 29.8 M190.74 33.3L190.44 29.8 M191.64 33.3L191.34 29.8 M192.54 33.3L192.24 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="202.08" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="202.08" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -179,6 +189,7 @@
     <g id="con-ttys22">
       <path d="M200.28 24H206.68V26H209.88V34.2H197.08V26H200.28Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="200.68" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M200.33 33.3L200.03 29.8 M201.23 33.3L200.93 29.8 M202.13 33.3L201.83 29.8 M203.03 33.3L202.73 29.8 M203.93 33.3L203.63 29.8 M204.83 33.3L204.53 29.8 M205.73 33.3L205.43 29.8 M206.63 33.3L206.33 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="216.17" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="216.17" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -191,6 +202,7 @@
     <g id="con-ttys24">
       <path d="M214.37 24H220.77V26H223.97V34.2H211.17V26H214.37Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="214.77" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M214.42 33.3L214.12 29.8 M215.32 33.3L215.02 29.8 M216.22 33.3L215.92 29.8 M217.12 33.3L216.82 29.8 M218.02 33.3L217.72 29.8 M218.92 33.3L218.62 29.8 M219.82 33.3L219.52 29.8 M220.72 33.3L220.42 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="230.26" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="230.26" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -203,6 +215,7 @@
     <g id="con-ttys26">
       <path d="M228.46 24H234.86V26H238.06V34.2H225.26V26H228.46Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="228.86" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M228.51 33.3L228.21 29.8 M229.41 33.3L229.11 29.8 M230.31 33.3L230.01 29.8 M231.21 33.3L230.91 29.8 M232.11 33.3L231.81 29.8 M233.01 33.3L232.71 29.8 M233.91 33.3L233.61 29.8 M234.81 33.3L234.51 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="244.35" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="244.35" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -215,6 +228,7 @@
     <g id="con-ttys28">
       <path d="M242.55 24H248.95V26H252.15V34.2H239.35V26H242.55Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="242.95" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M242.6 33.3L242.3 29.8 M243.5 33.3L243.2 29.8 M244.4 33.3L244.1 29.8 M245.3 33.3L245 29.8 M246.2 33.3L245.9 29.8 M247.1 33.3L246.8 29.8 M248 33.3L247.7 29.8 M248.9 33.3L248.6 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="258.44" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="258.44" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -227,6 +241,7 @@
     <g id="con-ttys30">
       <path d="M256.64 24H263.04V26H266.24V34.2H253.44V26H256.64Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="257.04" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M256.69 33.3L256.39 29.8 M257.59 33.3L257.29 29.8 M258.49 33.3L258.19 29.8 M259.39 33.3L259.09 29.8 M260.29 33.3L259.99 29.8 M261.19 33.3L260.89 29.8 M262.09 33.3L261.79 29.8 M262.99 33.3L262.69 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="272.53" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="272.53" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -239,6 +254,7 @@
     <g id="con-ttys32">
       <path d="M270.73 24H277.13V26H280.33V34.2H267.53V26H270.73Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="271.13" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M270.78 33.3L270.48 29.8 M271.68 33.3L271.38 29.8 M272.58 33.3L272.28 29.8 M273.48 33.3L273.18 29.8 M274.38 33.3L274.08 29.8 M275.28 33.3L274.98 29.8 M276.18 33.3L275.88 29.8 M277.08 33.3L276.78 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="286.2" y="8.9" width="116.1" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
   <rect x="286.8" y="20.75" width="114.9" height="2.6" fill="url(#bar-metal)"/>
@@ -253,6 +269,7 @@
     <g id="con-ttys34">
       <path d="M291.3 24H297.7V26H300.9V34.2H288.1V26H291.3Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="291.7" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M291.35 33.3L291.05 29.8 M292.25 33.3L291.95 29.8 M293.15 33.3L292.85 29.8 M294.05 33.3L293.75 29.8 M294.95 33.3L294.65 29.8 M295.85 33.3L295.55 29.8 M296.75 33.3L296.45 29.8 M297.65 33.3L297.35 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="307.19" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="307.19" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -265,6 +282,7 @@
     <g id="con-ttys36">
       <path d="M305.39 24H311.79V26H314.99V34.2H302.19V26H305.39Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="305.79" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M305.44 33.3L305.14 29.8 M306.34 33.3L306.04 29.8 M307.24 33.3L306.94 29.8 M308.14 33.3L307.84 29.8 M309.04 33.3L308.74 29.8 M309.94 33.3L309.64 29.8 M310.84 33.3L310.54 29.8 M311.74 33.3L311.44 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="321.28" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="321.28" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -277,6 +295,7 @@
     <g id="con-ttys38">
       <path d="M319.48 24H325.88V26H329.08V34.2H316.28V26H319.48Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="319.88" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M319.53 33.3L319.23 29.8 M320.43 33.3L320.13 29.8 M321.33 33.3L321.03 29.8 M322.23 33.3L321.93 29.8 M323.13 33.3L322.83 29.8 M324.03 33.3L323.73 29.8 M324.93 33.3L324.63 29.8 M325.83 33.3L325.53 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="335.37" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="335.37" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -289,6 +308,7 @@
     <g id="con-ttys40">
       <path d="M333.57 24H339.97V26H343.17V34.2H330.37V26H333.57Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="333.97" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M333.62 33.3L333.32 29.8 M334.52 33.3L334.22 29.8 M335.42 33.3L335.12 29.8 M336.32 33.3L336.02 29.8 M337.22 33.3L336.92 29.8 M338.12 33.3L337.82 29.8 M339.02 33.3L338.72 29.8 M339.92 33.3L339.62 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="349.46" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="349.46" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -301,6 +321,7 @@
     <g id="con-ttys42">
       <path d="M347.66 24H354.06V26H357.26V34.2H344.46V26H347.66Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="348.06" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M347.71 33.3L347.41 29.8 M348.61 33.3L348.31 29.8 M349.51 33.3L349.21 29.8 M350.41 33.3L350.11 29.8 M351.31 33.3L351.01 29.8 M352.21 33.3L351.91 29.8 M353.11 33.3L352.81 29.8 M354.01 33.3L353.71 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="363.55" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="363.55" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -313,6 +334,7 @@
     <g id="con-ttys44">
       <path d="M361.75 24H368.15V26H371.35V34.2H358.55V26H361.75Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="362.15" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M361.8 33.3L361.5 29.8 M362.7 33.3L362.4 29.8 M363.6 33.3L363.3 29.8 M364.5 33.3L364.2 29.8 M365.4 33.3L365.1 29.8 M366.3 33.3L366 29.8 M367.2 33.3L366.9 29.8 M368.1 33.3L367.8 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="377.64" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="377.64" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -325,6 +347,7 @@
     <g id="con-ttys46">
       <path d="M375.84 24H382.24V26H385.44V34.2H372.64V26H375.84Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="376.24" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M375.89 33.3L375.59 29.8 M376.79 33.3L376.49 29.8 M377.69 33.3L377.39 29.8 M378.59 33.3L378.29 29.8 M379.49 33.3L379.19 29.8 M380.39 33.3L380.09 29.8 M381.29 33.3L380.99 29.8 M382.19 33.3L381.89 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="391.73" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="391.73" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
@@ -337,6 +360,7 @@
     <g id="con-ttys48">
       <path d="M389.93 24H396.33V26H399.53V34.2H386.73V26H389.93Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="390.33" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M389.98 33.3L389.68 29.8 M390.88 33.3L390.58 29.8 M391.78 33.3L391.48 29.8 M392.68 33.3L392.38 29.8 M393.58 33.3L393.28 29.8 M394.48 33.3L394.18 29.8 M395.38 33.3L395.08 29.8 M396.28 33.3L395.98 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="405.5" y="8.9" width="31.6" height="26.2" fill="url(#shield-metal)" stroke="#5f5b55" stroke-width="0.4"/>
   <rect x="406.1" y="20.75" width="30.4" height="2.6" fill="url(#bar-metal)"/>
@@ -357,12 +381,14 @@
     <g id="con-eth0">
       <path d="M410.5 24H416.9V26H420.1V34.2H407.3V26H410.5Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="410.9" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M410.55 33.3L410.25 29.8 M411.45 33.3L411.15 29.8 M412.35 33.3L412.05 29.8 M413.25 33.3L412.95 29.8 M414.15 33.3L413.85 29.8 M415.05 33.3L414.75 29.8 M415.95 33.3L415.65 29.8 M416.85 33.3L416.55 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
   <rect x="426.6" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
   <rect x="426.6" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
     <g id="con-console">
       <path d="M424.8 24H431.2V26H434.4V34.2H421.6V26H424.8Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
       <rect x="425.2" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+      <path d="M424.85 33.3L424.55 29.8 M425.75 33.3L425.45 29.8 M426.65 33.3L426.35 29.8 M427.55 33.3L427.25 29.8 M428.45 33.3L428.15 29.8 M429.35 33.3L429.05 29.8 M430.25 33.3L429.95 29.8 M431.15 33.3L430.85 29.8" stroke="#a8863f" stroke-width="0.32"/>
     </g>
     <text x="413.7" y="7.2" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">ETH 1</text>
     <text x="428" y="4.9" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">AUX /</text>
