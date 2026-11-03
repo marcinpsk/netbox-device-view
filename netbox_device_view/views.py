@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import DEFAULT_DB_ALIAS, router, transaction
+from django.db import router, transaction
 from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -48,6 +48,7 @@ from .artwork import importing as artwork_importing
 from .artwork.errors import ArtworkError
 from .artwork.manifest import DEVICE_KIND
 from .artwork.type_lock import lock_bulk_writes
+from .components import binding_labels
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -422,7 +423,7 @@ class DefinitionRevisionView(generic.ObjectView):
                     "key": key,
                     "face": connector["face"],
                     "label": connector.get("label"),
-                    "bindings": tables.binding_labels(connector["bindings"]),
+                    "bindings": binding_labels(connector["bindings"]),
                 }
                 for key, connector in sorted(instance.manifest["connectors"].items())
             ],
@@ -568,10 +569,10 @@ class VisualDefinitionView(generic.ObjectView):
         return {
             "revisions": instance.revisions.restrict(request.user, "view"),
             "binding_overrides": [
-                (override, tables.binding_labels(override.bindings))
+                (override, binding_labels(override.bindings))
                 for override in instance.binding_overrides.restrict(
                     request.user, "view"
-                ).select_related(*OVERRIDE_RELATIONS)
+                ).select_related(*models.OVERRIDE_RELATIONS)
             ],
         }
 
@@ -592,20 +593,8 @@ class VisualDefinitionEditView(generic.ObjectEditView):
         return super().get_object(**kwargs)
 
 
-# The objects that the scope label and the type lock of an override read.
-OVERRIDE_RELATIONS = (
-    "device_type__manufacturer",
-    "module_type__manufacturer",
-    "device__device_type",
-    "module__device",
-    "module__module_bay",
-    "module__module_type",
-    "definition",
-)
-
-
 class BindingOverrideListView(generic.ObjectListView):
-    queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     table = tables.BindingOverrideTable
     filterset = filtersets.BindingOverrideFilterSet
     filterset_form = forms.BindingOverrideFilterForm
@@ -613,19 +602,19 @@ class BindingOverrideListView(generic.ObjectListView):
 
 
 class BindingOverrideView(generic.ObjectView):
-    queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     actions = (EditObject, DeleteObject)
 
     def get_extra_context(self, request, instance):
         field = instance._meta.get_field(instance.scope_field)
         return {
             "scope_type": capfirst(field.verbose_name),
-            "binding_labels": tables.binding_labels(instance.bindings),
+            "binding_labels": binding_labels(instance.bindings),
         }
 
 
 class BindingOverrideEditView(generic.ObjectEditView):
-    queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     form = forms.BindingOverrideForm
     template_name = "netbox_device_view/bindingoverride_edit.html"
 
@@ -680,21 +669,16 @@ class BindingOverrideEditView(generic.ObjectEditView):
 
 class BindingOverrideDeleteView(generic.ObjectDeleteView):
     # BindingOverride.delete() takes the type lock.
-    queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
 
 
 class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
-    queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     filterset = filtersets.BindingOverrideFilterSet
     table = tables.BindingOverrideTable
 
     def post(self, request, **kwargs):
-        # Two writers of several overrides could take the type locks in opposite orders.
-        using = router.db_for_write(models.BindingOverride)
-        with (
-            transaction.atomic(using=DEFAULT_DB_ALIAS),
-            transaction.atomic(using=router.db_for_write(models.BindingOverride)),
-        ):
+        with models.BindingOverride.writing() as using:
             lock_bulk_writes(using)
             return super().post(request, **kwargs)
 

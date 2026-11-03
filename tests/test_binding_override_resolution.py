@@ -2,16 +2,17 @@
 
 import io
 
-from dcim.models import Interface, Module, ModuleBay, ModuleType
+from dcim.models import Device, DeviceType, Interface, Module, ModuleBay, ModuleType
 from users.models import User
 
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.overrides import connector_bindings
-from netbox_device_view.models import BindingOverride, VisualDefinition
+from netbox_device_view.models import Association, BindingOverride, VisualDefinition
 
 from .artwork_samples import MODULE_FILES, bundle, definition
 from .test_api_artwork import ArtworkApiTestCase
-from .test_artwork_device_view import faces, links, wrapper
+from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST, faces, links, wrapper
+from .test_binding_override_activation import ETH1
 
 ETH = "interface"
 
@@ -138,6 +139,33 @@ class PrecedenceTests(OverrideTestCase):
             sorted(self.connectors(self.member())),
             ["con-eth1", "con-f1", "con-psu", "con-r1"],
         )
+
+    def test_an_override_of_a_device_that_moved_to_a_type_without_the_connector_is_ignored(
+        self,
+    ):
+        # NetBox can change the type of a device; the override keeps the connector of the old type.
+        self.override(device=self.device, replacement=bindings("eth2"))
+        files = {
+            **FILES,
+            "manifest.yaml": MANIFEST.replace(ETH1, ""),
+            "front.svg": FRONT_SVG.replace('id="con-eth1" ', ""),
+        }
+        [imported] = import_bundle(
+            User.objects.get(username="admin"),
+            "sw24.zip",
+            io.BytesIO(bundle(definition("ACME/SW-24", files))),
+        )
+        other_type = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="SW-24B", slug="sw-24b"
+        )
+        Association.objects.create(device_type=other_type, revision=imported.revision)
+        Device.objects.filter(pk=self.device.pk).update(device_type=other_type)
+        self.device.refresh_from_db()
+
+        self.assertEqual(
+            sorted(self.connectors(self.member())), ["con-f1", "con-psu", "con-r1"]
+        )
+        self.assertEqual(len(faces(self.tab())), 2)
 
 
 class ResolutionTests(OverrideTestCase):
