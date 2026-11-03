@@ -135,6 +135,8 @@ class AssociationTable(NetBoxTable):
     hardware_type = tables.Column(
         verbose_name="Type",
         accessor="device_type",
+        # A module association has no device type; render it anyway.
+        empty_values=(),
         linkify=lambda record: record.hardware_type.get_absolute_url(),
         order_by=("device_type__model", "module_type__model"),
     )
