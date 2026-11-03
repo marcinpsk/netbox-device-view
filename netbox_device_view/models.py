@@ -60,7 +60,7 @@ class DeviceView(NetBoxModel):
             errors = exc.update_error_dict(errors)
         if "yaml_layout" not in (exclude or ()) and self.has_yaml_layout:
             try:
-                parse(self.yaml_layout)
+                parse(self.yaml_layout, strict=True)
             except LayoutParseError as exc:
                 errors.setdefault("yaml_layout", []).append(str(exc))
         if errors:

@@ -62,7 +62,7 @@ cd /opt/netbox/netbox
 python manage.py css_to_yaml
 ```
 
-This writes the converted YAML into the **YAML Layout** field for every DeviceView that has a CSS layout but no YAML layout. The original CSS is left untouched so you can roll back by clearing the YAML field.
+This writes the converted YAML into the **YAML Layout** field for every DeviceView that has a CSS layout but no YAML layout. The original CSS is left untouched so you can roll back by clearing the YAML field. The command does not store a YAML layout that breaks a [validation](layout-yaml.md#validation) rule. It reports the error instead.
 
 !!! tip
     After migrating, set **Render Mode → SVG** to take advantage of the SVG renderer.
