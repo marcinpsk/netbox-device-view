@@ -2,6 +2,7 @@
 
 import shutil
 import tempfile
+import tracemalloc
 from io import StringIO
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from django.test import SimpleTestCase
 
 from netbox_device_view.artwork.limits import MAX_SVG_BYTES
 from netbox_device_view.datasource_import import FILE_TOO_LARGE, MAX_FILE_BYTES
+from netbox_device_view.library_check import NOT_REGULAR
 
 from .artwork_samples import DEVICE_FILES, MODULE_FILES
 
@@ -109,6 +111,51 @@ class LibraryCheckTests(SimpleTestCase):
         )
         _, problems = self.check(str(self.library))
         self.assertEqual(problems, [f"device-types/ACME/Big.yaml: {FILE_TOO_LARGE}"])
+
+    def test_a_large_layout_is_read_only_up_to_the_import_limit(self):
+        with (self.library / "device-types/ACME/Huge.yaml").open("wb") as file:
+            file.truncate(64 * MAX_FILE_BYTES)
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
+        _, problems = self.check(str(self.library))
+        _, peak = tracemalloc.get_traced_memory()
+        self.assertEqual(problems, [f"device-types/ACME/Huge.yaml: {FILE_TOO_LARGE}"])
+        self.assertLess(peak, 8 * MAX_FILE_BYTES)
+
+    def test_a_symbolic_link_is_a_problem_and_its_target_is_not_read(self):
+        outside = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        write(
+            outside,
+            {
+                "target.yaml": "version: 1\nviews: [x",
+                **artwork("ACME/Other", DEVICE_FILES),
+            },
+        )
+        (outside / "target.svg").write_text("<svg/>")
+        (self.library / "device-types/ACME/Link.yaml").symlink_to(
+            outside / "target.yaml"
+        )
+        (self.library / "artwork/ACME/SW-24/extra.svg").symlink_to(
+            outside / "target.svg"
+        )
+        (self.library / "artwork/Linked").symlink_to(outside / "artwork")
+        _, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            [
+                f"device-types/ACME/Link.yaml: {NOT_REGULAR}",
+                f"artwork/ACME/SW-24/extra.svg: {NOT_REGULAR}",
+                f"artwork/Linked: {NOT_REGULAR}",
+            ],
+        )
+
+    def test_a_linked_layout_or_artwork_directory_is_a_problem(self):
+        outside = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        shutil.move(self.library / "device-types", outside / "device-types")
+        (self.library / "device-types").symlink_to(outside / "device-types")
+        summary, problems = self.check(str(self.library))
+        self.assertEqual(problems, [f"device-types: {NOT_REGULAR}"])
+        self.assertIn("Checked 0 layouts", summary)
 
     def test_artwork_that_the_import_rejects_fails_with_its_issues(self):
         write(
