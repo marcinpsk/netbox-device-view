@@ -1,10 +1,17 @@
 """The manifest of a visual definition: YAML loading, schema 1 and the rules beyond it."""
 
+import re
+
 import pytest
 
 from netbox_device_view.artwork.errors import ArtworkError
 from netbox_device_view.artwork.limits import MAX_MANIFEST_BYTES
-from netbox_device_view.artwork.manifest import parse_manifest
+from netbox_device_view.artwork.manifest import (
+    MAX_CONNECTOR_KEY_LENGTH,
+    SCHEMA,
+    parse_manifest,
+)
+from netbox_device_view.models import BindingOverride
 
 from .artwork_samples import DEVICE_MANIFEST, MODULE_MANIFEST
 
@@ -222,3 +229,12 @@ def test_implicit_numbers_that_cannot_be_built_fail_with_an_issue(digits):
 )
 def test_values_the_yaml_scanner_cannot_convert_fail_with_an_issue(text):
     assert issues(text)[0].line is not None
+
+
+def test_the_connector_key_length_is_the_longest_key_that_the_pattern_accepts():
+    pattern = SCHEMA["properties"]["connectors"]["propertyNames"]["pattern"]
+    longest = "con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - len("con-"))
+    assert re.fullmatch(pattern, longest)
+    assert not re.fullmatch(pattern, longest + "a")
+    field = BindingOverride._meta.get_field("connector_key")
+    assert field.max_length == MAX_CONNECTOR_KEY_LENGTH

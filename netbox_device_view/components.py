@@ -89,6 +89,14 @@ def component_label(model, name) -> str:
     return f"{capfirst(model._meta.verbose_name)} {name}"
 
 
+def binding_labels(bindings) -> str:
+    """Return a binding list as text, for example "Interface eth1, Console port eth1"."""
+    return ", ".join(
+        component_label(BINDING_MODELS[binding["component"]], binding["name"])
+        for binding in bindings
+    )
+
+
 def layout_key(component):
     """Return the layout key (the stylename) of ``component``."""
     if isinstance(component, Interface):

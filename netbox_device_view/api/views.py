@@ -1,9 +1,8 @@
 from collections.abc import Mapping
 
-from core.signals import clear_events
 from dcim.models import Device
 from django.core.exceptions import ValidationError
-from django.db import DEFAULT_DB_ALIAS, router, transaction
+from django.db import router, transaction
 from django.http import Http404
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
@@ -131,45 +130,32 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
             return super().perform_bulk_update(objects, update_data, partial)
 
 
+class _ErrorResponse(Exception):
+    """An error response of a write, raised so that BindingOverride.writing() rolls back."""
+
+    def __init__(self, response):
+        super().__init__(response.status_code)
+        self.response = response
+
+
 class BindingOverrideViewSet(NetBoxModelViewSet):
-    """The serializer saves through the override writer; BindingOverride.delete() takes the type lock.
+    """Each write runs in BindingOverride.writing() and takes the locks of the override writer."""
 
-    A request with several overrides takes the bulk lock first.
-    """
-
-    queryset = models.BindingOverride.objects.select_related(
-        "device_type__manufacturer",
-        "module_type__manufacturer",
-        "device__device_type",
-        "module__device",
-        "module__module_bay",
-        "module__module_type",
-        "definition__key_owner",
-    )
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     serializer_class = BindingOverrideSerializer
     filterset_class = BindingOverrideFilterSet
 
-    def _write(self, action, request, *args, **kwargs):
-        """Run a write in one transaction on main and on the routed connection; an error rolls both back."""
-        # NetBox Branching writes ChangeDiff rows on main, and a failed bulk write rolls back the branch only.
-        using = router.db_for_write(models.BindingOverride)
+    def _write(self, handler, request, *args, **kwargs):
         try:
-            with (
-                transaction.atomic(using=DEFAULT_DB_ALIAS),
-                transaction.atomic(using=router.db_for_write(models.BindingOverride)),
-            ):
+            with models.BindingOverride.writing() as using:
                 if isinstance(request.data, list):
                     lock_bulk_writes(using)
-                response = action(request, *args, **kwargs)
+                response = handler(request, *args, **kwargs)
+                # A failed bulk write leaves ChangeDiff rows on main, and NetBox 4.5 its events.
                 if response.status_code >= status.HTTP_400_BAD_REQUEST:
-                    transaction.set_rollback(True, using=DEFAULT_DB_ALIAS)
-                    transaction.set_rollback(True, using=using)
-        except Exception:
-            clear_events.send(sender=self)
-            raise
-        if response.status_code >= status.HTTP_400_BAD_REQUEST:
-            # NetBox 4.5 keeps the events of a bulk write that fails on a later object.
-            clear_events.send(sender=self)
+                    raise _ErrorResponse(response)
+        except _ErrorResponse as rejected:
+            return rejected.response
         return response
 
     def create(self, request, *args, **kwargs):
