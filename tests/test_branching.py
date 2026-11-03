@@ -119,7 +119,11 @@ class CatalogueModelTests(SimpleTestCase):
         # A branch can change device types and module types, so their links are branched too.
         self.assertEqual(
             labels - CATALOGUE,
-            {"netbox_device_view.deviceview", "netbox_device_view.association"},
+            {
+                "netbox_device_view.deviceview",
+                "netbox_device_view.association",
+                "netbox_device_view.bindingoverride",
+            },
         )
 
 

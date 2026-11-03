@@ -36,6 +36,16 @@ _MODULE_TOKEN_ONLY = f"Only a module definition can use {MODULE_TOKEN}."
 DEVICE_KIND, MODULE_KIND = "device", "module"
 if {DEVICE_KIND, MODULE_KIND} != set(SCHEMA["properties"]["kind"]["enum"]):
     raise ImportError("The definition kinds do not match manifest.schema.json.")
+# The binding list of a connector; a binding override holds a list of the same schema.
+BINDINGS = SCHEMA["properties"]["connectors"]["additionalProperties"]["properties"][
+    "bindings"
+]
+BINDING_COMPONENTS = tuple(BINDINGS["items"]["properties"]["component"]["enum"])
+MAX_BINDINGS = BINDINGS["maxItems"]
+MAX_BINDING_NAME_LENGTH = SCHEMA["$defs"]["name"]["maxLength"]
+_BINDINGS_VALIDATOR = jsonschema.Draft202012Validator(
+    {**BINDINGS, "$defs": SCHEMA["$defs"]}
+)
 
 
 @dataclass(frozen=True)
@@ -285,3 +295,28 @@ def parse_manifest(path: str, data: bytes) -> Manifest:
             ]
         )
     return Manifest(_with_defaults(manifest), lines)
+
+
+def binding_issues(bindings, kind: str) -> list[str]:
+    """Return the errors of a binding list by the manifest rules of a ``kind`` definition."""
+    at = ("bindings",)
+    found = [
+        (path, "Text must not contain control or format characters.")
+        for path, value in _strings(bindings, at)
+        if any(unicodedata.category(char) in UNSAFE_CATEGORIES for char in value)
+    ]
+    if not found:
+        found = [
+            ((*at, *_error_path(error)), error.message)
+            for error in sorted(
+                _BINDINGS_VALIDATOR.iter_errors(bindings),
+                key=lambda e: list(map(str, e.path)),
+            )
+        ]
+    if not found and kind != MODULE_KIND:
+        found = [
+            ((*at, index, "name"), _MODULE_TOKEN_ONLY)
+            for index, binding in enumerate(bindings)
+            if MODULE_TOKEN in binding["name"]
+        ]
+    return [f"{_where(path)}: {message}" for path, message in found]

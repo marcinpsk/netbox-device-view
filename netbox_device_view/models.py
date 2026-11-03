@@ -1,12 +1,19 @@
+import functools
+import operator
+from contextlib import contextmanager
+
+from core.signals import clear_events
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import DEFAULT_DB_ALIAS, models, router, transaction
+from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
-from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND
+from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND, binding_issues
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
+from .artwork.type_lock import lock_types
 from .layout.parser import LayoutParseError, parse
 
 
@@ -226,6 +233,218 @@ class Association(ChangeLoggedModel):
                     ).format(revision=self.revision.definition.kind, kind=self.kind)
                 }
             )
+
+
+SCOPE_FIELDS = ("device_type", "module_type", "device", "module")
+ONE_SCOPE = _(
+    "Select one scope: a device type, a module type, a device or an installed module."
+)
+
+
+def _only_scope(field):
+    return models.Q(**{f"{name}__isnull": name != field for name in SCOPE_FIELDS})
+
+
+class BindingOverride(ChangeLoggedModel):
+    """A local replacement of the bindings of one connector key, for one scope and definition key."""
+
+    device_type = models.ForeignKey(
+        to="dcim.DeviceType",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    module_type = models.ForeignKey(
+        to="dcim.ModuleType",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    device = models.ForeignKey(
+        to="dcim.Device",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    module = models.ForeignKey(
+        to="dcim.Module",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name=_("installed module"),
+    )
+    # clean() sets it from the active association of the scope's type.
+    definition = models.ForeignKey(
+        to=VisualDefinition,
+        on_delete=models.PROTECT,
+        blank=True,
+        related_name="binding_overrides",
+    )
+    # A key that matches the connector key pattern of the manifest schema is at most 64 characters.
+    connector_key = models.CharField(max_length=64)
+    # The replacement binding list, with the schema of the bindings of a manifest connector.
+    bindings = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        # Bulk writers lock the types in this order, so two bulk writes cannot deadlock.
+        ordering = (
+            Coalesce("device_type", "device__device_type").asc(nulls_last=True),
+            Coalesce("module_type", "module__module_type").asc(nulls_last=True),
+            "connector_key",
+            "pk",
+        )
+        verbose_name = "binding override"
+        constraints = (
+            models.CheckConstraint(
+                condition=functools.reduce(
+                    operator.or_, (_only_scope(field) for field in SCOPE_FIELDS)
+                ),
+                name="%(app_label)s_bindingoverride_one_scope",
+                violation_error_message=ONE_SCOPE,
+            ),
+            *(
+                models.UniqueConstraint(
+                    fields=(field, "definition", "connector_key"),
+                    condition=models.Q(**{f"{field}__isnull": False}),
+                    name=f"%(app_label)s_bindingoverride_unique_{field}",
+                    violation_error_message=_(
+                        "This scope already has an override of this connector."
+                    ),
+                )
+                for field in SCOPE_FIELDS
+            ),
+        )
+
+    def __str__(self):
+        return f"{self.scope_label} · {self.connector_key}"
+
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:bindingoverride", args=[self.pk])
+
+    @property
+    def scope_field(self) -> str | None:
+        """Return the name of the one scope field that is set, or None."""
+        names = [n for n in SCOPE_FIELDS if getattr(self, f"{n}_id") is not None]
+        return names[0] if len(names) == 1 else None
+
+    @property
+    def scope(self):
+        return getattr(self, self.scope_field)
+
+    @property
+    def scope_label(self) -> str:
+        scope = self.scope
+        if self.scope_field in ("device_type", "module_type"):
+            return scope.full_name
+        if self.scope_field == "module":
+            return f"{scope.device} {scope}"
+        return str(scope)
+
+    @property
+    def hardware_type(self):
+        """Return the device type or module type that the override depends on."""
+        scope = self.scope
+        if self.scope_field == "device":
+            return scope.device_type
+        if self.scope_field == "module":
+            return scope.module_type
+        return scope
+
+    @property
+    def kind(self):
+        """Return the definition kind of the scope."""
+        return (
+            MODULE_KIND
+            if self.scope_field in ("module_type", "module")
+            else DEVICE_KIND
+        )
+
+    def clean(self):
+        super().clean()
+        # The check constraint reports a missing or a second scope.
+        if self.scope_field is None:
+            return
+        issues = binding_issues(self.bindings, self.kind)
+        if issues:
+            raise ValidationError({"bindings": issues})
+        if not self._state.adding:
+            self._check_identity()
+        hardware_type = self.hardware_type
+        type_field = "device_type" if self.kind == DEVICE_KIND else "module_type"
+        association = (
+            Association.objects.filter(**{type_field: hardware_type})
+            .select_related("revision__definition")
+            .first()
+        )
+        if association is None:
+            raise ValidationError(
+                {
+                    self.scope_field: _(
+                        "{type} has no active artwork. Activate a revision for it first."
+                    ).format(type=hardware_type.full_name)
+                }
+            )
+        revision = association.revision
+        if self._state.adding:
+            self.definition = revision.definition
+        elif revision.definition_id != self.definition_id:
+            raise ValidationError(
+                _("The active artwork of {type} is {active}, not {key}.").format(
+                    type=hardware_type.full_name,
+                    active=revision.definition.key,
+                    key=self.definition.key,
+                )
+            )
+        if self.connector_key not in revision.manifest["connectors"]:
+            raise ValidationError(
+                {
+                    "connector_key": _(
+                        "The active revision of {key} has no connector {connector}."
+                    ).format(key=revision.definition.key, connector=self.connector_key)
+                }
+            )
+
+    def _check_identity(self):
+        """An override is its scope, definition key and connector key; only its bindings change."""
+        identity = (
+            *(f"{n}_id" for n in SCOPE_FIELDS),
+            "definition_id",
+            "connector_key",
+        )
+        stored = BindingOverride.objects.filter(pk=self.pk).values(*identity).first()
+        if stored is None:
+            raise ValidationError(_("The override does not exist any more."))
+        if any(getattr(self, n) != stored[n] for n in identity):
+            raise ValidationError(
+                _(
+                    "The scope and the connector of an override cannot change. Add a new"
+                    " override instead."
+                )
+            )
+
+    @contextmanager
+    def locked(self):
+        """Hold the lock of the override's type in one transaction on main and on the routed connection."""
+        # NetBox Branching routes the override to the branch and its ChangeDiff rows to main.
+        try:
+            with (
+                transaction.atomic(using=DEFAULT_DB_ALIAS),
+                transaction.atomic(using=router.db_for_write(BindingOverride)),
+            ):
+                lock_types([self.hardware_type], router.db_for_write(BindingOverride))
+                yield
+        except Exception:
+            # The events of a write that rolls back must not reach event rules.
+            clear_events.send(sender=BindingOverride)
+            raise
+
+    def delete(self, *args, **kwargs):
+        with self.locked():
+            return super().delete(*args, **kwargs)
 
 
 class ArtworkBlob(ImmutableMixin, models.Model):
