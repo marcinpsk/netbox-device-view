@@ -610,6 +610,13 @@ def _check_file_unchanged(user, source, reviewed: ReviewedRow) -> None:
     _check_reviewed_file(reviewed, datafile.path, datafile.sha256)
 
 
+def validate_layout_file(path: str, content: bytes) -> None:
+    """Validate the content of one layout file as an import does; raise ValidationError."""
+    if len(content) > MAX_FILE_BYTES:
+        raise ValidationError(FILE_TOO_LARGE)
+    _prepare_content(_SourceFile(path=path, format=_file_format(path), content=content))
+
+
 def _prepare_content(source_file: _SourceFile) -> _PreparedContent:
     """Decode and validate the content of one file; this needs no target and no query."""
     try:
