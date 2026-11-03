@@ -3,8 +3,9 @@
 import hashlib
 
 from core.exceptions import SyncError
-from core.models import DataFile
-from core.signals import post_sync, pre_sync
+from core.models import DataFile, DataSource
+from core.signals import job_end, post_sync, pre_sync
+from django.contrib.contenttypes.models import ContentType
 from django.db import connection
 from django.db.models import F, Q
 from django.dispatch import receiver
@@ -66,3 +67,15 @@ def finish_guarded_sync(sender, instance, **kwargs):
     SourceSyncRun.objects.filter(source_id=instance.pk).update(finished=timezone.now())
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_unlock(%s, %s)", [_LOCK_CLASS, instance.pk])
+
+
+@receiver(job_end)
+def release_after_failed_sync(sender, **kwargs):
+    """Release the lock of a sync job that failed, because NetBox sends post_sync only on success."""
+    if sender.object_type_id != ContentType.objects.get_for_model(DataSource).pk:
+        return
+    with connection.cursor() as cursor:
+        if _holds_lock(cursor, sender.object_id):
+            cursor.execute(
+                "SELECT pg_advisory_unlock(%s, %s)", [_LOCK_CLASS, sender.object_id]
+            )
