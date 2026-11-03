@@ -21,6 +21,7 @@ from ..components import (
     BINDABLE_MODELS,
     BINDING_MODELS,
     ComponentState,
+    component_label,
     device_components,
     find,
 )
@@ -420,17 +421,13 @@ def _paintless(root, ident: str, defs, prefix: str) -> str:
     return copy_id
 
 
-def _component_name(model, name) -> str:
-    return f"{capfirst(model._meta.verbose_name)} {name}"
-
-
 def _title(connector) -> str:
     """Return each fact of the connector as text, so no fact depends on colour alone."""
     target = connector.target
     if target is None:
         found = [b for b in connector.bindings if b.status == FOUND]
         names = ", ".join(
-            _component_name(b.model, b.name) for b in found or connector.bindings
+            component_label(b.model, b.name) for b in found or connector.bindings
         )
         return f"Two or more components: {names}" if found else f"No component: {names}"
     facts = []
@@ -445,7 +442,7 @@ def _title(connector) -> str:
         peers = "peer" if len(target.peer_labels) == 1 else "peers"
         facts.append(f"{peers} {', '.join(target.peer_labels)}")
     component = target.component
-    return f"{_component_name(type(component), component.name)}: {', '.join(facts)}"
+    return f"{component_label(type(component), component.name)}: {', '.join(facts)}"
 
 
 def _xml_text(value: str) -> str:
