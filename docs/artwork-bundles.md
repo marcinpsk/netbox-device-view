@@ -221,7 +221,7 @@ In the UI, go to **Plugins → Artwork Revisions**, open the revision and click 
 
 The artwork view shows:
 
-- The front face and the rear face side by side. Below 768 px the faces stack. Each face zooms and scrolls in its own panel.
+- The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
 - A link on each connector whose binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component.
 - An outline on each connector whose component has a cable.
 
