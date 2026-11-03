@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 438.15 43.56">
   <title>Avocent ACS6048DAC-G2, rear</title>
-  <rect x="0" y="0" width="438.15" height="43.56" rx="0.8" fill="#3b3b3d"/>
+  <rect x="0" y="0" width="438.15" height="43.56" rx="0.8" fill="#c9cdcf" stroke="#7d8184" stroke-width="0.5"/>
   <g>
     <rect x="1" y="1.2" width="21" height="40.8" rx="0.6" fill="#2a2a2c"/>
     <rect x="3.5" y="2.4" width="16" height="6.2" rx="0.6" fill="#8e9094"/>
@@ -22,112 +22,329 @@
     <rect x="31.7" y="31.6" width="4.4" height="1.6" fill="#c8c8c8"/>
     <text x="12" y="42.6" style="font-family:Arial, Helvetica, sans-serif" font-size="0.9" font-weight="bold" text-anchor="start" fill="#cfcfcf">2X 100-240VAC~50/60Hz</text>
   </g>
-  <rect x="47.7" y="1.2" width="116.1" height="40.2" rx="0.6" fill="#d4d6d8"/>
-    <text x="56" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">1</text>
-    <text x="56" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">2</text>
-    <path id="con-ttys1" d="M50.1 9.4H61.9V16.8H58.8V19H53.2V16.8H50.1Z" fill="#1d1d1f"/>
-    <path id="con-ttys2" d="M53.2 23.4H58.8V25.6H61.9V33H50.1V25.6H53.2Z" fill="#1d1d1f"/>
-    <text x="70.09" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">3</text>
-    <text x="70.09" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">4</text>
-    <path id="con-ttys3" d="M64.19 9.4H75.99V16.8H72.89V19H67.29V16.8H64.19Z" fill="#1d1d1f"/>
-    <path id="con-ttys4" d="M67.29 23.4H72.89V25.6H75.99V33H64.19V25.6H67.29Z" fill="#1d1d1f"/>
-    <text x="84.18" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">5</text>
-    <text x="84.18" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">6</text>
-    <path id="con-ttys5" d="M78.28 9.4H90.08V16.8H86.98V19H81.38V16.8H78.28Z" fill="#1d1d1f"/>
-    <path id="con-ttys6" d="M81.38 23.4H86.98V25.6H90.08V33H78.28V25.6H81.38Z" fill="#1d1d1f"/>
-    <text x="98.27" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">7</text>
-    <text x="98.27" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">8</text>
-    <path id="con-ttys7" d="M92.37 9.4H104.17V16.8H101.07V19H95.47V16.8H92.37Z" fill="#1d1d1f"/>
-    <path id="con-ttys8" d="M95.47 23.4H101.07V25.6H104.17V33H92.37V25.6H95.47Z" fill="#1d1d1f"/>
-    <text x="112.36" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">9</text>
-    <text x="112.36" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">10</text>
-    <path id="con-ttys9" d="M106.46 9.4H118.26V16.8H115.16V19H109.56V16.8H106.46Z" fill="#1d1d1f"/>
-    <path id="con-ttys10" d="M109.56 23.4H115.16V25.6H118.26V33H106.46V25.6H109.56Z" fill="#1d1d1f"/>
-    <text x="126.45" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">11</text>
-    <text x="126.45" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">12</text>
-    <path id="con-ttys11" d="M120.55 9.4H132.35V16.8H129.25V19H123.65V16.8H120.55Z" fill="#1d1d1f"/>
-    <path id="con-ttys12" d="M123.65 23.4H129.25V25.6H132.35V33H120.55V25.6H123.65Z" fill="#1d1d1f"/>
-    <text x="140.54" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">13</text>
-    <text x="140.54" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">14</text>
-    <path id="con-ttys13" d="M134.64 9.4H146.44V16.8H143.34V19H137.74V16.8H134.64Z" fill="#1d1d1f"/>
-    <path id="con-ttys14" d="M137.74 23.4H143.34V25.6H146.44V33H134.64V25.6H137.74Z" fill="#1d1d1f"/>
-    <text x="154.63" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">15</text>
-    <text x="154.63" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">16</text>
-    <path id="con-ttys15" d="M148.73 9.4H160.53V16.8H157.43V19H151.83V16.8H148.73Z" fill="#1d1d1f"/>
-    <path id="con-ttys16" d="M151.83 23.4H157.43V25.6H160.53V33H148.73V25.6H151.83Z" fill="#1d1d1f"/>
-  <rect x="167" y="1.2" width="116.1" height="40.2" rx="0.6" fill="#d4d6d8"/>
-    <text x="175.3" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">17</text>
-    <text x="175.3" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">18</text>
-    <path id="con-ttys17" d="M169.4 9.4H181.2V16.8H178.1V19H172.5V16.8H169.4Z" fill="#1d1d1f"/>
-    <path id="con-ttys18" d="M172.5 23.4H178.1V25.6H181.2V33H169.4V25.6H172.5Z" fill="#1d1d1f"/>
-    <text x="189.39" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">19</text>
-    <text x="189.39" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">20</text>
-    <path id="con-ttys19" d="M183.49 9.4H195.29V16.8H192.19V19H186.59V16.8H183.49Z" fill="#1d1d1f"/>
-    <path id="con-ttys20" d="M186.59 23.4H192.19V25.6H195.29V33H183.49V25.6H186.59Z" fill="#1d1d1f"/>
-    <text x="203.48" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">21</text>
-    <text x="203.48" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">22</text>
-    <path id="con-ttys21" d="M197.58 9.4H209.38V16.8H206.28V19H200.68V16.8H197.58Z" fill="#1d1d1f"/>
-    <path id="con-ttys22" d="M200.68 23.4H206.28V25.6H209.38V33H197.58V25.6H200.68Z" fill="#1d1d1f"/>
-    <text x="217.57" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">23</text>
-    <text x="217.57" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">24</text>
-    <path id="con-ttys23" d="M211.67 9.4H223.47V16.8H220.37V19H214.77V16.8H211.67Z" fill="#1d1d1f"/>
-    <path id="con-ttys24" d="M214.77 23.4H220.37V25.6H223.47V33H211.67V25.6H214.77Z" fill="#1d1d1f"/>
-    <text x="231.66" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">25</text>
-    <text x="231.66" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">26</text>
-    <path id="con-ttys25" d="M225.76 9.4H237.56V16.8H234.46V19H228.86V16.8H225.76Z" fill="#1d1d1f"/>
-    <path id="con-ttys26" d="M228.86 23.4H234.46V25.6H237.56V33H225.76V25.6H228.86Z" fill="#1d1d1f"/>
-    <text x="245.75" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">27</text>
-    <text x="245.75" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">28</text>
-    <path id="con-ttys27" d="M239.85 9.4H251.65V16.8H248.55V19H242.95V16.8H239.85Z" fill="#1d1d1f"/>
-    <path id="con-ttys28" d="M242.95 23.4H248.55V25.6H251.65V33H239.85V25.6H242.95Z" fill="#1d1d1f"/>
-    <text x="259.84" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">29</text>
-    <text x="259.84" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">30</text>
-    <path id="con-ttys29" d="M253.94 9.4H265.74V16.8H262.64V19H257.04V16.8H253.94Z" fill="#1d1d1f"/>
-    <path id="con-ttys30" d="M257.04 23.4H262.64V25.6H265.74V33H253.94V25.6H257.04Z" fill="#1d1d1f"/>
-    <text x="273.93" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">31</text>
-    <text x="273.93" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">32</text>
-    <path id="con-ttys31" d="M268.03 9.4H279.83V16.8H276.73V19H271.13V16.8H268.03Z" fill="#1d1d1f"/>
-    <path id="con-ttys32" d="M271.13 23.4H276.73V25.6H279.83V33H268.03V25.6H271.13Z" fill="#1d1d1f"/>
-  <rect x="286.2" y="1.2" width="116.1" height="40.2" rx="0.6" fill="#d4d6d8"/>
-    <text x="294.5" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">33</text>
-    <text x="294.5" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">34</text>
-    <path id="con-ttys33" d="M288.6 9.4H300.4V16.8H297.3V19H291.7V16.8H288.6Z" fill="#1d1d1f"/>
-    <path id="con-ttys34" d="M291.7 23.4H297.3V25.6H300.4V33H288.6V25.6H291.7Z" fill="#1d1d1f"/>
-    <text x="308.59" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">35</text>
-    <text x="308.59" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">36</text>
-    <path id="con-ttys35" d="M302.69 9.4H314.49V16.8H311.39V19H305.79V16.8H302.69Z" fill="#1d1d1f"/>
-    <path id="con-ttys36" d="M305.79 23.4H311.39V25.6H314.49V33H302.69V25.6H305.79Z" fill="#1d1d1f"/>
-    <text x="322.68" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">37</text>
-    <text x="322.68" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">38</text>
-    <path id="con-ttys37" d="M316.78 9.4H328.58V16.8H325.48V19H319.88V16.8H316.78Z" fill="#1d1d1f"/>
-    <path id="con-ttys38" d="M319.88 23.4H325.48V25.6H328.58V33H316.78V25.6H319.88Z" fill="#1d1d1f"/>
-    <text x="336.77" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">39</text>
-    <text x="336.77" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">40</text>
-    <path id="con-ttys39" d="M330.87 9.4H342.67V16.8H339.57V19H333.97V16.8H330.87Z" fill="#1d1d1f"/>
-    <path id="con-ttys40" d="M333.97 23.4H339.57V25.6H342.67V33H330.87V25.6H333.97Z" fill="#1d1d1f"/>
-    <text x="350.86" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">41</text>
-    <text x="350.86" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">42</text>
-    <path id="con-ttys41" d="M344.96 9.4H356.76V16.8H353.66V19H348.06V16.8H344.96Z" fill="#1d1d1f"/>
-    <path id="con-ttys42" d="M348.06 23.4H353.66V25.6H356.76V33H344.96V25.6H348.06Z" fill="#1d1d1f"/>
-    <text x="364.95" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">43</text>
-    <text x="364.95" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">44</text>
-    <path id="con-ttys43" d="M359.05 9.4H370.85V16.8H367.75V19H362.15V16.8H359.05Z" fill="#1d1d1f"/>
-    <path id="con-ttys44" d="M362.15 23.4H367.75V25.6H370.85V33H359.05V25.6H362.15Z" fill="#1d1d1f"/>
-    <text x="379.04" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">45</text>
-    <text x="379.04" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">46</text>
-    <path id="con-ttys45" d="M373.14 9.4H384.94V16.8H381.84V19H376.24V16.8H373.14Z" fill="#1d1d1f"/>
-    <path id="con-ttys46" d="M376.24 23.4H381.84V25.6H384.94V33H373.14V25.6H376.24Z" fill="#1d1d1f"/>
-    <text x="393.13" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">47</text>
-    <text x="393.13" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="2.2" font-weight="bold" text-anchor="middle" fill="#2b2b2b">48</text>
-    <path id="con-ttys47" d="M387.23 9.4H399.03V16.8H395.93V19H390.33V16.8H387.23Z" fill="#1d1d1f"/>
-    <path id="con-ttys48" d="M390.33 23.4H395.93V25.6H399.03V33H387.23V25.6H390.33Z" fill="#1d1d1f"/>
-  <rect x="405.5" y="1.2" width="31.6" height="40.2" rx="0.6" fill="#d4d6d8"/>
-    <text x="413.7" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="1.5" font-weight="bold" text-anchor="middle" fill="#2b2b2b">ETH 1</text>
-    <path id="con-eth1" d="M407.8 9.4H419.6V16.8H416.5V19H410.9V16.8H407.8Z" fill="#1d1d1f"/>
-    <text x="428" y="6.3" style="font-family:Arial, Helvetica, sans-serif" font-size="1.5" font-weight="bold" text-anchor="middle" fill="#2b2b2b">AUX/MODEM</text>
-    <path id="con-aux" d="M422.1 9.4H433.9V16.8H430.8V19H425.2V16.8H422.1Z" fill="#1d1d1f"/>
-    <text x="413.7" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="1.5" font-weight="bold" text-anchor="middle" fill="#2b2b2b">ETH 0</text>
-    <path id="con-eth0" d="M410.9 23.4H416.5V25.6H419.6V33H407.8V25.6H410.9Z" fill="#1d1d1f"/>
-    <text x="428" y="39.6" style="font-family:Arial, Helvetica, sans-serif" font-size="1.5" font-weight="bold" text-anchor="middle" fill="#2b2b2b">CONSOLE</text>
-    <path id="con-console" d="M425.2 23.4H430.8V25.6H433.9V33H422.1V25.6H425.2Z" fill="#1d1d1f"/>
+  <rect x="47.7" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="48.3" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="54.6" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="54.6" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="56" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">1</text>
+    <text x="56" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">2</text>
+    <g id="con-ttys1">
+      <path d="M49.6 10.2H62.4V18.4H59.2V20.4H52.8V18.4H49.6Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M52.85 11.1L52.55 14.6 M53.75 11.1L53.45 14.6 M54.65 11.1L54.35 14.6 M55.55 11.1L55.25 14.6 M56.45 11.1L56.15 14.6 M57.35 11.1L57.05 14.6 M58.25 11.1L57.95 14.6 M59.15 11.1L58.85 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys2">
+      <path d="M52.8 24H59.2V26H62.4V34.2H49.6V26H52.8Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="53.2" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="68.69" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="68.69" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="70.09" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">3</text>
+    <text x="70.09" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">4</text>
+    <g id="con-ttys3">
+      <path d="M63.69 10.2H76.49V18.4H73.29V20.4H66.89V18.4H63.69Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M66.94 11.1L66.64 14.6 M67.84 11.1L67.54 14.6 M68.74 11.1L68.44 14.6 M69.64 11.1L69.34 14.6 M70.54 11.1L70.24 14.6 M71.44 11.1L71.14 14.6 M72.34 11.1L72.04 14.6 M73.24 11.1L72.94 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys4">
+      <path d="M66.89 24H73.29V26H76.49V34.2H63.69V26H66.89Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="67.29" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="82.78" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="82.78" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="84.18" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">5</text>
+    <text x="84.18" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">6</text>
+    <g id="con-ttys5">
+      <path d="M77.78 10.2H90.58V18.4H87.38V20.4H80.98V18.4H77.78Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M81.03 11.1L80.73 14.6 M81.93 11.1L81.63 14.6 M82.83 11.1L82.53 14.6 M83.73 11.1L83.43 14.6 M84.63 11.1L84.33 14.6 M85.53 11.1L85.23 14.6 M86.43 11.1L86.13 14.6 M87.33 11.1L87.03 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys6">
+      <path d="M80.98 24H87.38V26H90.58V34.2H77.78V26H80.98Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="81.38" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="96.87" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="96.87" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="98.27" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">7</text>
+    <text x="98.27" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">8</text>
+    <g id="con-ttys7">
+      <path d="M91.87 10.2H104.67V18.4H101.47V20.4H95.07V18.4H91.87Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M95.12 11.1L94.82 14.6 M96.02 11.1L95.72 14.6 M96.92 11.1L96.62 14.6 M97.82 11.1L97.52 14.6 M98.72 11.1L98.42 14.6 M99.62 11.1L99.32 14.6 M100.52 11.1L100.22 14.6 M101.42 11.1L101.12 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys8">
+      <path d="M95.07 24H101.47V26H104.67V34.2H91.87V26H95.07Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="95.47" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="110.96" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="110.96" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="112.36" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">9</text>
+    <text x="112.36" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">10</text>
+    <g id="con-ttys9">
+      <path d="M105.96 10.2H118.76V18.4H115.56V20.4H109.16V18.4H105.96Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M109.21 11.1L108.91 14.6 M110.11 11.1L109.81 14.6 M111.01 11.1L110.71 14.6 M111.91 11.1L111.61 14.6 M112.81 11.1L112.51 14.6 M113.71 11.1L113.41 14.6 M114.61 11.1L114.31 14.6 M115.51 11.1L115.21 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys10">
+      <path d="M109.16 24H115.56V26H118.76V34.2H105.96V26H109.16Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="109.56" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="125.05" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="125.05" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="126.45" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">11</text>
+    <text x="126.45" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">12</text>
+    <g id="con-ttys11">
+      <path d="M120.05 10.2H132.85V18.4H129.65V20.4H123.25V18.4H120.05Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M123.3 11.1L123 14.6 M124.2 11.1L123.9 14.6 M125.1 11.1L124.8 14.6 M126 11.1L125.7 14.6 M126.9 11.1L126.6 14.6 M127.8 11.1L127.5 14.6 M128.7 11.1L128.4 14.6 M129.6 11.1L129.3 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys12">
+      <path d="M123.25 24H129.65V26H132.85V34.2H120.05V26H123.25Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="123.65" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="139.14" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="139.14" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="140.54" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">13</text>
+    <text x="140.54" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">14</text>
+    <g id="con-ttys13">
+      <path d="M134.14 10.2H146.94V18.4H143.74V20.4H137.34V18.4H134.14Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M137.39 11.1L137.09 14.6 M138.29 11.1L137.99 14.6 M139.19 11.1L138.89 14.6 M140.09 11.1L139.79 14.6 M140.99 11.1L140.69 14.6 M141.89 11.1L141.59 14.6 M142.79 11.1L142.49 14.6 M143.69 11.1L143.39 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys14">
+      <path d="M137.34 24H143.74V26H146.94V34.2H134.14V26H137.34Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="137.74" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="153.23" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="153.23" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="154.63" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">15</text>
+    <text x="154.63" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">16</text>
+    <g id="con-ttys15">
+      <path d="M148.23 10.2H161.03V18.4H157.83V20.4H151.43V18.4H148.23Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M151.48 11.1L151.18 14.6 M152.38 11.1L152.08 14.6 M153.28 11.1L152.98 14.6 M154.18 11.1L153.88 14.6 M155.08 11.1L154.78 14.6 M155.98 11.1L155.68 14.6 M156.88 11.1L156.58 14.6 M157.78 11.1L157.48 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys16">
+      <path d="M151.43 24H157.83V26H161.03V34.2H148.23V26H151.43Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="151.83" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="167" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="167.6" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="173.9" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="173.9" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="175.3" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">17</text>
+    <text x="175.3" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">18</text>
+    <g id="con-ttys17">
+      <path d="M168.9 10.2H181.7V18.4H178.5V20.4H172.1V18.4H168.9Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M172.15 11.1L171.85 14.6 M173.05 11.1L172.75 14.6 M173.95 11.1L173.65 14.6 M174.85 11.1L174.55 14.6 M175.75 11.1L175.45 14.6 M176.65 11.1L176.35 14.6 M177.55 11.1L177.25 14.6 M178.45 11.1L178.15 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys18">
+      <path d="M172.1 24H178.5V26H181.7V34.2H168.9V26H172.1Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="172.5" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="187.99" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="187.99" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="189.39" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">19</text>
+    <text x="189.39" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">20</text>
+    <g id="con-ttys19">
+      <path d="M182.99 10.2H195.79V18.4H192.59V20.4H186.19V18.4H182.99Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M186.24 11.1L185.94 14.6 M187.14 11.1L186.84 14.6 M188.04 11.1L187.74 14.6 M188.94 11.1L188.64 14.6 M189.84 11.1L189.54 14.6 M190.74 11.1L190.44 14.6 M191.64 11.1L191.34 14.6 M192.54 11.1L192.24 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys20">
+      <path d="M186.19 24H192.59V26H195.79V34.2H182.99V26H186.19Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="186.59" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="202.08" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="202.08" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="203.48" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">21</text>
+    <text x="203.48" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">22</text>
+    <g id="con-ttys21">
+      <path d="M197.08 10.2H209.88V18.4H206.68V20.4H200.28V18.4H197.08Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M200.33 11.1L200.03 14.6 M201.23 11.1L200.93 14.6 M202.13 11.1L201.83 14.6 M203.03 11.1L202.73 14.6 M203.93 11.1L203.63 14.6 M204.83 11.1L204.53 14.6 M205.73 11.1L205.43 14.6 M206.63 11.1L206.33 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys22">
+      <path d="M200.28 24H206.68V26H209.88V34.2H197.08V26H200.28Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="200.68" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="216.17" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="216.17" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="217.57" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">23</text>
+    <text x="217.57" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">24</text>
+    <g id="con-ttys23">
+      <path d="M211.17 10.2H223.97V18.4H220.77V20.4H214.37V18.4H211.17Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M214.42 11.1L214.12 14.6 M215.32 11.1L215.02 14.6 M216.22 11.1L215.92 14.6 M217.12 11.1L216.82 14.6 M218.02 11.1L217.72 14.6 M218.92 11.1L218.62 14.6 M219.82 11.1L219.52 14.6 M220.72 11.1L220.42 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys24">
+      <path d="M214.37 24H220.77V26H223.97V34.2H211.17V26H214.37Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="214.77" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="230.26" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="230.26" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="231.66" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">25</text>
+    <text x="231.66" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">26</text>
+    <g id="con-ttys25">
+      <path d="M225.26 10.2H238.06V18.4H234.86V20.4H228.46V18.4H225.26Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M228.51 11.1L228.21 14.6 M229.41 11.1L229.11 14.6 M230.31 11.1L230.01 14.6 M231.21 11.1L230.91 14.6 M232.11 11.1L231.81 14.6 M233.01 11.1L232.71 14.6 M233.91 11.1L233.61 14.6 M234.81 11.1L234.51 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys26">
+      <path d="M228.46 24H234.86V26H238.06V34.2H225.26V26H228.46Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="228.86" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="244.35" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="244.35" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="245.75" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">27</text>
+    <text x="245.75" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">28</text>
+    <g id="con-ttys27">
+      <path d="M239.35 10.2H252.15V18.4H248.95V20.4H242.55V18.4H239.35Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M242.6 11.1L242.3 14.6 M243.5 11.1L243.2 14.6 M244.4 11.1L244.1 14.6 M245.3 11.1L245 14.6 M246.2 11.1L245.9 14.6 M247.1 11.1L246.8 14.6 M248 11.1L247.7 14.6 M248.9 11.1L248.6 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys28">
+      <path d="M242.55 24H248.95V26H252.15V34.2H239.35V26H242.55Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="242.95" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="258.44" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="258.44" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="259.84" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">29</text>
+    <text x="259.84" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">30</text>
+    <g id="con-ttys29">
+      <path d="M253.44 10.2H266.24V18.4H263.04V20.4H256.64V18.4H253.44Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M256.69 11.1L256.39 14.6 M257.59 11.1L257.29 14.6 M258.49 11.1L258.19 14.6 M259.39 11.1L259.09 14.6 M260.29 11.1L259.99 14.6 M261.19 11.1L260.89 14.6 M262.09 11.1L261.79 14.6 M262.99 11.1L262.69 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys30">
+      <path d="M256.64 24H263.04V26H266.24V34.2H253.44V26H256.64Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="257.04" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="272.53" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="272.53" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="273.93" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">31</text>
+    <text x="273.93" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">32</text>
+    <g id="con-ttys31">
+      <path d="M267.53 10.2H280.33V18.4H277.13V20.4H270.73V18.4H267.53Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M270.78 11.1L270.48 14.6 M271.68 11.1L271.38 14.6 M272.58 11.1L272.28 14.6 M273.48 11.1L273.18 14.6 M274.38 11.1L274.08 14.6 M275.28 11.1L274.98 14.6 M276.18 11.1L275.88 14.6 M277.08 11.1L276.78 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys32">
+      <path d="M270.73 24H277.13V26H280.33V34.2H267.53V26H270.73Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="271.13" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="286.2" y="8.9" width="116.1" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="286.8" y="20.75" width="114.9" height="2.6" fill="#9c968a"/>
+  <rect x="293.1" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="293.1" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="294.5" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">33</text>
+    <text x="294.5" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">34</text>
+    <g id="con-ttys33">
+      <path d="M288.1 10.2H300.9V18.4H297.7V20.4H291.3V18.4H288.1Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M291.35 11.1L291.05 14.6 M292.25 11.1L291.95 14.6 M293.15 11.1L292.85 14.6 M294.05 11.1L293.75 14.6 M294.95 11.1L294.65 14.6 M295.85 11.1L295.55 14.6 M296.75 11.1L296.45 14.6 M297.65 11.1L297.35 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys34">
+      <path d="M291.3 24H297.7V26H300.9V34.2H288.1V26H291.3Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="291.7" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="307.19" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="307.19" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="308.59" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">35</text>
+    <text x="308.59" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">36</text>
+    <g id="con-ttys35">
+      <path d="M302.19 10.2H314.99V18.4H311.79V20.4H305.39V18.4H302.19Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M305.44 11.1L305.14 14.6 M306.34 11.1L306.04 14.6 M307.24 11.1L306.94 14.6 M308.14 11.1L307.84 14.6 M309.04 11.1L308.74 14.6 M309.94 11.1L309.64 14.6 M310.84 11.1L310.54 14.6 M311.74 11.1L311.44 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys36">
+      <path d="M305.39 24H311.79V26H314.99V34.2H302.19V26H305.39Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="305.79" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="321.28" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="321.28" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="322.68" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">37</text>
+    <text x="322.68" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">38</text>
+    <g id="con-ttys37">
+      <path d="M316.28 10.2H329.08V18.4H325.88V20.4H319.48V18.4H316.28Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M319.53 11.1L319.23 14.6 M320.43 11.1L320.13 14.6 M321.33 11.1L321.03 14.6 M322.23 11.1L321.93 14.6 M323.13 11.1L322.83 14.6 M324.03 11.1L323.73 14.6 M324.93 11.1L324.63 14.6 M325.83 11.1L325.53 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys38">
+      <path d="M319.48 24H325.88V26H329.08V34.2H316.28V26H319.48Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="319.88" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="335.37" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="335.37" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="336.77" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">39</text>
+    <text x="336.77" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">40</text>
+    <g id="con-ttys39">
+      <path d="M330.37 10.2H343.17V18.4H339.97V20.4H333.57V18.4H330.37Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M333.62 11.1L333.32 14.6 M334.52 11.1L334.22 14.6 M335.42 11.1L335.12 14.6 M336.32 11.1L336.02 14.6 M337.22 11.1L336.92 14.6 M338.12 11.1L337.82 14.6 M339.02 11.1L338.72 14.6 M339.92 11.1L339.62 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys40">
+      <path d="M333.57 24H339.97V26H343.17V34.2H330.37V26H333.57Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="333.97" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="349.46" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="349.46" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="350.86" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">41</text>
+    <text x="350.86" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">42</text>
+    <g id="con-ttys41">
+      <path d="M344.46 10.2H357.26V18.4H354.06V20.4H347.66V18.4H344.46Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M347.71 11.1L347.41 14.6 M348.61 11.1L348.31 14.6 M349.51 11.1L349.21 14.6 M350.41 11.1L350.11 14.6 M351.31 11.1L351.01 14.6 M352.21 11.1L351.91 14.6 M353.11 11.1L352.81 14.6 M354.01 11.1L353.71 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys42">
+      <path d="M347.66 24H354.06V26H357.26V34.2H344.46V26H347.66Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="348.06" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="363.55" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="363.55" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="364.95" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">43</text>
+    <text x="364.95" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">44</text>
+    <g id="con-ttys43">
+      <path d="M358.55 10.2H371.35V18.4H368.15V20.4H361.75V18.4H358.55Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M361.8 11.1L361.5 14.6 M362.7 11.1L362.4 14.6 M363.6 11.1L363.3 14.6 M364.5 11.1L364.2 14.6 M365.4 11.1L365.1 14.6 M366.3 11.1L366 14.6 M367.2 11.1L366.9 14.6 M368.1 11.1L367.8 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys44">
+      <path d="M361.75 24H368.15V26H371.35V34.2H358.55V26H361.75Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="362.15" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="377.64" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="377.64" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="379.04" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">45</text>
+    <text x="379.04" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">46</text>
+    <g id="con-ttys45">
+      <path d="M372.64 10.2H385.44V18.4H382.24V20.4H375.84V18.4H372.64Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M375.89 11.1L375.59 14.6 M376.79 11.1L376.49 14.6 M377.69 11.1L377.39 14.6 M378.59 11.1L378.29 14.6 M379.49 11.1L379.19 14.6 M380.39 11.1L380.09 14.6 M381.29 11.1L380.99 14.6 M382.19 11.1L381.89 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys46">
+      <path d="M375.84 24H382.24V26H385.44V34.2H372.64V26H375.84Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="376.24" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="391.73" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="391.73" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <text x="393.13" y="7.2" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">47</text>
+    <text x="393.13" y="38.9" style="font-family:Arial, Helvetica, sans-serif" font-size="1.9" font-weight="normal" text-anchor="middle" fill="#56595c">48</text>
+    <g id="con-ttys47">
+      <path d="M386.73 10.2H399.53V18.4H396.33V20.4H389.93V18.4H386.73Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M389.98 11.1L389.68 14.6 M390.88 11.1L390.58 14.6 M391.78 11.1L391.48 14.6 M392.68 11.1L392.38 14.6 M393.58 11.1L393.28 14.6 M394.48 11.1L394.18 14.6 M395.38 11.1L395.08 14.6 M396.28 11.1L395.98 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+    <g id="con-ttys48">
+      <path d="M389.93 24H396.33V26H399.53V34.2H386.73V26H389.93Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="390.33" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="405.5" y="8.9" width="31.6" height="26.2" fill="#8d887f" stroke="#5f5b55" stroke-width="0.4"/>
+  <rect x="406.1" y="20.75" width="30.4" height="2.6" fill="#9c968a"/>
+  <rect x="412.3" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="412.3" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <g id="con-eth1">
+      <path d="M407.3 10.2H420.1V18.4H416.9V20.4H410.5V18.4H407.3Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M410.55 11.1L410.25 14.6 M411.45 11.1L411.15 14.6 M412.35 11.1L412.05 14.6 M413.25 11.1L412.95 14.6 M414.15 11.1L413.85 14.6 M415.05 11.1L414.75 14.6 M415.95 11.1L415.65 14.6 M416.85 11.1L416.55 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+  <rect x="426.6" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="426.6" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <g id="con-aux">
+      <path d="M421.6 10.2H434.4V18.4H431.2V20.4H424.8V18.4H421.6Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <path d="M424.85 11.1L424.55 14.6 M425.75 11.1L425.45 14.6 M426.65 11.1L426.35 14.6 M427.55 11.1L427.25 14.6 M428.45 11.1L428.15 14.6 M429.35 11.1L429.05 14.6 M430.25 11.1L429.95 14.6 M431.15 11.1L430.85 14.6" stroke="#b8954a" stroke-width="0.32"/>
+    </g>
+  <rect x="412.3" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="412.3" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <g id="con-eth0">
+      <path d="M410.5 24H416.9V26H420.1V34.2H407.3V26H410.5Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="410.9" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+  <rect x="426.6" y="8.9" width="2.8" height="0.9" fill="#d3cfc6"/>
+  <rect x="426.6" y="34.2" width="2.8" height="0.9" fill="#d3cfc6"/>
+    <g id="con-console">
+      <path d="M424.8 24H431.2V26H434.4V34.2H421.6V26H424.8Z" fill="#262422" stroke="#4a4640" stroke-width="0.3"/>
+      <rect x="425.2" y="24.3" width="5.6" height="3.6" fill="#55524d"/>
+    </g>
+    <text x="413.7" y="7.2" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">ETH 1</text>
+    <text x="428" y="4.9" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">AUX /</text>
+    <text x="428" y="7.2" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">MODEM</text>
+    <text x="413.7" y="38.9" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">ETH 0</text>
+    <text x="428" y="38.9" style="font-family:Arial, Helvetica, sans-serif;font-style:italic" font-size="1.7" font-weight="bold" text-anchor="middle" fill="#3a3c3e">CONSOLE</text>
 </svg>
