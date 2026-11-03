@@ -94,8 +94,8 @@ class DeviceViewTabTests(TestCase):
             device=self.device, name="Port 1", type="8p8c", positions=1
         )
         response = self._tab(RenderMode.CSS)
-        self.assertContains(response, 'data-bs-title="Gi1"', count=1)
-        self.assertContains(response, 'data-bs-title="Port 1"', count=1)
+        self.assertContains(response, 'aria-label="Gi1: not connected"', count=1)
+        self.assertContains(response, 'aria-label="Port 1: not connected"', count=1)
 
     def test_svg_mode_renders_a_panel_for_each_virtual_chassis_member(self):
         chassis = VirtualChassis.objects.create(name="vc")
