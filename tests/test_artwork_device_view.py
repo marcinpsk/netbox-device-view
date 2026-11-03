@@ -232,8 +232,11 @@ class ArtworkTabTests(ArtworkTestCase):
         )
         self.assertIn(f"dv-o-d{self.device.pk}-front-con-eth1", ids(front))
         self.assertIn(f"dv-o-d{self.device.pk}-rear-con-psu", ids(rear))
-        # Below 768 px the faces stack; from 768 px they share one row.
-        self.assertEqual(content.count('<div class="col-12 col-md">'), 2)
+        # The faces stack at every width: each panel has a full-width column.
+        self.assertEqual(
+            re.findall(r'<div class="([^"]*)">\s*<div class="dv-art-panel">', content),
+            ["col-12", "col-12"],
+        )
         # Only a virtual chassis marks the current device.
         self.assertNotIn("active-device", content)
 
