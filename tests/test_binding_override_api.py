@@ -2,10 +2,11 @@
 
 from core.models import ObjectChange, ObjectType
 from dcim.models import DeviceType, Interface
+from django.test import override_settings
 from django.urls import reverse
 from users.models import ObjectPermission
 
-from netbox_device_view.models import BindingOverride
+from netbox_device_view.models import BindingOverride, VisualDefinition
 
 from .permissions import grant
 from .test_api_artwork import ArtworkApiTestCase
@@ -175,6 +176,49 @@ class WriteTests(OverrideApiTestCase):
         self.assertFalse(BindingOverride.objects.exists())
 
 
+RECORDED_EVENTS = []
+
+
+def record_events(events):
+    """An events pipeline for the tests: keep the events that NetBox flushes."""
+    RECORDED_EVENTS.extend(events)
+
+
+@override_settings(EVENTS_PIPELINE=[f"{__name__}.record_events"])
+class EventTests(OverrideApiTestCase):
+    def setUp(self):
+        super().setUp()
+        grant(self.user, BindingOverride, "change")
+        self.first = self.stored(device=self.device)
+        self.second = self.stored(device=self.sw2)
+        RECORDED_EVENTS.clear()
+
+    def bulk_patch(self, second_bindings):
+        return self.api.patch(
+            reverse(LIST),
+            [
+                {"id": self.first.pk, "bindings": []},
+                {"id": self.second.pk, "bindings": second_bindings},
+            ],
+            format="json",
+        )
+
+    def test_a_bulk_change_sends_an_event_for_each_override(self):
+        self.assertEqual(self.bulk_patch([]).status_code, 200)
+
+        self.assertEqual(len(RECORDED_EVENTS), 2)
+
+    def test_a_failed_bulk_change_sends_no_event(self):
+        response = self.bulk_patch([{"component": "fan", "name": "x"}])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(RECORDED_EVENTS, [])
+        self.assertEqual(
+            list(BindingOverride.objects.values_list("bindings", flat=True)),
+            [ETH2, ETH2],
+        )
+
+
 class ValidationTests(OverrideApiTestCase):
     def setUp(self):
         super().setUp()
@@ -240,6 +284,32 @@ class ValidationTests(OverrideApiTestCase):
             "This scope already has an override of this connector.",
             str(self.errors(device=self.device.pk)),
         )
+
+    def test_a_hidden_scope_is_rejected_before_its_artwork_is_checked(self):
+        other = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="SW-48", slug="sw-48"
+        )
+        ObjectPermission.objects.filter(name__startswith="dcim.devicetype").update(
+            constraints={"model": "SW-24"}
+        )
+
+        self.assertEqual(
+            self.errors(device_type=other.pk),
+            {"device_type": ["Select a device type that you can view."]},
+        )
+
+    def test_an_override_of_a_hidden_scope_cannot_change(self):
+        grant(self.user, BindingOverride, "change")
+        override = self.stored(device=self.device)
+        other = VisualDefinition.objects.create(key="acme/other", kind="device")
+        BindingOverride.objects.filter(pk=override.pk).update(definition=other)
+        ObjectPermission.objects.filter(name__startswith="dcim.device ").update(
+            constraints={"name": "sw2"}
+        )
+
+        body = self.patch(override, {"bindings": []}, status=400)
+
+        self.assertEqual(body, {"device": ["Select a device that you can view."]})
 
     def test_a_scope_that_the_user_cannot_view_is_rejected(self):
         ObjectPermission.objects.filter(name__startswith="dcim.device ").update(
