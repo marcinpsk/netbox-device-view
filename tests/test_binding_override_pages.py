@@ -126,6 +126,20 @@ class AddTests(OverridePageTestCase):
         [change] = self.changes()
         self.assertEqual((change.action, change.user), ("create", self.user))
 
+    def test_an_htmx_add_answers_with_the_location_of_the_override(self):
+        response = self.client.post(
+            reverse(ADD_URL),
+            {
+                "device": self.device.pk,
+                "connector_key": "con-eth1",
+                **rows((ETH, "eth2")),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        override = BindingOverride.objects.get()
+        self.assertEqual(response["HX-Location"], override.get_absolute_url())
+
     def test_an_instance_override_changes_the_view_of_its_device_only(self):
         self.add((ETH, "eth2"), device=self.device)
 
