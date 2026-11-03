@@ -156,6 +156,15 @@ class UploadTests(ArtworkTestCase):
             with self.subTest(text=text):
                 self.assertContains(detail, text)
 
+    def test_the_provenance_table_scrolls_in_its_card(self):
+        # Without the wrapper, the table widens a 390 px page.
+        self.upload()
+        detail = self.client.get(DefinitionRevision.objects.get().get_absolute_url())
+        self.assertRegex(
+            detail.content.decode(),
+            r'Provenance</h2>\s*<div class="table-responsive">\s*<table',
+        )
+
     def test_quick_search_filters_the_list(self):
         entries = {
             **definition(DEVICE_DIR, DEVICE_FILES),

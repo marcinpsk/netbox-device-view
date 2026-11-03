@@ -72,21 +72,23 @@
       </div>
       <div class="card">
         <h2 class="card-header">{% trans "Provenance" %}</h2>
-        <table class="table table-hover mb-0">
-          <thead>
-            <tr><th>{% trans "Imported" %}</th><th>{% trans "User" %}</th><th>{% trans "Source" %}</th><th>{% trans "Directory" %}</th></tr>
-          </thead>
-          <tbody>
-            {% for event in imports %}
-              <tr>
-                <td>{{ event.created|isodatetime }}</td>
-                <td>{{ event.user_name }}</td>
-                <td class="text-break">{{ event.source_name }}</td>
-                <td class="font-monospace text-break">{{ event.path|placeholder }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr><th>{% trans "Imported" %}</th><th>{% trans "User" %}</th><th>{% trans "Source" %}</th><th>{% trans "Directory" %}</th></tr>
+            </thead>
+            <tbody>
+              {% for event in imports %}
+                <tr>
+                  <td>{{ event.created|isodatetime }}</td>
+                  <td>{{ event.user_name }}</td>
+                  <td class="text-break">{{ event.source_name }}</td>
+                  <td class="font-monospace text-break">{{ event.path|placeholder }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
