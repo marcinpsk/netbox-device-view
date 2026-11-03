@@ -273,7 +273,7 @@ A binding override replaces the bindings of one connector without a change to th
 
 - A device type: the override applies to each device of the type.
 - A device: the override applies to that device only.
-- A module type or an installed module. The plugin stores and checks these overrides now. Module artwork is not drawn yet, so they have no effect on a page.
+- A module type or an installed module. The model, the pages and the API accept these scopes, but you cannot add one yet: an override needs the active artwork of its module type, and the plugin cannot activate module artwork before module composition (#45). Activation writes device type associations only.
 
 The bindings of a connector resolve in this order: the bindings of the artwork, then the override of the type, then the override of the device. Each level replaces the list of the level below it. The lists do not merge. The Device View tab, the device page panel and the [artwork API](artwork-api.md) use the same resolution.
 
