@@ -18,6 +18,7 @@ from rest_framework.fields import get_error_detail
 
 from ..artwork import overrides
 from ..models import (
+    SCOPE_FIELDS,
     Association,
     BindingOverride,
     DefinitionRevision,
@@ -175,6 +176,16 @@ class BindingOverrideSerializer(ChangeLogMessageSerializer, ValidatedModelSerial
             "last_updated",
         )
         brief_fields = ("id", "url", "display", "connector_key")
+
+    def validate(self, data):
+        # The messages of the model validation name the type of the scope.
+        user = self.context["request"].user
+        if self.instance is not None and self.instance.scope_field is not None:
+            overrides.check_scope(user, self.instance.scope_field, self.instance.scope)
+        for field in SCOPE_FIELDS:
+            if data.get(field) is not None:
+                overrides.check_scope(user, field, data[field])
+        return super().validate(data)
 
     def create(self, validated_data):
         return self._save(BindingOverride(**validated_data))

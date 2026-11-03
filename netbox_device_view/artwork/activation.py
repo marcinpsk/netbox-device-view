@@ -1,7 +1,9 @@
 """Activate a definition revision for a device type: the one writer of associations."""
 
+from dcim.models import Device
 from django.core.exceptions import PermissionDenied
 from django.db import DEFAULT_DB_ALIAS, IntegrityError, router, transaction
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 from ..models import Association, BindingOverride
@@ -91,7 +93,12 @@ def _check_overrides(user, revision, device_type):
     count = missing.count()
     if not count:
         return
-    visible = list(missing.restrict(user, "view"))
+    # A name needs view permission on the override and on its device.
+    visible = list(
+        missing.restrict(user, "view").filter(
+            Q(device__isnull=True) | Q(device__in=Device.objects.restrict(user, "view"))
+        )
+    )
     if len(visible) != count:
         raise ActivationRejected(HIDDEN_OVERRIDES)
     raise ActivationRejected(
