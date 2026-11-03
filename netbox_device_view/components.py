@@ -96,14 +96,26 @@ class ComponentState:
     # None where the component type has no enabled field.
     enabled: bool | None
     # The cable facts come only from a cable that the user can view.
-    cable_status: str | None
-    # None without a visible cable, "" for a visible cable without a colour.
-    cable_color: str | None
+    cable: Cable | None
     marked_connected: bool
     # None where the component type has no cable path.
     path_complete: bool | None
-    peer_labels: list[str]
+    # The peers that the user can view: the far ends of the path, else the link peers.
+    peers: list
     connection_state: str
+
+    @property
+    def cable_status(self):
+        return self.cable.status if self.cable else None
+
+    @property
+    def cable_color(self):
+        """Return None without a visible cable, "" for a visible cable without a colour."""
+        return self.cable.color if self.cable else None
+
+    @property
+    def peer_labels(self):
+        return [_peer_label(peer) for peer in self.peers]
 
     @property
     def key(self):
@@ -288,16 +300,15 @@ def _state(component, link_peers, endpoints, cable_visible, visible_peers):
     return ComponentState(
         component=component,
         enabled=enabled,
-        cable_status=cable.status if cable else None,
-        cable_color=cable.color if cable else None,
+        cable=cable,
         marked_connected=component.mark_connected,
         path_complete=(
             bool(linked and path and path.is_complete)
             if isinstance(component, PathEndpoint)
             else None
         ),
-        peer_labels=[
-            _peer_label(peer)
+        peers=[
+            peer
             for peer in endpoints or link_peers
             if (type(peer), peer.pk) in visible_peers
         ],
