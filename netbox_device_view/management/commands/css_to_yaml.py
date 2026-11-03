@@ -40,6 +40,7 @@ import re
 import textwrap
 
 import yaml
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
 from netbox_device_view.models import DeviceView
@@ -426,13 +427,25 @@ class Command(BaseCommand):
                 errors += 1
                 continue
 
+            dv.yaml_layout = yaml_text
+            try:
+                dv.full_clean(validate_unique=False)
+            except ValidationError as exc:
+                self.stderr.write(
+                    self.style.ERROR(
+                        f"  ERROR: the YAML for {model_name!r} is not valid: "
+                        f"{'; '.join(exc.messages)}"
+                    )
+                )
+                errors += 1
+                continue
+
             if dry_run:
                 self.stdout.write(
                     self.style.SUCCESS(f"  --- YAML for {model_name} ---")
                 )
                 self.stdout.write(textwrap.indent(yaml_text, "  "))
             else:
-                dv.yaml_layout = yaml_text
                 dv.save(update_fields=["yaml_layout"])
                 self.stdout.write(
                     self.style.SUCCESS(f"  Saved yaml_layout ({len(yaml_text)} chars)")
