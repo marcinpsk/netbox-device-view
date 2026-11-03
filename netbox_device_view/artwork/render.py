@@ -15,7 +15,13 @@ from django.utils.safestring import SafeString, mark_safe
 from django.utils.text import capfirst
 from lxml import etree
 
-from ..components import BINDABLE_MODELS, ComponentState, device_components, find
+from ..components import (
+    BINDABLE_MODELS,
+    BINDING_MODELS,
+    ComponentState,
+    device_components,
+    find,
+)
 from ..models import Association, DefinitionRevision
 from .storage import DamagedBlob, read_blob
 from .svg import (
@@ -36,7 +42,6 @@ FOUND = "found"
 MISSING = "missing"
 # The view part of an id: "o" for the overview of a device.
 OVERVIEW = "o"
-_MODELS = {model._meta.model_name: model for model in BINDABLE_MODELS}
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
@@ -140,7 +145,7 @@ def resolve_device(device, revision, user, view=OVERVIEW) -> Part:
 def _connector(key, item, states) -> Connector:
     bindings = []
     for binding in item["bindings"]:
-        found = find(states, _MODELS[binding["component"]], binding["name"])
+        found = find(states, BINDING_MODELS[binding["component"]], binding["name"])
         # A device-scope name is unique per component type, so one match at most.
         bindings.append(Binding(FOUND, found[0]) if found else Binding(MISSING, None))
     return Connector(key, item["face"], item.get("label"), tuple(bindings))
