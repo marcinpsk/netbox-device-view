@@ -126,4 +126,40 @@ urlpatterns = (
         name="association_changelog",
         kwargs={"model": models.Association},
     ),
+    path(
+        "binding-overrides/",
+        views.BindingOverrideListView.as_view(),
+        name="bindingoverride_list",
+    ),
+    path(
+        "binding-overrides/add/",
+        views.BindingOverrideEditView.as_view(),
+        name="bindingoverride_add",
+    ),
+    path(
+        "binding-overrides/delete/",
+        views.BindingOverrideBulkDeleteView.as_view(),
+        name="bindingoverride_bulk_delete",
+    ),
+    path(
+        "binding-overrides/<int:pk>/",
+        views.BindingOverrideView.as_view(),
+        name="bindingoverride",
+    ),
+    path(
+        "binding-overrides/<int:pk>/edit/",
+        views.BindingOverrideEditView.as_view(),
+        name="bindingoverride_edit",
+    ),
+    path(
+        "binding-overrides/<int:pk>/delete/",
+        views.BindingOverrideDeleteView.as_view(),
+        name="bindingoverride_delete",
+    ),
+    path(
+        "binding-overrides/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="bindingoverride_changelog",
+        kwargs={"model": models.BindingOverride},
+    ),
 )

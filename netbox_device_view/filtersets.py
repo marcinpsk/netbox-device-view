@@ -1,12 +1,18 @@
 import django_filters
 from core.models import DataSource
-from dcim.models import DeviceType, Manufacturer
+from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 from netbox.filtersets import ChangeLoggedModelFilterSet, NetBoxModelFilterSet
 from utilities.filtersets import register_filterset
 
-from .models import Association, DefinitionRevision, DeviceView, VisualDefinition
+from .models import (
+    Association,
+    BindingOverride,
+    DefinitionRevision,
+    DeviceView,
+    VisualDefinition,
+)
 
 
 @register_filterset
@@ -103,4 +109,42 @@ class AssociationFilterSet(ChangeLoggedModelFilterSet):
             Q(device_type__model__icontains=value)
             | Q(module_type__model__icontains=value)
             | Q(revision__definition__key__icontains=value)
+        )
+
+
+@register_filterset
+class BindingOverrideFilterSet(ChangeLoggedModelFilterSet):
+    q = django_filters.CharFilter(method="search", label=_("Search"))
+    device_type_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=DeviceType.objects.all(), label=_("Device type (ID)")
+    )
+    module_type_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=ModuleType.objects.all(), label=_("Module type (ID)")
+    )
+    device_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=Device.objects.all(), label=_("Device (ID)")
+    )
+    module_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=Module.objects.all(), label=_("Installed module (ID)")
+    )
+    definition_id = django_filters.ModelMultipleChoiceFilter(
+        field_name="definition",
+        queryset=VisualDefinition.objects.all(),
+        label=_("Definition (ID)"),
+    )
+
+    class Meta:
+        model = BindingOverride
+        fields = ("id", "connector_key")
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(connector_key__icontains=value)
+            | Q(definition__key__icontains=value)
+            | Q(device_type__model__icontains=value)
+            | Q(module_type__model__icontains=value)
+            | Q(device__name__icontains=value)
+            | Q(module__module_type__model__icontains=value)
         )

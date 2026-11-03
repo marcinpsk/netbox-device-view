@@ -10,6 +10,7 @@ from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.api import device_artwork
 from netbox_device_view.api.rendered_layout import UnavailableReason
 from netbox_device_view.artwork import limits
+from netbox_device_view.artwork.manifest import MAX_BINDINGS
 from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
 from netbox_device_view.layout import parser
@@ -61,6 +62,7 @@ MIB = 1024 * 1024
         f"| `viewBox` size | {limits.MIN_VIEWBOX_SIZE} to {limits.MAX_VIEWBOX_SIZE} mm |",
         f"| Data Source files | {limits.MAX_MEMBERS} and {limits.MAX_EXPANDED_BYTES // MIB} MiB below the prefix |",
         f"The import shows at most {limits.MAX_ISSUES} errors.",
+        f"An override has the schema of the `bindings` of a manifest connector: 0 to {MAX_BINDINGS} bindings",
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):

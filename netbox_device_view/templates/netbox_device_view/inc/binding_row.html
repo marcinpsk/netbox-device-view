@@ -1,0 +1,12 @@
+{# One row of the binding formset of an override; ``row`` is a BindingRowForm. #}
+<tr>
+  <td>
+    {{ row.component }}
+    {% for error in row.component.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+    {% for error in row.non_field_errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+  </td>
+  <td>
+    {{ row.name }}
+    {% for error in row.name.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+  </td>
+</tr>
