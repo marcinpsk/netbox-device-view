@@ -143,10 +143,6 @@ class ComponentState:
         return f"#{self.cable_color}"
 
     @property
-    def occupied(self):
-        return self.cable_status is not None
-
-    @property
     def object_type(self):
         return f"dcim.{type(self.component)._meta.model_name}"
 
