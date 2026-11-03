@@ -146,6 +146,23 @@ class SyncGuardTests(TransactionTestCase):
             len(capture.read_source_files(user, self.source, "").entries), 3
         )
 
+    def test_a_failed_sync_job_releases_the_lock_for_another_worker(self):
+        queue = private_sync_queue(self)
+        user = User.objects.create_superuser(username="admin")
+        (self.root / DEVICE_DIR / "broken.svg").symlink_to(self.root / "missing.svg")
+        SyncDataSourceJob.enqueue(instance=self.source, user=user)
+        SimpleWorker([queue], connection=queue.connection).work(burst=True)
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.status, DataSourceStatusChoices.FAILED)
+        (self.root / DEVICE_DIR / "broken.svg").unlink()
+
+        self.in_other_session(
+            lambda: DataSource.objects.get(pk=self.source.pk).sync()
+        ).result(TIMEOUT)
+
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.status, DataSourceStatusChoices.COMPLETED)
+
 
 @skipUnless(
     find_spec("dulwich"),
