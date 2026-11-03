@@ -8,17 +8,18 @@ import time
 
 from core.models import ObjectChange, ObjectType
 from dcim.models import DeviceType, Manufacturer, ModuleType
+from django.contrib.messages import get_messages
 from django.db import connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.models import Association, DefinitionRevision
+from netbox_device_view.models import Association, DefinitionRevision, DeviceView
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, MODULE_FILES, bundle, definition
 from .permissions import grant
-from .test_artwork_device_view import ArtworkTestCase, faces
+from .test_artwork_device_view import GRID, ArtworkTestCase, faces
 from .test_artwork_key_transfer import waiting_row_locks
 
 ACTIVATE_URL = "plugins:netbox_device_view:definitionrevision_activate"
@@ -68,6 +69,10 @@ class ActivationTests(ActivationTestCase):
         response = self.post()
 
         association = Association.objects.get()
+        self.assertEqual(
+            [str(message) for message in get_messages(response.wsgi_request)],
+            [f"ACME SW-24 now shows {self.revision}."],
+        )
         self.assertRedirects(response, reverse(ASSOCIATION_URL, args=[association.pk]))
         self.assertEqual(association.device_type, self.device_type)
         self.assertEqual(association.revision, self.revision)
@@ -191,8 +196,35 @@ class AssociationPageTests(ActivationTestCase):
         )
         listing = self.client.get(reverse(LIST_URL))
         self.assertContains(
-            listing, f'<a href="{module_type.get_absolute_url()}">NM-2X</a>', html=True
+            listing,
+            f'<a href="{module_type.get_absolute_url()}">ACME NM-2X</a>',
+            html=True,
         )
+
+    def test_the_pages_name_the_manufacturer_of_the_type(self):
+        other_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="Other", slug="other"),
+            model="SW-24",
+            slug="other-sw-24",
+        )
+        other = Association.objects.create(
+            device_type=other_type, revision=self.revision
+        )
+        listing = self.client.get(reverse(LIST_URL))
+        for device_type in (self.device_type, other_type):
+            self.assertContains(
+                listing,
+                f'<a href="{device_type.get_absolute_url()}">{device_type.full_name}</a>',
+                html=True,
+            )
+        detail = self.client.get(reverse(ASSOCIATION_URL, args=[other.pk]))
+        self.assertContains(
+            detail,
+            f'<a href="{other_type.get_absolute_url()}">Other SW-24</a>',
+            html=True,
+        )
+        confirmation = self.client.get(reverse(DELETE_URL, args=[other.pk]))
+        self.assertContains(confirmation, f"Other SW-24 → {self.revision}")
 
     def test_an_active_revision_cannot_be_deleted(self):
         grant(self.user, DefinitionRevision, "delete")
@@ -208,11 +240,16 @@ class AssociationPageTests(ActivationTestCase):
         self.assertTrue(DefinitionRevision.objects.filter(pk=self.revision.pk).exists())
 
     def test_deleting_the_association_returns_the_device_to_its_layout(self):
+        DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
+        grant(self.user, DeviceView, "view")
+        self.assertNotIn('class="deviceview area', self.tab())
         self.client.post(
             reverse(DELETE_URL, args=[self.association.pk]), {"confirm": True}
         )
         self.assertFalse(Association.objects.exists())
-        self.assertEqual(faces(self.tab()), [])
+        content = self.tab()
+        self.assertEqual(faces(content), [])
+        self.assertIn('class="deviceview area', content)
 
 
 class ActivationRaceTests(TransactionTestCase):

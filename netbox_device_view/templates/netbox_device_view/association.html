@@ -9,9 +9,9 @@
         <h2 class="card-header">{% trans "Association" %}</h2>
         <table class="table table-hover attr-table">
           {% if object.device_type %}
-            <tr><th scope="row">{% trans "Device type" %}</th><td>{{ object.device_type|linkify }}</td></tr>
+            <tr><th scope="row">{% trans "Device type" %}</th><td>{{ object.device_type|linkify:"full_name" }}</td></tr>
           {% else %}
-            <tr><th scope="row">{% trans "Module type" %}</th><td>{{ object.module_type|linkify }}</td></tr>
+            <tr><th scope="row">{% trans "Module type" %}</th><td>{{ object.module_type|linkify:"full_name" }}</td></tr>
           {% endif %}
           <tr><th scope="row">{% trans "Definition key" %}</th><td class="font-monospace">{{ object.revision.definition|linkify }}</td></tr>
           <tr><th scope="row">{% trans "Active revision" %}</th><td class="font-monospace text-break"><a href="{{ object.revision.get_absolute_url }}">{{ object.revision.digest }}</a></td></tr>
