@@ -315,7 +315,7 @@ class BrowserAgreementTests(ArtworkApiTestCase):
                 self.assertEqual(binding["object_id"], component.pk)
                 self.assertEqual(link.get("href"), component.get_absolute_url())
                 self.assertEqual(
-                    "dv-art-occupied" in link.get("class"),
+                    "dv-art-cable-" in link.get("class"),
                     binding["cable_status"] is not None,
                 )
                 linked += 1
@@ -327,8 +327,8 @@ class BrowserAgreementTests(ArtworkApiTestCase):
             ids(etree.fromstring(face["svg"]))
             for face in self.member()["artwork"]["faces"]
         ]
-        # The page adds an outline filter for the cabled connector.
-        page = [[i for i in face if "-occupied-" not in i] for face in page]
+        # The page adds a mark filter for a connector with a fact to show.
+        page = [[i for i in face if "-marks-" not in i] for face in page]
         self.assertEqual(
             [[i.replace("dv-o-", "dv-a-", 1) for i in face] for face in page], api
         )

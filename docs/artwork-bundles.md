@@ -223,10 +223,21 @@ The artwork view shows:
 
 - The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
 - A link on each connector where exactly one binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component. A connector where two or more bindings find a component has no link.
-- An outline on each linked connector whose component has a cable.
-- A tooltip on each linked connector that names its component. When the connector has its own title, the tooltip shows that title first.
+- Marks for the connectivity facts of each connector, and a legend below the faces. Each fact has its own mark, so a disabled interface with a cable shows both. A mark changes only the outline, and each mark has its own pattern, so no fact depends on colour alone.
+- A tooltip on each connector that names every fact: enabled or disabled, the cable status or no cable, marked connected, path complete or incomplete, and the peers that you can view. When the connector has its own title, the tooltip shows that title first.
 
-Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
+| Mark | Fact |
+|---|---|
+| Solid outer ring | A cable with status **Connected**. |
+| Dashed outer ring | A cable with status **Planned**. |
+| Dotted outer ring | A cable with status **Decommissioning**. |
+| Double thin ring | **Mark connected**, with no cable. |
+| Dashed inner ring | A disabled interface. |
+| Dashed thin ring with a gap | No component found: the binding finds no component, or two or more. |
+
+A cable that you cannot view gives no cable mark. The path state is in the tooltip only, because a cable mark does not show where the path ends. The [artwork API](artwork-api.md#binding) gives each fact as its own field.
+
+Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link and has the mark for no component found. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
 A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
 

@@ -5,6 +5,7 @@ bytes reach the page as they are. Every id gets the prefix of its occurrence,
 ``dv-<view>-d<device pk>-<face>-``, and the references are rewritten on the tree.
 """
 
+import functools
 import logging
 import math
 import re
@@ -50,9 +51,27 @@ _TITLE = f"{{{SVG_NS}}}title"
 # XML 1.0 does not allow these characters, and lxml refuses them; NetBox names can hold them.
 _NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 # A generated local id starts with "-"; an author id starts with a letter.
-_OCCUPIED = "-occupied-"
+_MARKS = "-marks-"
 # The outline width as a part of the larger face dimension.
 _OUTLINE = 1 / 300
+# The outer mark of a connector: its cable status, else marked connected, else unresolved.
+_CABLE_MARKS = {
+    "connected": "cable-connected",
+    "planned": "cable-planned",
+    "decommissioning": "cable-decommissioning",
+}
+MARKED = "marked"
+UNRESOLVED = "unresolved"
+# The inner mark of a connector.
+DISABLED = "disabled"
+LEGEND = (
+    ("cable-connected", "Cable connected"),
+    ("cable-planned", "Cable planned"),
+    ("cable-decommissioning", "Cable decommissioning"),
+    (MARKED, "Marked connected"),
+    (DISABLED, "Disabled"),
+    (UNRESOLVED, "No component found"),
+)
 
 
 @dataclass(frozen=True)
@@ -135,7 +154,7 @@ def face_prefix(view, device, face) -> str:
 def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     """Return the artwork Part of ``device`` with the components that ``user`` can view.
 
-    A ``plain`` face has no class, connector links or outlines.
+    A ``plain`` face has no class, connector links or marks.
     """
     states = device_components(device, user, BINDABLE_MODELS)
     connectors = tuple(
@@ -198,32 +217,51 @@ def _face_svg(
     for name in ("x", "y", "width", "height"):
         root.attrib.pop(name, None)
     if not plain:
-        _link_connectors(root, prefix, connectors, elements)
+        _mark_connectors(root, prefix, connectors, elements)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
     svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
     return svg, frozenset(elements)
 
 
-def _link_connectors(root, prefix, connectors, elements):
-    """Link each connector with a target to it, with an outline when it is occupied."""
+def _mark_connectors(root, prefix, connectors, elements):
+    """Mark each connector with its facts, and link it to its component when it has one."""
     view_box = parse_view_box(root.get("viewBox").strip())
     root.set("class", "dv-art-face")
     defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
         # A connector in title or desc is gone: a browser does not draw it either.
         element = elements.get(connector.key)
-        if connector.target is None or element is None:
+        if element is None:
             continue
-        outline = None
-        if connector.target.occupied:
-            outline = _outline(
-                f"{prefix}{_OCCUPIED}{connector.key}", view_box, _user_space(element)
+        outer, inner = _marks(connector)
+        marks = None
+        if outer or inner:
+            marks = _mark_filter(
+                f"{prefix}{_MARKS}{connector.key}",
+                view_box,
+                _user_space(element),
+                outer,
+                inner,
             )
-        if outline is not None:
-            defs.append(outline)
-        _link(element, connector.target, outline)
+        if marks is not None:
+            defs.append(marks)
+        _wrap(element, connector, outer, inner, marks)
     if len(defs):
         root.insert(0, defs)
+
+
+def _marks(connector) -> tuple[str | None, bool]:
+    """Return the outer mark of a connector and whether it has the inner disabled mark."""
+    target = connector.target
+    if target is None:
+        return UNRESOLVED, False
+    if target.cable_status is not None:
+        outer = _CABLE_MARKS[target.cable_status]
+    elif target.marked_connected:
+        outer = MARKED
+    else:
+        outer = None
+    return outer, target.enabled is False
 
 
 def _unprefixed(element, parent=None):
@@ -271,25 +309,59 @@ def _style_token(token, prefix: str) -> str:
     return tinycss2.serialize([token])
 
 
-def _link(element, state: ComponentState, outline):
-    """Wrap the connector element in a link to its component."""
-    component = state.component
-    link = etree.Element(f"{{{SVG_NS}}}a")
-    link.set("href", component.get_absolute_url())
-    link.set("class", "dv-art-connector")
-    title = f"{capfirst(component._meta.verbose_name)} {component.name}"
-    if state.occupied:
-        link.set("class", "dv-art-connector dv-art-occupied")
-        title += ", cable attached"
-    if outline is not None:
-        link.set("filter", f"url(#{outline.get('id')})")
-    # A browser shows the title nearest to the hovered element, so each title names the component.
+def _wrap(element, connector, outer, inner, marks):
+    """Wrap the connector element in a link to its component, or in a group when it has none."""
+    target = connector.target
+    if target is None:
+        wrapper = etree.Element(f"{{{SVG_NS}}}g")
+        wrapper.set("class", "dv-art-unresolved")
+    else:
+        wrapper = etree.Element(f"{{{SVG_NS}}}a")
+        wrapper.set("href", target.component.get_absolute_url())
+        classes = ["dv-art-connector"]
+        if outer:
+            classes.append(f"dv-art-{outer}")
+        if inner:
+            classes.append(f"dv-art-{DISABLED}")
+        wrapper.set("class", " ".join(classes))
+    if marks is not None:
+        wrapper.set("filter", f"url(#{marks.get('id')})")
+    title = _title(connector)
+    # A browser shows the title nearest to the hovered element, so each title names the facts.
     for own in element.iter(_TITLE):
         own.text = _xml_text(f"{own.text} · {title}" if own.text else title)
-    etree.SubElement(link, _TITLE).text = _xml_text(title)
-    link.tail, element.tail = element.tail, None
-    element.addprevious(link)
-    link.append(element)
+    etree.SubElement(wrapper, _TITLE).text = _xml_text(title)
+    wrapper.tail, element.tail = element.tail, None
+    element.addprevious(wrapper)
+    wrapper.append(element)
+
+
+def _component_name(model, name) -> str:
+    return f"{capfirst(model._meta.verbose_name)} {name}"
+
+
+def _title(connector) -> str:
+    """Return each fact of the connector as text, so no fact depends on colour alone."""
+    target = connector.target
+    if target is None:
+        found = [b for b in connector.bindings if b.status == FOUND]
+        names = ", ".join(
+            _component_name(b.model, b.name) for b in found or connector.bindings
+        )
+        return f"Two or more components: {names}" if found else f"No component: {names}"
+    facts = []
+    if target.enabled is not None:
+        facts.append("enabled" if target.enabled else "disabled")
+    facts.append(f"cable {target.cable_status}" if target.cable_status else "no cable")
+    if target.marked_connected:
+        facts.append("marked connected")
+    if target.path_complete is not None:
+        facts.append("path complete" if target.path_complete else "path incomplete")
+    if target.peer_labels:
+        peers = "peer" if len(target.peer_labels) == 1 else "peers"
+        facts.append(f"{peers} {', '.join(target.peer_labels)}")
+    component = target.component
+    return f"{_component_name(type(component), component.name)}: {', '.join(facts)}"
 
 
 def _xml_text(value: str) -> str:
@@ -307,8 +379,8 @@ def _user_space(element):
     return matrix
 
 
-def _outline(ident: str, view_box, matrix) -> etree._Element | None:
-    """Return the filter that outlines a connector, in the user space that ``matrix`` maps to the face.
+def _mark_filter(ident: str, view_box, matrix, outer, inner) -> etree._Element | None:
+    """Return the filter that marks a connector, in the user space that ``matrix`` maps to the face.
 
     None when the matrix cannot be inverted: the connector is not drawn.
     """
@@ -333,35 +405,133 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
     radii = (width_on_face / math.hypot(a, b), width_on_face / math.hypot(c, d))
     if not all(math.isfinite(value) for value in (*region, *radii)):
         return None
-    outline = etree.Element(
-        f"{{{SVG_NS}}}filter",
-        id=ident,
-        filterUnits="userSpaceOnUse",
-        **dict(
-            zip(("x", "y", "width", "height"), (f"{v:g}" for v in region), strict=True)
-        ),
+    return _MarkFilter(ident, region, radii).draw(outer, inner)
+
+
+class _MarkFilter:
+    """Build the filter primitives of the marks; each length is a multiple of the outline width."""
+
+    def __init__(self, ident, region, radii):
+        self.region, self.radii = region, radii
+        self.element = etree.Element(
+            f"{{{SVG_NS}}}filter",
+            id=ident,
+            filterUnits="userSpaceOnUse",
+            **_box(region),
+        )
+        self.results = 0
+
+    def draw(self, outer, inner) -> etree._Element:
+        layers = []
+        if outer is not None:
+            layers.append(self.paint(self.outer_ring(outer), outer))
+        layers.append("SourceGraphic")
+        if inner:
+            band = self.cut("SourceAlpha", self.grow(1, "erode"))
+            layers.append(self.paint(self.keep(band, self.checker(1.5)), DISABLED))
+        merge = etree.SubElement(self.element, f"{{{SVG_NS}}}feMerge")
+        for layer in layers:
+            etree.SubElement(merge, f"{{{SVG_NS}}}feMergeNode", {"in": layer})
+        return self.element
+
+    def outer_ring(self, mark) -> str:
+        edge = self.cut(self.grow(1), "SourceAlpha")
+        if mark == "cable-connected":
+            return edge
+        if mark == "cable-planned":
+            return self.keep(edge, self.checker(2))
+        if mark == "cable-decommissioning":
+            return self.keep(edge, self.checker(1))
+        far = self.cut(self.grow(2.25), self.grow(1.5))
+        if mark == MARKED:
+            near = self.cut(self.grow(0.75), "SourceAlpha")
+            return self.add("feComposite", {"in": near, "in2": far, "operator": "over"})
+        if mark == UNRESOLVED:
+            return self.keep(far, self.checker(2))
+        raise ValueError(f"unknown mark {mark!r}")
+
+    def add(self, tag, attributes) -> str:
+        self.results += 1
+        result = f"m{self.results}"
+        etree.SubElement(
+            self.element, f"{{{SVG_NS}}}{tag}", {**attributes, "result": result}
+        )
+        return result
+
+    def grow(self, times, operator="dilate") -> str:
+        rx, ry = (radius * times for radius in self.radii)
+        return self.add(
+            "feMorphology",
+            {"in": "SourceAlpha", "operator": operator, "radius": f"{rx:g} {ry:g}"},
+        )
+
+    def cut(self, source, hole) -> str:
+        return self.add("feComposite", {"in": source, "in2": hole, "operator": "out"})
+
+    def keep(self, source, mask) -> str:
+        return self.add("feComposite", {"in": source, "in2": mask, "operator": "in"})
+
+    def checker(self, times) -> str:
+        """Return a checkerboard of squares ``times`` outline widths wide; a ring through it is dashed."""
+        x, y = self.region[:2]
+        width, height = (radius * times for radius in self.radii)
+        squares = [
+            self.add(
+                "feFlood",
+                {"flood-color": "#000", **_box((sx, sy, width, height))},
+            )
+            for sx, sy in ((x, y), (x + width, y + height))
+        ]
+        tile = self.add(
+            "feComposite",
+            {
+                "in": squares[0],
+                "in2": squares[1],
+                "operator": "over",
+                **_box((x, y, 2 * width, 2 * height)),
+            },
+        )
+        return self.add("feTile", {"in": tile})
+
+    def paint(self, mask, mark) -> str:
+        # The page CSS gives each mark the colour of the NetBox theme.
+        flood = self.add("feFlood", {"class": f"dv-art-flood-{mark}"})
+        return self.keep(flood, mask)
+
+
+def _box(values) -> dict[str, str]:
+    """Return the x, y, width and height attributes of a filter or a primitive."""
+    return dict(
+        zip(("x", "y", "width", "height"), (f"{v:g}" for v in values), strict=True)
     )
-    etree.SubElement(
-        outline,
-        f"{{{SVG_NS}}}feMorphology",
-        {
-            "in": "SourceAlpha",
-            "operator": "dilate",
-            "radius": f"{radii[0]:g} {radii[1]:g}",
-            "result": "grown",
-        },
-    )
-    etree.SubElement(
-        outline,
-        f"{{{SVG_NS}}}feFlood",
-        {"class": "dv-art-occupied-flood", "flood-color": "#2fb344"},
-    )
-    etree.SubElement(
-        outline,
-        f"{{{SVG_NS}}}feComposite",
-        {"in2": "grown", "operator": "in", "result": "outline"},
-    )
-    merge = etree.SubElement(outline, f"{{{SVG_NS}}}feMerge")
-    for source in ("outline", "SourceGraphic"):
-        etree.SubElement(merge, f"{{{SVG_NS}}}feMergeNode", {"in": source})
-    return outline
+
+
+@functools.cache
+def legend() -> tuple[tuple[str, SafeString], ...]:
+    """Return (label, swatch SVG) for each mark, drawn with the filters of the faces."""
+    items = []
+    for mark, label in LEGEND:
+        outer, inner = (None, True) if mark == DISABLED else (mark, False)
+        marks = _MarkFilter(f"dv-legend-{mark}", (0, 0, 32, 20), (1.5, 1.5)).draw(
+            outer, inner
+        )
+        svg = etree.Element(
+            f"{{{SVG_NS}}}svg",
+            {"class": "dv-art-swatch", "viewBox": "0 0 32 20", "aria-hidden": "true"},
+            nsmap={None: SVG_NS},
+        )
+        etree.SubElement(svg, f"{{{SVG_NS}}}defs").append(marks)
+        etree.SubElement(
+            svg,
+            f"{{{SVG_NS}}}rect",
+            {
+                "x": "8",
+                "y": "5",
+                "width": "16",
+                "height": "10",
+                "fill": "#6c757d",
+                "filter": f"url(#dv-legend-{mark})",
+            },
+        )
+        items.append((label, mark_safe(etree.tostring(svg, encoding="unicode"))))
+    return tuple(items)

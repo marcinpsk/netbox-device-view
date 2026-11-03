@@ -14,7 +14,12 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils.html import escape, format_html, format_html_join
 from django.utils.safestring import mark_safe
 
-from .artwork.render import active_revisions, has_active_artwork, resolve_device
+from .artwork.render import (
+    active_revisions,
+    has_active_artwork,
+    legend,
+    resolve_device,
+)
 from .components import (
     AMBIGUOUS,
     CONNECTED,
@@ -408,6 +413,7 @@ def device_view_context(obj, user, cable_colors=False):
     if parts is not None:
         return {
             "artwork_parts": parts,
+            "artwork_legend": legend(),
             "current_device": obj.pk,
             "panel_title": panel_title(obj, user),
         }
