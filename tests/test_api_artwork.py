@@ -2,6 +2,7 @@
 
 import re
 import time
+from unittest import mock
 
 from dcim.models import (
     Cable,
@@ -432,6 +433,24 @@ class VirtualChassisApiTests(ChassisApiTestCase):
         members = self.get()["members"]
         self.assertEqual([m["representation"] for m in members], ["artwork", "layout"])
         self.assertEqual([panel["key"] for panel in members[1]["panels"]], ["front"])
+
+    def test_an_unexpected_layout_error_makes_only_that_member_unavailable(self):
+        grant(self.user, DeviceView, "view")
+        DeviceView.objects.create(
+            device_type=self.member2.device_type, yaml_layout=SVG_YAML
+        )
+        self.activate()
+        # No stored layout is known to raise here, so the test injects the error.
+        failing = mock.patch(
+            "netbox_device_view.api.device_artwork.member_panels",
+            side_effect=RuntimeError("render bug"),
+        )
+        with failing, self.assertLogs("netbox_device_view.api.device_artwork", "ERROR"):
+            members = self.get()["members"]
+        self.assertEqual(
+            [(m["representation"], m["reason"]) for m in members],
+            [("artwork", None), ("unavailable", "invalid_layout")],
+        )
 
     def test_a_member_that_the_user_cannot_view_is_left_out(self):
         self.activate()
