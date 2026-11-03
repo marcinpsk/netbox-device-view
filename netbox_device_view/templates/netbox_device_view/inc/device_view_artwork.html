@@ -14,17 +14,21 @@
 	<div class="row g-2">
 		{% for face in part.faces %}
 		<div class="col-12">
-			<div class="dv-art-panel">
+			<div class="dv-art-panel" data-dv-details-scope>
 				<div class="dv-art-toolbar">
 					<span class="dv-art-face-name">{{ face.label }}</span>
+					<div class="d-flex gap-1">
+					{% include 'netbox_device_view/inc/details_toggle.html' %}
 					<div class="btn-group btn-group-sm" role="group" aria-label="{% blocktrans with face=face.label %}Zoom the {{ face }} face{% endblocktrans %}">
 						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="out" aria-label="{% trans 'Zoom out' %}"><i class="mdi mdi-minus" aria-hidden="true"></i></button>
 						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="reset" aria-label="{% trans 'Fit to panel' %}"><i class="mdi mdi-fit-to-page-outline" aria-hidden="true"></i></button>
 						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="in" aria-label="{% trans 'Zoom in' %}"><i class="mdi mdi-plus" aria-hidden="true"></i></button>
 					</div>
+					</div>
 				</div>
 				{# A scroll area takes keyboard focus, so a keyboard can scroll a zoomed face without a link in it. #}
 				<div class="dv-art-viewport" data-zoom="1" tabindex="0" role="group" aria-label="{% blocktrans with face=face.label %}Artwork of the {{ face }} face{% endblocktrans %}">{{ face.svg }}</div>
+				{% for details in face.details %}{% include 'netbox_device_view/inc/connector_details.html' %}{% endfor %}
 			</div>
 		</div>
 		{% endfor %}
@@ -32,7 +36,7 @@
 	{% endif %}
 </section>
 {% endfor %}
-{# Each mark has a pattern, so no fact depends on colour alone; each link title names every fact. #}
+{# Each mark has a pattern, so no fact depends on colour alone; each connector title names every fact. #}
 <ul class="dv-art-legend list-unstyled small text-muted mb-0" aria-label="{% trans 'Connector marks' %}">
 	{% for label, swatch in artwork_legend %}<li>{{ swatch }} {{ label }}</li>{% endfor %}
 </ul>

@@ -20,7 +20,7 @@ Set **Render Mode → SVG** on the DeviceView edit page. The field is available 
 
 ## Port status colours
 
-The server finds the connection state of each port and writes the status class, the cable colour and the popover into the SVG. The page script only connects the links and the popovers.
+The server finds the connection state of each port and writes the status class, the cable colour and the details into the page. The page script only opens the links and the details: see [Port details](how-it-works.md#port-details).
 
 ![Port status example](assets/port-status-example.svg)
 
