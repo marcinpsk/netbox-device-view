@@ -1,6 +1,7 @@
 """A device view stores only a YAML layout that parses; the device page reports one that does not."""
 
 import copy
+import json
 
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.conf import settings
@@ -124,6 +125,22 @@ class SaveValidationTests(TestCase):
         self.assertEqual(response.json(), {"yaml_layout": [SAVE_ERROR]})
         device_view.refresh_from_db()
         self.assertEqual(device_view.yaml_layout, "")
+
+    def test_bulk_import_rejects_a_lone_surrogate_in_the_layout(self):
+        layout = VALID_YAML.replace("key: a", "key: a\ud800")
+        rows = [
+            {
+                "device_type": self.device_type.model,
+                "grid_template_area": GRID,
+                "yaml_layout": layout,
+            }
+        ]
+        response = self.client.post(
+            reverse("plugins:netbox_device_view:deviceview_import"),
+            {"import_method": "direct", "data": json.dumps(rows), "format": "json"},
+        )
+        self.assertContains(response, "unacceptable character #xd800")
+        self.assertFalse(DeviceView.objects.exists())
 
     def test_every_save_applies_the_strict_rules(self):
         api = APIClient()
