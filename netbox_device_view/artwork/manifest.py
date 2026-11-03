@@ -32,6 +32,7 @@ _CORE_TAGS = {
 # Unicode categories that no manifest string or bundle path may contain.
 UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co"})
 MODULE_TOKEN = "{module}"
+_MODULE_TOKEN_ONLY = f"Only a module definition can use {MODULE_TOKEN}."
 
 
 @dataclass(frozen=True)
@@ -223,9 +224,7 @@ def _name_issues(manifest: dict) -> list[tuple[tuple, str]]:
         seen_bays[bay["module_bay"]] = key
     if manifest["kind"] != "module":
         issues.extend(
-            (at, f"Only a module definition can use {MODULE_TOKEN}.")
-            for at, name in names
-            if MODULE_TOKEN in name
+            (at, _MODULE_TOKEN_ONLY) for at, name in names if MODULE_TOKEN in name
         )
     return issues
 
