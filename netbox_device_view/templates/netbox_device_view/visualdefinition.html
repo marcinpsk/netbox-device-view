@@ -36,6 +36,27 @@
           </tbody>
         </table>
       </div>
+      <div class="card">
+        <h2 class="card-header">{% trans "Binding overrides" %}</h2>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr><th>{% trans "Scope" %}</th><th>{% trans "Connector" %}</th><th>{% trans "Bindings" %}</th></tr>
+            </thead>
+            <tbody>
+              {% for override, labels in binding_overrides %}
+                <tr>
+                  <td><a href="{{ override.scope.get_absolute_url }}">{{ override.scope_label }}</a></td>
+                  <td class="font-monospace"><a href="{{ override.get_absolute_url }}">{{ override.connector_key }}</a></td>
+                  <td>{{ labels|default:_("No binding") }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="3" class="text-muted">{% trans "None" %}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 {% endblock %}
