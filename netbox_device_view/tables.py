@@ -3,7 +3,7 @@ from django.utils.html import mark_safe
 from django.utils.text import capfirst
 from netbox.tables import NetBoxTable, columns
 
-from .components import BINDING_MODELS, component_label
+from .components import binding_labels
 from .models import (
     Association,
     BindingOverride,
@@ -181,14 +181,6 @@ class AssociationTable(NetBoxTable):
 
     def render_hardware_type(self, record):
         return record.hardware_type.full_name
-
-
-def binding_labels(bindings) -> str:
-    """Return the bindings of an override as text, for example "Interface eth1, Console port eth1"."""
-    return ", ".join(
-        component_label(BINDING_MODELS[binding["component"]], binding["name"])
-        for binding in bindings
-    )
 
 
 class BindingOverrideTable(NetBoxTable):

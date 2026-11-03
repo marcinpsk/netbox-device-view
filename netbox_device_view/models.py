@@ -1,6 +1,7 @@
 import functools
 import operator
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from core.signals import clear_events
 from django.conf import settings
@@ -11,7 +12,13 @@ from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 from utilities.exceptions import AbortRequest
 
-from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND, binding_issues
+from .artwork.manifest import (
+    DEVICE_KIND,
+    FACES,
+    MAX_CONNECTOR_KEY_LENGTH,
+    MODULE_KIND,
+    binding_issues,
+)
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .artwork.type_lock import lock_types
 from .layout.parser import LayoutParseError, parse
@@ -235,7 +242,48 @@ class Association(ChangeLoggedModel):
             )
 
 
-SCOPE_FIELDS = ("device_type", "module_type", "device", "module")
+@dataclass(frozen=True)
+class Scope:
+    """One scope field of an override: the definition kind that it needs and the type that it depends on."""
+
+    field: str
+    definition_kind: str
+    # The type field of an association: the scope is that type, or an instance of it.
+    type_field: str
+    instance: bool
+    # NetBox names an installed module by its bay and type only.
+    names_device: bool = False
+
+    @property
+    def model(self):
+        return BindingOverride._meta.get_field(self.field).related_model
+
+    def label(self, scope) -> str:
+        if not self.instance:
+            return scope.full_name
+        return f"{scope.device} {scope}" if self.names_device else str(scope)
+
+
+SCOPES = {
+    scope.field: scope
+    for scope in (
+        Scope("device_type", DEVICE_KIND, "device_type", instance=False),
+        Scope("module_type", MODULE_KIND, "module_type", instance=False),
+        Scope("device", DEVICE_KIND, "device_type", instance=True),
+        Scope("module", MODULE_KIND, "module_type", instance=True, names_device=True),
+    )
+}
+SCOPE_FIELDS = tuple(SCOPES)
+# The objects that the label and the type lock of an override read.
+OVERRIDE_RELATIONS = (
+    "device_type__manufacturer",
+    "module_type__manufacturer",
+    "device__device_type",
+    "module__device",
+    "module__module_bay",
+    "module__module_type",
+    "definition",
+)
 ONE_SCOPE = _(
     "Select one scope: a device type, a module type, a device or an installed module."
 )
@@ -289,8 +337,7 @@ class BindingOverride(ChangeLoggedModel):
         blank=True,
         related_name="binding_overrides",
     )
-    # A key that matches the connector key pattern of the manifest schema is at most 64 characters.
-    connector_key = models.CharField(max_length=64)
+    connector_key = models.CharField(max_length=MAX_CONNECTOR_KEY_LENGTH)
     # The replacement binding list, with the schema of the bindings of a manifest connector.
     bindings = models.JSONField(default=list, blank=True)
 
@@ -336,46 +383,34 @@ class BindingOverride(ChangeLoggedModel):
 
     @property
     def scope_label(self) -> str:
-        scope = self.scope
-        if self.scope_field in ("device_type", "module_type"):
-            return scope.full_name
-        if self.scope_field == "module":
-            return f"{scope.device} {scope}"
-        return str(scope)
+        return SCOPES[self.scope_field].label(self.scope)
 
     @property
     def hardware_type(self):
         """Return the device type or module type that the override depends on."""
-        scope = self.scope
-        if self.scope_field == "device":
-            return scope.device_type
-        if self.scope_field == "module":
-            return scope.module_type
-        return scope
+        spec = SCOPES[self.scope_field]
+        return getattr(self.scope, spec.type_field) if spec.instance else self.scope
 
     @property
-    def kind(self):
-        """Return the definition kind of the scope."""
-        return (
-            MODULE_KIND
-            if self.scope_field in ("module_type", "module")
-            else DEVICE_KIND
-        )
+    def definition_kind(self):
+        """Return the kind of definition that the scope needs."""
+        return SCOPES[self.scope_field].definition_kind
 
     def clean(self):
         super().clean()
         # The check constraint reports a missing or a second scope.
         if self.scope_field is None:
             return
-        issues = binding_issues(self.bindings, self.kind)
+        issues = binding_issues(self.bindings, self.definition_kind)
         if issues:
             raise ValidationError({"bindings": issues})
         if not self._state.adding:
             self._check_identity()
         hardware_type = self.hardware_type
-        type_field = "device_type" if self.kind == DEVICE_KIND else "module_type"
         association = (
-            Association.objects.filter(**{type_field: hardware_type})
+            Association.objects.filter(
+                **{SCOPES[self.scope_field].type_field: hardware_type}
+            )
             .select_related("revision__definition")
             .first()
         )
@@ -425,27 +460,35 @@ class BindingOverride(ChangeLoggedModel):
                 )
             )
 
+    @classmethod
     @contextmanager
-    def locked(self):
-        """Hold the lock of the override's type in one transaction on main and on the routed connection."""
-        # NetBox Branching routes the override to the branch and its ChangeDiff rows to main.
+    def writing(cls):
+        """Open one transaction on main and on the routed connection; yield the routed alias."""
+        # NetBox Branching routes an override to the branch and its ChangeDiff rows to main.
         try:
             with (
                 transaction.atomic(using=DEFAULT_DB_ALIAS),
                 transaction.atomic(using=router.db_for_write(BindingOverride)),
             ):
-                hardware_type = self.hardware_type
-                lock_types([hardware_type], router.db_for_write(BindingOverride))
-                self._lock_scope(hardware_type)
-                yield
+                yield router.db_for_write(cls)
         except Exception:
             # The events of a write that rolls back must not reach event rules.
-            clear_events.send(sender=BindingOverride)
+            clear_events.send(sender=cls)
             raise
+
+    @contextmanager
+    def locked(self):
+        """Hold the lock of the override's type in the transaction of writing()."""
+        with self.writing() as using:
+            hardware_type = self.hardware_type
+            lock_types([hardware_type], using)
+            self._lock_scope(hardware_type)
+            yield
 
     def _lock_scope(self, hardware_type):
         """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
-        if self.scope_field not in ("device", "module"):
+        spec = SCOPES[self.scope_field]
+        if not spec.instance:
             return
         scope = self.scope
         # Without a wait: a writer with a stale type would hold that type lock while it waits.
@@ -455,7 +498,7 @@ class BindingOverride(ChangeLoggedModel):
                 .objects.select_for_update(nowait=True, no_key=True, of=("self",))
                 .filter(pk=scope.pk)
                 .order_by()
-                .values_list(f"{self.scope_field}_type_id", flat=True)
+                .values_list(f"{spec.type_field}_id", flat=True)
             )
         except OperationalError as exc:
             raise AbortRequest(SCOPE_BUSY) from exc

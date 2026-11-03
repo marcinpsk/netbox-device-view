@@ -1,6 +1,7 @@
 """Load and validate the manifest.yaml of a visual definition (schema 1)."""
 
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,14 @@ BINDINGS = SCHEMA["properties"]["connectors"]["additionalProperties"]["propertie
 BINDING_COMPONENTS = tuple(BINDINGS["items"]["properties"]["component"]["enum"])
 MAX_BINDINGS = BINDINGS["maxItems"]
 MAX_BINDING_NAME_LENGTH = SCHEMA["$defs"]["name"]["maxLength"]
+# The connector key pattern is a prefix and one bounded run, so its longest key comes from both.
+_CONNECTOR_KEY = re.fullmatch(
+    r"\^(?P<prefix>[a-z]+-)\[[^]]+\]\{1,(?P<most>\d+)\}\$",
+    SCHEMA["properties"]["connectors"]["propertyNames"]["pattern"],
+)
+if _CONNECTOR_KEY is None:
+    raise ImportError("The connector key pattern of manifest.schema.json changed form.")
+MAX_CONNECTOR_KEY_LENGTH = len(_CONNECTOR_KEY["prefix"]) + int(_CONNECTOR_KEY["most"])
 _BINDINGS_VALIDATOR = jsonschema.Draft202012Validator(
     {**BINDINGS, "$defs": SCHEMA["$defs"]}
 )
