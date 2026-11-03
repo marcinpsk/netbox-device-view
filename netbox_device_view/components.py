@@ -31,6 +31,7 @@ from dcim.models import (
 from dcim.models.device_components import PathEndpoint
 from django.contrib.contenttypes.prefetch import GenericPrefetch
 from django.db.models import Q
+from django.utils.text import capfirst
 
 from .models import DeviceView
 
@@ -81,6 +82,11 @@ def derive_port_key(name):
     if key.isdigit():
         key = f"p{key}"
     return key
+
+
+def component_label(model, name) -> str:
+    """Return the name of a component with its type, for example "Interface eth1"."""
+    return f"{capfirst(model._meta.verbose_name)} {name}"
 
 
 def layout_key(component):
