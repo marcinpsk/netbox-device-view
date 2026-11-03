@@ -11,8 +11,6 @@ from dcim.models import (
     VirtualChassis,
 )
 from django.core.exceptions import ObjectDoesNotExist
-from django.utils.html import escape, format_html, format_html_join
-from django.utils.safestring import mark_safe
 
 from .artwork.render import (
     active_revisions,
@@ -33,6 +31,7 @@ from .components import (
     panel_members,
     viewable_device_view,
 )
+from .details import Details, key_details
 from .layout import (
     LayoutParseError,
     get_css_for_device_view,
@@ -41,7 +40,7 @@ from .layout import (
 from .layout import (
     parse as parse_layout,
 )
-from .layout.renderers.svg import PortCell
+from .layout.renderers.svg import PortCell, drawn_keys
 from .models import DeviceView
 
 
@@ -167,8 +166,14 @@ def _detect_variant(member_modules, device_view) -> str | None:
     return None
 
 
-# format_html_join() escapes a plain-string separator.
-_BREAK = mark_safe("<br>")
+# The text of each layout state, for a cell that shows its state only as a colour and an icon.
+_STATE_LABELS = {
+    CONNECTED: "connected",
+    PARTIALLY_CONNECTED: "partially connected",
+    ENABLED: "not connected",
+    DISABLED: "disabled",
+    AMBIGUOUS: "several components",
+}
 _STATE_CLASSES = {
     CONNECTED: "bg-success",
     PARTIALLY_CONNECTED: "bg-warning",
@@ -180,7 +185,7 @@ _STATE_CLASSES = {
 
 @dataclass(frozen=True)
 class PageCell:
-    """The page markup of one layout key: its state, link and popover."""
+    """The page markup of one layout key: its state, link and details."""
 
     stylename: str
     name: str
@@ -190,8 +195,7 @@ class PageCell:
     classes: tuple[str, ...]
     # The cable colour, when the Cable Colors option is on.
     fill: str | None
-    popover_title: str
-    popover_content: str
+    details: Details
 
     @property
     def partial(self):
@@ -201,16 +205,21 @@ class PageCell:
     def disabled(self):
         return self.connection_state == DISABLED
 
+    @property
+    def label(self):
+        """Return the name and the state, for example "Gi1: connected"."""
+        return f"{self.name}: {_STATE_LABELS[self.connection_state]}"
+
     def port_cell(self):
         """Return the SVG state markup of this cell."""
         attributes = {
             "data-connection-state": self.connection_state,
-            "data-bs-toggle": "popover",
-            "data-bs-title": self.popover_title,
-            "data-bs-content": self.popover_content,
+            "data-dv-details": self.details.ident,
         }
         if self.href:
             attributes |= {"data-href": self.href, "role": "link"}
+        else:
+            attributes["aria-haspopup"] = "dialog"
         return PortCell(
             classes=self.classes,
             attributes=attributes,
@@ -220,8 +229,9 @@ class PageCell:
         )
 
 
-def _page_cell(binding, cable_colors):
+def _page_cell(binding, cable_colors, prefix):
     state = binding.state
+    details = key_details(prefix, binding)
     if state is None:
         return PageCell(
             stylename=binding.key,
@@ -230,28 +240,9 @@ def _page_cell(binding, cable_colors):
             href=None,
             classes=(_STATE_CLASSES[AMBIGUOUS],),
             fill=None,
-            popover_title=escape(binding.key),
-            popover_content=format_html_join(
-                _BREAK,
-                '<a href="{}">{}</a> ({})',
-                (
-                    (
-                        candidate.component.get_absolute_url(),
-                        candidate.component.name,
-                        candidate.component._meta.verbose_name,
-                    )
-                    for candidate in binding.candidates
-                ),
-            ),
+            details=details,
         )
     component = state.component
-    url = component.get_absolute_url()
-    title = escape(component.name)
-    if state.peer_labels:
-        title += format_html(
-            "<hr>{}",
-            format_html_join(_BREAK, "{}", ((label,) for label in state.peer_labels)),
-        )
     if cable_colors and state.cable_fill:
         classes, fill = (), state.cable_fill
     elif cable_colors and state.cable_color == "":
@@ -262,18 +253,17 @@ def _page_cell(binding, cable_colors):
         stylename=binding.key,
         name=component.name,
         connection_state=binding.connection_state,
-        href=url,
+        href=component.get_absolute_url(),
         classes=classes,
         fill=fill,
-        popover_title=title,
-        popover_content=format_html('<a href="{}trace/">Trace</a>', url),
+        details=details,
     )
 
 
-def page_cells(states, cable_colors, face=None):
-    """Return a PageCell for each layout key that ``states`` bind to."""
+def page_cells(states, cable_colors, prefix, face=None):
+    """Return a PageCell for each layout key that ``states`` bind to; ``prefix`` makes the details ids unique."""
     return [
-        _page_cell(binding, cable_colors)
+        _page_cell(binding, cable_colors, prefix)
         for binding in bind_layout(states, face).values()
     ]
 
@@ -323,28 +313,37 @@ def prepare(obj, user, cable_colors=False):
         return None, None, None, None
 
     ports_chassis = {
-        key: page_cells(states, cable_colors)
-        for key, states in _css_groups(obj, members, user).items()
+        key: page_cells(states, cable_colors, f"dv-c{index}")
+        for index, (key, states) in enumerate(_css_groups(obj, members, user).items())
     }
     return dv, modules, ports_chassis, device_view
 
 
-def _svg_cells(states, cable_colors):
-    return {
-        face: {
-            cell.stylename: cell.port_cell()
-            for cell in page_cells(states, cable_colors, face)
-        }
+def _svg_cells(states, cable_colors, prefix, drawn):
+    """Return ({face: {key: PortCell}}, the details of each cell that ``drawn`` ({face: keys}) has)."""
+    cells = {
+        face: page_cells(states, cable_colors, f"{prefix}-{face}", face)
         for face in ("front", "rear")
     }
+    port_cells = {
+        face: {cell.stylename: cell.port_cell() for cell in face_cells}
+        for face, face_cells in cells.items()
+    }
+    details = [
+        cell.details
+        for face, face_cells in cells.items()
+        for cell in face_cells
+        if cell.stylename in drawn.get(face, ())
+    ]
+    return port_cells, details
 
 
 def prepare_svg(obj, user, cable_colors=False):
     """Return (svg_views, modules, device_view) for SVG rendering, with the objects that ``user`` can view.
 
     ``svg_views`` maps each panel key (the device name, or the
-    ``vc_position`` of a virtual chassis member) to its SVG markup. A member
-    without components has no panel. Returns (None, None, None) when a
+    ``vc_position`` of a virtual chassis member) to its SVG markup and the
+    details of its cells. A member without components has no panel. Returns (None, None, None) when a
     member has no DeviceView.
     """
     svg_views = {}
@@ -357,13 +356,18 @@ def prepare_svg(obj, user, cable_colors=False):
             member_modules = list(member.modules.restrict(user, "view"))
             modules[key] = member_modules
             states = device_components(member, user)
+            variant = _detect_variant(member_modules, device_view)
+            drawn = (
+                drawn_keys(parse_layout(device_view.yaml_layout), variant)
+                if device_view.has_yaml_layout
+                else {}
+            )
+            cells, details = _svg_cells(states, cable_colors, f"dv-s{member.pk}", drawn)
             svg = get_svg_for_device_view(
-                device_view,
-                variant_name=_detect_variant(member_modules, device_view),
-                cells=_svg_cells(states, cable_colors),
+                device_view, variant_name=variant, cells=cells
             )
             if states:
-                svg_views[key] = svg
+                svg_views[key] = (svg, details)
     except ObjectDoesNotExist:
         return None, None, None
     return svg_views, modules, device_view
@@ -439,7 +443,9 @@ def device_view_context(obj, user, cable_colors=False):
             svg_views, modules, device_view = prepare_svg(obj, user, cable_colors)
             # prepare_svg() gives None when a virtual chassis member has no device view.
             use_svg = svg_views is not None
-            context["svg_panels"] = list((svg_views or {}).items())
+            context["svg_panels"] = [
+                (key, svg, details) for key, (svg, details) in (svg_views or {}).items()
+            ]
         if not use_svg:
             dv, modules, ports_chassis, device_view = prepare(obj, user, cable_colors)
             if dv is None:

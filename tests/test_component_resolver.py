@@ -1,5 +1,6 @@
 """The Device View tab, the device page panel and the rendered-layout API resolve components the same way."""
 
+import re
 from html.parser import HTMLParser
 
 from dcim.models import (
@@ -87,6 +88,16 @@ def page_cells(content):
     parser = _PortCells()
     parser.feed(content)
     return parser.cells
+
+
+def cell_details(content, cell):
+    """Return (title, markup) of the details template of a cell."""
+    match = re.search(
+        rf'<template id="{re.escape(cell["data-dv-details"])}" data-title="([^"]*)">(.*?)</template>',
+        content,
+        re.DOTALL,
+    )
+    return match[1], match[2]
 
 
 class ResolverTestBase(TestCase):
@@ -207,9 +218,10 @@ class PageMatchesApiTests(ResolverTestBase):
             {h["name"]: h["peer_labels"] for h in hotspots},
             {"Gi1": ["sw1 | Gi2"], "Gi2": ["sw1 | Gi1"], "Gi3": []},
         )
+        content = self._tab(cable_colors="on")
         cells = {
             cell["data-href"]: cell
-            for cell in page_cells(self._tab(cable_colors="on"))
+            for cell in page_cells(content)
             if "data-href" in cell
         }
         for hotspot in hotspots:
@@ -217,15 +229,11 @@ class PageMatchesApiTests(ResolverTestBase):
                 cell = cells[
                     Interface.objects.get(pk=hotspot["object_id"]).get_absolute_url()
                 ]
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, hotspot["name"])
                 self.assertEqual(
-                    cell["data-bs-title"],
-                    (
-                        "<hr>".join(
-                            [hotspot["name"], "<br>".join(hotspot["peer_labels"])]
-                        )
-                        if hotspot["peer_labels"]
-                        else hotspot["name"]
-                    ),
+                    re.findall(r'<li><a href="[^"]*">([^<]*)</a></li>', details),
+                    hotspot["peer_labels"],
                 )
                 if hotspot["cable_color"]:
                     self.assertEqual(cell["rect-fill"], f"#{hotspot['cable_color']}")
@@ -346,13 +354,17 @@ class AmbiguousKeyTests(ResolverTestBase):
                 )
                 self.assertEqual(cell["data-connection-state"], "ambiguous")
                 self.assertNotIn("data-href", cell)
-                self.assertIn(
-                    self.interface.get_absolute_url(), cell["data-bs-content"]
+                self.assertEqual(cell["aria-haspopup"], "dialog")
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, "console")
+                self.assertIn("Two or more components have this key", details)
+                self.assertEqual(
+                    re.findall(r'<li><a href="([^"]*)">([^<]*)</a></li>', details),
+                    [
+                        (self.interface.get_absolute_url(), "Interface Console"),
+                        (self.console_port.get_absolute_url(), "Console port Console"),
+                    ],
                 )
-                self.assertIn(
-                    self.console_port.get_absolute_url(), cell["data-bs-content"]
-                )
-                self.assertIn("</a> (interface)<br><a", cell["data-bs-content"])
 
 
 class PatchPanelFaceTests(ResolverTestBase):
@@ -594,8 +606,8 @@ class HiddenObjectTests(ResolverTestBase):
                 )
 
 
-class PopoverEscapingTests(ResolverTestBase):
-    """A component name is popover text, not markup, in both render modes."""
+class DetailsEscapingTests(ResolverTestBase):
+    """A component name is text in the details, not markup, in both render modes."""
 
     @classmethod
     def setUpTestData(cls):
@@ -604,16 +616,20 @@ class PopoverEscapingTests(ResolverTestBase):
             device=cls.device, name="<b>Gi1</b>", type="1000base-t"
         )
 
-    def test_the_popover_title_escapes_the_name(self):
+    def test_the_details_escape_the_name(self):
         for render_mode in (RenderMode.CSS, RenderMode.SVG):
             with self.subTest(render_mode):
                 DeviceView.objects.update(
                     render_mode=render_mode,
                     yaml_layout="version: 1\nviews:\n  front:\n    elements: [{key: -b-gi1--b-}]\n",
                 )
+                content = self._tab()
                 (cell,) = (
                     cell
-                    for cell in page_cells(self._tab())
+                    for cell in page_cells(content)
                     if "data-href" in cell or cell.get("href")
                 )
-                self.assertEqual(cell["data-bs-title"], "&lt;b&gt;Gi1&lt;/b&gt;")
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, "&lt;b&gt;Gi1&lt;/b&gt;")
+                self.assertIn("Interface &lt;b&gt;Gi1&lt;/b&gt;", details)
+                self.assertNotIn("<b>", details)

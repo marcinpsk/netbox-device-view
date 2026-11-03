@@ -44,7 +44,7 @@ Each interface and port is mapped to a `stylename` used as the CSS grid-area nam
 Two components can derive the same stylename, for example an interface `Console` and a console port `Console`. The plugin does not select one of them:
 
 - The element shows a neutral, dashed cell. It links to no component.
-- Its popover lists each component with a link.
+- Its details list each component with a link.
 - The [rendered-layout API](rendered-layout-api.md#ambiguous-elements) gives no hotspot for the element. It lists the element in the panel's `ambiguous` array, with a `candidates` list.
 
 A front port binds only on the front face, and a rear port only on the rear face. Thus the front port `Port 1` and the rear port `Port 1` of a patch panel do not share a stylename when the layout has separate `front` and `rear` views. A layout with only a `rear` view draws the rear face; any other layout with one view draws the front face.
@@ -52,6 +52,16 @@ A front port binds only on the front face, and a rear port only on the rear face
 In CSS mode, a device outside a virtual chassis shows its front ports and rear ports in separate **Front** and **Rear** grids. A virtual chassis member shows no front or rear ports in CSS mode, because one grid per member cannot hold both faces.
 
 ---
+
+### Port details
+
+Each port of the panel has details: the component, its module, enabled or disabled, the cable and its status, marked connected, the path state and the peers, each with a link, and a link to the trace. The details show only the objects that you can view.
+
+- Click **Details** above the panel. While the button is on, a click or a tap on a port opens its details instead of the component.
+- Focus a port with the keyboard and press **Space**. **Enter** opens the component.
+- A click on a port with a shared stylename opens its details, because the port links to no component.
+
+In an SVG layout, a key that no component has is an empty dotted outline. Its details say that no component has the key.
 
 ## Render modes
 
@@ -88,8 +98,8 @@ The Device View tab and the device page panel show only the objects that you can
 - The Device View tab of a device that you cannot view is not found (`404`).
 - A virtual chassis member that you cannot view has no panel. The panel title shows the virtual chassis name only when you can view the virtual chassis.
 - A DeviceView that you cannot view counts as missing. Without active artwork, the device page then has no Device View tab. A device type with active artwork shows the tab without a DeviceView.
-- A port that you cannot view is not in the panel. A peer that you cannot view is not in the port's popover.
-- A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the popover.
+- A port that you cannot view is not in the panel. A peer that you cannot view is not in the port's details.
+- A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the details.
 - A module that you cannot view does not select a module variant, and its ports are not in the panel.
 
 The tab needs the **view** permission on the device. A layout also needs the **view** permission on **Device View**. The [rendered-layout API](rendered-layout-api.md#object-permissions) uses the same rule. Active artwork needs no permission of its own.
