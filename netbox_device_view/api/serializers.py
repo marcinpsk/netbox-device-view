@@ -1,6 +1,12 @@
 from core.api.serializers import DataSourceSerializer
 from core.models import DataSource
-from dcim.api.serializers import DeviceTypeSerializer, ModuleTypeSerializer
+from dcim.api.serializers import (
+    DeviceSerializer,
+    DeviceTypeSerializer,
+    ModuleSerializer,
+    ModuleTypeSerializer,
+)
+from django.core.exceptions import ValidationError as DjangoValidationError
 from netbox.api.serializers import (
     BaseModelSerializer,
     ChangeLogMessageSerializer,
@@ -8,9 +14,12 @@ from netbox.api.serializers import (
     ValidatedModelSerializer,
 )
 from rest_framework import serializers
+from rest_framework.fields import get_error_detail
 
+from ..artwork import overrides
 from ..models import (
     Association,
+    BindingOverride,
     DefinitionRevision,
     DeviceView,
     RevisionFile,
@@ -137,3 +146,47 @@ class AssociationSerializer(BaseModelSerializer):
         )
         brief_fields = ("id", "display", "revision")
         read_only_fields = fields
+
+
+class BindingOverrideSerializer(ChangeLogMessageSerializer, ValidatedModelSerializer):
+    """Each write goes through the override writer, as on the plugin pages."""
+
+    device_type = DeviceTypeSerializer(nested=True, required=False, allow_null=True)
+    module_type = ModuleTypeSerializer(nested=True, required=False, allow_null=True)
+    device = DeviceSerializer(nested=True, required=False, allow_null=True)
+    module = ModuleSerializer(nested=True, required=False, allow_null=True)
+    definition = VisualDefinitionSerializer(nested=True, read_only=True)
+
+    class Meta:
+        model = BindingOverride
+        fields = (
+            "id",
+            "url",
+            "display_url",
+            "display",
+            "device_type",
+            "module_type",
+            "device",
+            "module",
+            "definition",
+            "connector_key",
+            "bindings",
+            "created",
+            "last_updated",
+        )
+        brief_fields = ("id", "url", "display", "connector_key")
+
+    def create(self, validated_data):
+        return self._save(BindingOverride(**validated_data))
+
+    def update(self, instance, validated_data):
+        validated_data.pop("changelog_message", None)
+        for name, value in validated_data.items():
+            setattr(instance, name, value)
+        return self._save(instance)
+
+    def _save(self, override):
+        try:
+            return overrides.save(self.context["request"].user, override)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(get_error_detail(exc)) from exc
