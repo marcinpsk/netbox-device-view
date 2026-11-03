@@ -105,11 +105,12 @@ class ArtworkResponseTests(ArtworkApiTestCase):
                     "object_id": self.eth1.pk,
                     "name": "eth1",
                     "enabled": True,
-                    "connection_state": "enabled",
+                    "cable_status": None,
                     "cable_color": None,
+                    "marked_connected": False,
+                    "path_complete": False,
                     "peer_labels": [],
                     "trace_supported": True,
-                    "occupied": False,
                 }
             ],
         )
@@ -170,11 +171,12 @@ class ArtworkResponseTests(ArtworkApiTestCase):
                     "object_id": None,
                     "name": "PSU1",
                     "enabled": None,
-                    "connection_state": None,
+                    "cable_status": None,
                     "cable_color": None,
+                    "marked_connected": None,
+                    "path_complete": None,
                     "peer_labels": [],
                     "trace_supported": False,
-                    "occupied": False,
                 }
             ],
         )
@@ -194,17 +196,53 @@ class ArtworkResponseTests(ArtworkApiTestCase):
             {
                 key: binding[key]
                 for key in (
+                    "cable_status",
                     "cable_color",
-                    "occupied",
+                    "path_complete",
                     "peer_labels",
-                    "connection_state",
                 )
             },
             {
+                "cable_status": "connected",
                 "cable_color": "ff0000",
-                "occupied": True,
+                "path_complete": True,
                 "peer_labels": ["server1 | eth0"],
-                "connection_state": "connected",
+            },
+        )
+
+    def test_each_fact_is_its_own_field(self):
+        self.activate()
+        peer = self.make_device("server1")
+        Interface.objects.filter(pk=self.eth1.pk).update(enabled=False)
+        Cable(
+            a_terminations=[self.eth1],
+            b_terminations=[
+                Interface.objects.create(device=peer, name="eth0", type="1000base-t")
+            ],
+            status="planned",
+        ).save()
+        PowerPort.objects.filter(pk=self.psu.pk).update(mark_connected=True)
+        connectors = self.connectors(self.member())
+        [eth1] = connectors["con-eth1"]["bindings"]
+        [psu] = connectors["con-psu"]["bindings"]
+        facts = ("enabled", "cable_status", "marked_connected", "path_complete")
+        self.assertEqual(
+            {key: eth1[key] for key in facts},
+            {
+                "enabled": False,
+                "cable_status": "planned",
+                "marked_connected": False,
+                "path_complete": True,
+            },
+        )
+        # A power port has no enabled field; its path ends at the marked connection.
+        self.assertEqual(
+            {key: psu[key] for key in facts},
+            {
+                "enabled": None,
+                "cable_status": None,
+                "marked_connected": True,
+                "path_complete": False,
             },
         )
 
@@ -277,7 +315,8 @@ class BrowserAgreementTests(ArtworkApiTestCase):
                 self.assertEqual(binding["object_id"], component.pk)
                 self.assertEqual(link.get("href"), component.get_absolute_url())
                 self.assertEqual(
-                    "dv-art-occupied" in link.get("class"), binding["occupied"]
+                    "dv-art-occupied" in link.get("class"),
+                    binding["cable_status"] is not None,
                 )
                 linked += 1
         self.assertEqual(linked, len(by_element))
@@ -310,7 +349,9 @@ class BrowserAgreementTests(ArtworkApiTestCase):
             constraints={"device__name": "sw1"}
         )
         [binding] = self.connectors(self.member())["con-eth1"]["bindings"]
-        self.assertEqual((binding["occupied"], binding["peer_labels"]), (True, []))
+        self.assertEqual(
+            (binding["cable_status"], binding["peer_labels"]), ("connected", [])
+        )
 
     def test_a_hidden_cable_is_no_occupancy_and_a_hidden_peer_no_label(self):
         ObjectPermission.objects.filter(name__startswith="dcim.cable").delete()
@@ -319,8 +360,13 @@ class BrowserAgreementTests(ArtworkApiTestCase):
         )
         [binding] = self.connectors(self.member())["con-eth1"]["bindings"]
         self.assertEqual(
-            (binding["occupied"], binding["cable_color"], binding["peer_labels"]),
-            (False, None, []),
+            (
+                binding["cable_status"],
+                binding["cable_color"],
+                binding["path_complete"],
+                binding["peer_labels"],
+            ),
+            (None, None, False, []),
         )
         link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
         self.assertEqual(link.get("class"), "dv-art-connector")
