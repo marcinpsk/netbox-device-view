@@ -126,6 +126,15 @@ class ComponentState:
         return [_peer_label(peer) for peer in self.peers]
 
     @property
+    def peer_links(self):
+        """Return (label, URL) for each visible peer."""
+        return [(_peer_label(peer), peer.get_absolute_url()) for peer in self.peers]
+
+    @property
+    def label(self):
+        return component_label(type(self.component), self.component.name)
+
+    @property
     def key(self):
         return layout_key(self.component)
 
@@ -212,7 +221,7 @@ def _queryset(model, device, user):
             Q(module__isnull=True) | Q(module__in=Module.objects.restrict(user, "view"))
         )
         .exclude(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
-        .select_related("cable")
+        .select_related("cable", "module")
         .prefetch_related(
             GenericPrefetch("cable__terminations__termination", _peer_querysets())
         )

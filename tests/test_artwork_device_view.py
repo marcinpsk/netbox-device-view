@@ -234,7 +234,7 @@ class ArtworkTabTests(ArtworkTestCase):
         self.assertIn(f"dv-o-d{self.device.pk}-rear-con-psu", ids(rear))
         # The faces stack at every width: each panel has a full-width column.
         self.assertEqual(
-            re.findall(r'<div class="([^"]*)">\s*<div class="dv-art-panel">', content),
+            re.findall(r'<div class="([^"]*)">\s*<div class="dv-art-panel"', content),
             ["col-12", "col-12"],
         )
         # Only a virtual chassis marks the current device.
@@ -673,34 +673,31 @@ class ConnectivityFactsTests(ArtworkTestCase):
         page = faces(self.tab())[1]
         wrapped = wrapper(page, f"dv-o-d{self.device.pk}-rear-con-psu")
         self.assertEqual(etree.QName(wrapped).localname, "g")
-        self.assertEqual(wrapped.get("class"), "dv-art-unresolved")
+        self.assertEqual(wrapped.get("class"), "dv-art-connector dv-art-unresolved")
+        # No link: the connector is a button that opens its details.
+        self.assertEqual(
+            (
+                wrapped.get("tabindex"),
+                wrapped.get("role"),
+                wrapped.get("aria-haspopup"),
+            ),
+            ("0", "button", "dialog"),
+        )
         self.assertIsNotNone(mark_filter(page, wrapped))
         self.assertEqual(
             wrapped.find(f"{{{SVG_NS}}}title").text, "No component: Power port PSU1"
         )
 
-    def test_two_found_bindings_are_unresolved(self):
-        files = {
-            **FILES,
-            "manifest.yaml": MANIFEST.replace(
-                "      - {component: interface, name: eth1}\n",
-                "      - {component: interface, name: eth1}\n"
-                "      - {component: consoleport, name: eth1}\n",
-            ),
-        }
-        admin = User.objects.get(username="admin")
-        [imported] = import_bundle(
-            admin, "two.zip", io.BytesIO(bundle(definition("ACME/SW-24", files)))
-        )
-        Association.objects.create(
-            device_type=self.device_type, revision=imported.revision
-        )
-        classes, found, title = self.connector()
-        self.assertEqual(classes, "dv-art-unresolved")
-        self.assertIsNotNone(found)
-        self.assertEqual(
-            title, "Two or more components: Interface eth1, Console port eth1"
-        )
+    def test_two_found_bindings_have_their_own_mark(self):
+        activate_second_binding(self, "{component: consoleport, name: eth1}")
+        classes, several, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-several")
+        self.assertEqual(title, "Several components: Interface eth1, Console port eth1")
+        self.console.delete()
+        classes, unresolved, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-unresolved")
+        self.assertEqual(title, "No component: Console port eth1")
+        self.assertNotEqual(repr(shape(several)), repr(shape(unresolved)))
 
     def test_the_page_has_a_legend_of_every_mark(self):
         self.activate()
@@ -712,14 +709,33 @@ class ConnectivityFactsTests(ArtworkTestCase):
             "Cable decommissioning",
             "Marked connected",
             "Disabled",
+            "Several components",
             "No component found",
         ):
             self.assertIn(label, legend)
-        self.assertEqual(legend.count("<svg"), 6)
+        self.assertEqual(legend.count("<svg"), 7)
 
 
 def page_face(index):
     return ("front", "rear")[index]
+
+
+def activate_second_binding(test, binding):
+    """Activate a revision whose con-eth1 also binds ``binding``."""
+    files = {
+        **FILES,
+        "manifest.yaml": MANIFEST.replace(
+            "      - {component: interface, name: eth1}\n",
+            f"      - {{component: interface, name: eth1}}\n      - {binding}\n",
+        ),
+    }
+    admin = User.objects.get(username="admin")
+    [imported] = import_bundle(
+        admin, "two.zip", io.BytesIO(bundle(definition("ACME/SW-24", files)))
+    )
+    return Association.objects.create(
+        device_type=test.device_type, revision=imported.revision
+    )
 
 
 class DamagedArtworkTests(ArtworkTestCase):
