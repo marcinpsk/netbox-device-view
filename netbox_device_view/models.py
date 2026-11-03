@@ -200,7 +200,7 @@ class Association(ChangeLoggedModel):
         )
 
     def __str__(self):
-        return f"{self.hardware_type} → {self.revision}"
+        return f"{self.hardware_type.full_name} → {self.revision}"
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:association", args=[self.pk])

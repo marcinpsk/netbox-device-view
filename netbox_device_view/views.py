@@ -460,7 +460,7 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
         messages.success(
             request,
             _("{type} now shows {revision}.").format(
-                type=association.device_type, revision=revision
+                type=association.device_type.full_name, revision=revision
             ),
         )
         # The association page needs view permission on it; the revision page needs none more.
@@ -475,7 +475,9 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
 
 class AssociationListView(generic.ObjectListView):
     queryset = models.Association.objects.select_related(
-        "device_type", "module_type", "revision__definition"
+        "device_type__manufacturer",
+        "module_type__manufacturer",
+        "revision__definition",
     )
     table = tables.AssociationTable
     filterset = filtersets.AssociationFilterSet
