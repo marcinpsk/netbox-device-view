@@ -1,5 +1,6 @@
 """Check a layout library directory with the validation of the layout and artwork imports."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,10 +11,12 @@ from .artwork.bundle import Definition, is_safe_path, read_definitions
 from .artwork.errors import ArtworkError, Issue
 from .artwork.limits import MAX_EXPANDED_BYTES, MAX_MEMBERS, MAX_SVG_BYTES
 from .artwork.manifest import DEVICE_KIND, MODULE_KIND, SCHEMA
-from .datasource_import import FORMAT_SUFFIXES, validate_layout_file
+from .datasource_import import FORMAT_SUFFIXES, MAX_FILE_BYTES, validate_layout_file
 
 LAYOUTS = "device-types"
 ARTWORK = "artwork"
+# The check does not follow links; the offline bundle import gives the same message.
+NOT_REGULAR = "not a regular file or directory."
 # The directory of each definition kind in the netbox-community devicetype-library.
 COMMUNITY_DIRECTORIES = {DEVICE_KIND: "device-types", MODULE_KIND: "module-types"}
 # The devicetype-library list of each component type that a binding can name.
@@ -41,27 +44,41 @@ class Report:
     issues: list[Issue]
 
 
-def _files(directory: Path) -> list[tuple[str, Path]]:
-    """Return (posix path relative to the directory, file) for each file below it."""
-    if not directory.is_dir():
-        return []
-    return [
-        (file.relative_to(directory).as_posix(), file)
-        for file in sorted(directory.rglob("*"))
-        if file.is_file()
-    ]
+def _files(root: Path, name: str) -> tuple[list[tuple[str, Path]], list[Issue]]:
+    """Return (posix path below root/name, file) for each regular file, and an issue for each link."""
+    directory = root / name
+    if directory.is_symlink():
+        return [], [Issue(name, None, NOT_REGULAR)]
+    files, links = [], []
+    # os.walk does not follow a link to a directory; it lists the link in the directory names.
+    for parent, directories, names in os.walk(directory):
+        for entry in [Path(parent, item) for item in directories + names]:
+            if entry.is_symlink():
+                links.append(entry)
+            elif entry.is_file():
+                files.append(entry)
+    return (
+        [(file.relative_to(directory).as_posix(), file) for file in sorted(files)],
+        [
+            Issue(f"{name}/{link.relative_to(directory).as_posix()}", None, NOT_REGULAR)
+            for link in sorted(links)
+        ],
+    )
 
 
 def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
+    files, issues = _files(root, LAYOUTS)
     layouts = [
         (f"{LAYOUTS}/{path}", file)
-        for path, file in _files(root / LAYOUTS)
+        for path, file in files
         if path.endswith(tuple(FORMAT_SUFFIXES))
     ]
-    issues = []
     for path, file in layouts:
+        # Read one byte more than the limit, so the import check reports a larger file.
+        with file.open("rb") as handle:
+            content = handle.read(MAX_FILE_BYTES + 1)
         try:
-            validate_layout_file(path, file.read_bytes())
+            validate_layout_file(path, content)
         except ValidationError as exc:
             issues.extend(Issue(path, None, message) for message in exc.messages)
     return len(layouts), issues
@@ -90,18 +107,21 @@ def _source_issues(files: list[tuple[str, Path]]) -> list[Issue]:
 
 
 def _artwork(root: Path) -> tuple[list[Definition], list[Issue]]:
-    files = _files(root / ARTWORK)
+    files, links = _files(root, ARTWORK)
     if not files:
-        return [], []
+        return [], links
     if issues := _source_issues(files):
-        return [], issues
+        return [], links + issues
     try:
-        return read_definitions((path, file.read_bytes()) for path, file in files), []
+        definitions = read_definitions(
+            (path, file.read_bytes()) for path, file in files
+        )
     except ArtworkError as exc:
-        return [], [
+        return [], links + [
             Issue(f"{ARTWORK}/{issue.path}", issue.line, issue.message)
             for issue in exc.issues
         ]
+    return definitions, links
 
 
 def _names(type_data: dict, key: str) -> set[str]:

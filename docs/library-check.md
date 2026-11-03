@@ -25,6 +25,8 @@ library/
 - **Artwork:** all files below `artwork/` must pass the validation of an [artwork import from a Data Source](artwork-bundles.md#import-from-a-data-source) with the prefix `artwork/`, with its path and size limits. Every file must be in a definition directory.
 - **Names (with `--device-types`):** each binding and each bay of an artwork definition must name a component or a module bay of the [devicetype-library](https://github.com/netbox-community/devicetype-library) type at the same path. The type of `artwork/<Manufacturer>/<name>/` is `device-types/<Manufacturer>/<name>.yaml` for a device definition, and `module-types/<Manufacturer>/<name>.yaml` for a module definition. The artwork import accepts any name, so without this check a wrong name shows on the device page as no component found.
 
+The command does not follow symbolic links. A link below `device-types/` or `artwork/`, or a link in place of one of these directories, is a problem. A layout file is read only up to the import size limit.
+
 The command writes each problem as `path:line: message`, or `path: message` when no line applies, and exits with an error. Paths are relative to the library directory. A directory with no `device-types/` and no `artwork/` directory is an error. When the command finds no problem, it writes the number of layouts and artwork definitions that it checked.
 
 ## Run the check with Docker
