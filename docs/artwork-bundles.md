@@ -293,7 +293,7 @@ In the UI, go to **Plugins → Binding Overrides** and click **Add**. Select the
 ### Permissions
 
 - Overrides need the **add**, **change** or **delete** permission on **Binding override**. Constraints of these permissions apply to the override after the change. The pages and the API need the **view** permission.
-- You must be able to view the scope.
+- To add or change an override, you must be able to view its scope.
 - The permission to view a device gives no permission on its overrides.
 
 ---

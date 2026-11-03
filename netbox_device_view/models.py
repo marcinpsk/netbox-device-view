@@ -5,11 +5,11 @@ from contextlib import contextmanager
 from core.signals import clear_events
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import DEFAULT_DB_ALIAS, models, router, transaction
-from django.db.models.functions import Coalesce
+from django.db import DEFAULT_DB_ALIAS, OperationalError, models, router, transaction
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
+from utilities.exceptions import AbortRequest
 
 from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND, binding_issues
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
@@ -241,6 +241,11 @@ ONE_SCOPE = _(
 )
 
 
+# NetBox marks the message of an AbortRequest safe, so these hold no object names.
+SCOPE_BUSY = _("Another change of the scope runs at the same time. Try again.")
+SCOPE_TYPE_CHANGED = _("The type of the scope changed. Try again.")
+
+
 def _only_scope(field):
     return models.Q(**{f"{name}__isnull": name != field for name in SCOPE_FIELDS})
 
@@ -290,13 +295,7 @@ class BindingOverride(ChangeLoggedModel):
     bindings = models.JSONField(default=list, blank=True)
 
     class Meta:
-        # Bulk writers lock the types in this order, so two bulk writes cannot deadlock.
-        ordering = (
-            Coalesce("device_type", "device__device_type").asc(nulls_last=True),
-            Coalesce("module_type", "module__module_type").asc(nulls_last=True),
-            "connector_key",
-            "pk",
-        )
+        ordering = ("definition_id", "connector_key", "pk")
         verbose_name = "binding override"
         constraints = (
             models.CheckConstraint(
@@ -435,12 +434,33 @@ class BindingOverride(ChangeLoggedModel):
                 transaction.atomic(using=DEFAULT_DB_ALIAS),
                 transaction.atomic(using=router.db_for_write(BindingOverride)),
             ):
-                lock_types([self.hardware_type], router.db_for_write(BindingOverride))
+                hardware_type = self.hardware_type
+                lock_types([hardware_type], router.db_for_write(BindingOverride))
+                self._lock_scope(hardware_type)
                 yield
         except Exception:
             # The events of a write that rolls back must not reach event rules.
             clear_events.send(sender=BindingOverride)
             raise
+
+    def _lock_scope(self, hardware_type):
+        """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
+        if self.scope_field not in ("device", "module"):
+            return
+        scope = self.scope
+        # Without a wait: a writer with a stale type would hold that type lock while it waits.
+        try:
+            current = list(
+                type(scope)
+                .objects.select_for_update(nowait=True, no_key=True, of=("self",))
+                .filter(pk=scope.pk)
+                .order_by()
+                .values_list(f"{self.scope_field}_type_id", flat=True)
+            )
+        except OperationalError as exc:
+            raise AbortRequest(SCOPE_BUSY) from exc
+        if current != [hardware_type.pk]:
+            raise AbortRequest(SCOPE_TYPE_CHANGED)
 
     def delete(self, *args, **kwargs):
         with self.locked():

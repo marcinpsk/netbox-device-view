@@ -3,9 +3,9 @@ from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import router, transaction
+from django.db import DEFAULT_DB_ALIAS, router, transaction
 from django.db.models import Count, OuterRef, Subquery
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -27,7 +27,7 @@ from netbox.object_actions import (
 )
 from netbox.views import generic
 from netbox.views.generic import BulkImportView
-from utilities.exceptions import PermissionsViolation
+from utilities.exceptions import AbortRequest, PermissionsViolation
 from utilities.forms import restrict_form_fields
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
@@ -43,6 +43,7 @@ from .artwork import activation, overrides
 from .artwork import importing as artwork_importing
 from .artwork.errors import ArtworkError
 from .artwork.manifest import DEVICE_KIND
+from .artwork.type_lock import lock_bulk_writes
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -592,6 +593,13 @@ class BindingOverrideEditView(generic.ObjectEditView):
     form = forms.BindingOverrideForm
     template_name = "netbox_device_view/bindingoverride_edit.html"
 
+    def get_object(self, **kwargs):
+        obj = super().get_object(**kwargs)
+        # The checks of an override name its scope, so a hidden scope hides the override.
+        if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
+            raise Http404
+        return obj
+
     def post(self, request, *args, **kwargs):
         """Save through the override writer, which takes the type lock and checks the saved row."""
         obj = self.get_object(**kwargs)
@@ -606,6 +614,8 @@ class BindingOverrideEditView(generic.ObjectEditView):
                 obj = overrides.save(request.user, obj)
             except ValidationError as exc:
                 form.add_error(None, exc)
+            except AbortRequest as exc:
+                form.add_error(None, exc.message)
             except PermissionDenied:
                 form.add_error(None, PermissionsViolation.message)
             else:
@@ -641,6 +651,16 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
     queryset = models.BindingOverride.objects.select_related(*OVERRIDE_RELATIONS)
     filterset = filtersets.BindingOverrideFilterSet
     table = tables.BindingOverrideTable
+
+    def post(self, request, **kwargs):
+        # Two writers of several overrides could take the type locks in opposite orders.
+        using = router.db_for_write(models.BindingOverride)
+        with (
+            transaction.atomic(using=DEFAULT_DB_ALIAS),
+            transaction.atomic(using=router.db_for_write(models.BindingOverride)),
+        ):
+            lock_bulk_writes(using)
+            return super().post(request, **kwargs)
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

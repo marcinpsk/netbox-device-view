@@ -1,8 +1,9 @@
 from collections.abc import Mapping
 
+from core.signals import clear_events
 from dcim.models import Device
 from django.core.exceptions import ValidationError
-from django.db import router, transaction
+from django.db import DEFAULT_DB_ALIAS, router, transaction
 from django.http import Http404
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet
@@ -16,6 +17,7 @@ from rest_framework.views import APIView
 from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
+from ..artwork.type_lock import lock_bulk_writes
 from ..filtersets import (
     BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
@@ -135,7 +137,10 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
 
 
 class BindingOverrideViewSet(NetBoxModelViewSet):
-    """The serializer saves through the override writer; BindingOverride.delete() takes the type lock."""
+    """The serializer saves through the override writer; BindingOverride.delete() takes the type lock.
+
+    A request with several overrides takes the bulk lock first.
+    """
 
     queryset = models.BindingOverride.objects.select_related(
         "device_type__manufacturer",
@@ -148,6 +153,53 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
     )
     serializer_class = BindingOverrideSerializer
     filterset_class = BindingOverrideFilterSet
+
+    def _write(self, action, request, *args, **kwargs):
+        """Run a write in one transaction on main and on the routed connection; an error rolls both back."""
+        # NetBox Branching writes ChangeDiff rows on main, and a failed bulk write rolls back the branch only.
+        using = router.db_for_write(models.BindingOverride)
+        try:
+            with (
+                transaction.atomic(using=DEFAULT_DB_ALIAS),
+                transaction.atomic(using=router.db_for_write(models.BindingOverride)),
+            ):
+                if isinstance(request.data, list):
+                    lock_bulk_writes(using)
+                response = action(request, *args, **kwargs)
+                if response.status_code >= status.HTTP_400_BAD_REQUEST:
+                    transaction.set_rollback(True, using=DEFAULT_DB_ALIAS)
+                    transaction.set_rollback(True, using=using)
+        except Exception:
+            clear_events.send(sender=self)
+            raise
+        if response.status_code >= status.HTTP_400_BAD_REQUEST:
+            # NetBox 4.5 keeps the events of a bulk write that fails on a later object.
+            clear_events.send(sender=self)
+        return response
+
+    def create(self, request, *args, **kwargs):
+        return self._write(super().create, request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        return self._write(super().update, request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return self._write(super().destroy, request, *args, **kwargs)
+
+    def bulk_update(self, request, *args, **kwargs):
+        return self._write(super().bulk_update, request, *args, **kwargs)
+
+    def bulk_destroy(self, request, *args, **kwargs):
+        return self._write(super().bulk_destroy, request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        # The type lock comes before the row lock that NetBox takes for If-Match.
+        with serializer.instance.locked():
+            super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        with instance.locked():
+            super().perform_destroy(instance)
 
 
 def _error_response(exc: ArtworkError):

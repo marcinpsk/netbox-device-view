@@ -21,17 +21,9 @@ def save(user, override) -> BindingOverride:
     action = "add" if override._state.adding else "change"
     if override.scope_field is None:
         raise ValidationError(ONE_SCOPE)
-    scope = override.scope
-    # The API looks up a nested object without the permissions of the user.
-    if not type(scope).objects.restrict(user, "view").filter(pk=scope.pk).exists():
-        raise ValidationError(
-            {
-                override.scope_field: _("Select a {scope} that you can view.").format(
-                    scope=scope._meta.verbose_name
-                )
-            }
-        )
     with override.locked():
+        # The lock holds the row of a device or module scope, so its visibility cannot change.
+        check_scope(user, override.scope_field, override.scope)
         override.full_clean()
         override.save()
         if (
@@ -41,6 +33,23 @@ def save(user, override) -> BindingOverride:
         ):
             raise PermissionDenied
     return override
+
+
+def can_view_scope(user, scope) -> bool:
+    return type(scope).objects.restrict(user, "view").filter(pk=scope.pk).exists()
+
+
+def check_scope(user, field, scope) -> None:
+    """Raise ValidationError unless ``user`` can view ``scope``."""
+    # The API looks up a nested object without the permissions of the user.
+    if not can_view_scope(user, scope):
+        raise ValidationError(
+            {
+                field: _("Select a {scope} that you can view.").format(
+                    scope=scope._meta.verbose_name
+                )
+            }
+        )
 
 
 def connector_bindings(revision, part) -> dict[str, list]:
