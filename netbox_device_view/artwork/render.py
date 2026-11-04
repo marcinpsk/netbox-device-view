@@ -40,11 +40,13 @@ from ..details import (
     details_id,
     resolution,
 )
-from ..models import Association, DefinitionRevision
+from ..models import TYPE_SCOPES, Association, DefinitionRevision
+from .manifest import MODULE_KIND
 from .overrides import connector_bindings, part_overrides
 from .placement import Rect, place, transform_rect
 from .storage import DamagedBlob, read_blob
 from .svg import (
+    BAY_ATTRIBUTES,
     IDENTITY,
     SVG_NS,
     XLINK_NS,
@@ -60,12 +62,18 @@ ARTWORK = "artwork"
 DAMAGED = "damaged"
 # An installed module without drawable artwork: an outline of its bay with the model of its type.
 OUTLINE = "outline"
-# The warnings of a placed module.
-SIZE_MISMATCH = "size_mismatch"
-NOT_FINITE = "placement_not_finite"
-DAMAGED_ARTWORK = "damaged_artwork"
-DUPLICATE_BAY = "duplicate_bay"
-TOO_DEEP = "too_deep"
+
+
+class WarningCode:
+    """The code of each warning of a placed module."""
+
+    SIZE_MISMATCH = "size_mismatch"
+    NOT_FINITE = "placement_not_finite"
+    DAMAGED_ARTWORK = "damaged_artwork"
+    DUPLICATE_BAY = "duplicate_bay"
+    TOO_DEEP = "too_deep"
+
+
 # Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
 MAX_MODULE_DEPTH = 8
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
@@ -81,7 +89,8 @@ _NOT_XML = dict.fromkeys(
     [*range(0x9), 0xB, 0xC, *range(0xE, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF]
 )
 _G, _A, _RECT = (f"{{{SVG_NS}}}{tag}" for tag in ("g", "a", "rect"))
-_BAY_ATTRIBUTES = ("x", "y", "width", "height")
+# The attributes of a root svg that place it in its parent; a placed module face gets its own.
+_VIEWPORT_ATTRIBUTES = ("x", "y", "width", "height")
 # The initial value of each inherited property of the profile: a module does not take them from its parent.
 # font-family is not reset, because its initial value depends on the browser.
 INHERITED_INITIAL = {
@@ -273,13 +282,14 @@ def has_active_artwork(device_type_id) -> bool:
     return Association.objects.filter(device_type=device_type_id).exists()
 
 
-def active_revisions(type_ids, field="device_type") -> dict[int, DefinitionRevision]:
-    """Return {type id: active revision} for the types that have an association; ``field`` is device_type or module_type."""
+def active_revisions(kind, type_ids) -> dict[int, DefinitionRevision]:
+    """Return {type id: active revision} for the device types or module types (by definition ``kind``) that have one."""
+    scope = TYPE_SCOPES[kind]
     # Rendering needs no permission on the association or the revision.
     return {
-        getattr(association, f"{field}_id"): association.revision
+        scope.id_of(association): association.revision
         for association in Association.objects.filter(
-            **{f"{field}__in": type_ids}
+            scope.among(type_ids)
         ).select_related("revision__definition")
     }
 
@@ -361,7 +371,7 @@ class _Composer:
                 bay.module = by_pk[bay.module_id]
             self.installed[(bay.module_id, bay.name)] = module
         self.revisions = active_revisions(
-            {module.module_type_id for module in modules}, "module_type"
+            MODULE_KIND, {module.module_type_id for module in modules}
         )
         self.overrides = part_overrides([device, *modules])
         self.faces = {}
@@ -379,7 +389,7 @@ class _Composer:
     def device_face(self, part_id, face, data, revision, connectors) -> RenderedFace:
         prefix = f"{part_id}-{face}-"
         root, elements = _parse_face(data, prefix)
-        for name in _BAY_ATTRIBUTES:
+        for name in _VIEWPORT_ATTRIBUTES:
             root.attrib.pop(name, None)
         view_box = parse_view_box(root.get("viewBox").strip())
         # Module faces keep the outline width of the device face: placement does not scale.
@@ -463,8 +473,8 @@ class _Composer:
                 f"{label}: the bays {key} and {', '.join(others)} map to the module"
                 f" bay {module.module_bay.name}, so the module shows only in {key}."
             )
-            duplicate = (ArtworkWarning(DUPLICATE_BAY, message),)
-        bay = Rect(*(float(rect.get(name, "0")) for name in _BAY_ATTRIBUTES))
+            duplicate = (ArtworkWarning(WarningCode.DUPLICATE_BAY, message),)
+        bay = Rect(*(float(rect.get(name, "0")) for name in BAY_ATTRIBUTES))
         if not all(map(math.isfinite, vars(bay).values())):
             message = (
                 f"{label}: the bay {key} has a position or size that is not a finite"
@@ -476,7 +486,10 @@ class _Composer:
                     bay=None,
                     prefix="",
                     ids=frozenset(),
-                    warnings=(*duplicate, ArtworkWarning(NOT_FINITE, message)),
+                    warnings=(
+                        *duplicate,
+                        ArtworkWarning(WarningCode.NOT_FINITE, message),
+                    ),
                 )
             )
             return
@@ -504,14 +517,14 @@ class _Composer:
                     f"{label}: the module is more than {MAX_MODULE_DEPTH} modules"
                     " deep, so it shows as an outline."
                 )
-                warnings = (ArtworkWarning(TOO_DEEP, message),)
+                warnings = (ArtworkWarning(WarningCode.TOO_DEEP, message),)
             elif revision is not None:
                 message = (
                     f"{label}: a stored file of the active {revision.definition.key}"
                     " revision is missing or does not match its digest. Import the"
                     " revision again."
                 )
-                warnings = (ArtworkWarning(DAMAGED_ARTWORK, message),)
+                warnings = (ArtworkWarning(WarningCode.DAMAGED_ARTWORK, message),)
             self.modules.append(
                 placed(
                     representation=OUTLINE,
@@ -535,7 +548,7 @@ class _Composer:
                 f" {_number(placement.size[1])} mm, but the bay {key} is"
                 f" {_number(bay.width)} × {_number(bay.height)} mm."
             )
-            warnings = (ArtworkWarning(SIZE_MISMATCH, message),)
+            warnings = (ArtworkWarning(WarningCode.SIZE_MISMATCH, message),)
         self.modules.append(
             placed(
                 representation=ARTWORK,
@@ -562,7 +575,11 @@ class _Composer:
         # The module root stays a viewport, so its percentage lengths keep their meaning.
         min_x, min_y, width, height = view_box
         child.attrib.update(
-            {"x": "0", "y": "0", "width": _number(width), "height": _number(height)}
+            zip(
+                _VIEWPORT_ATTRIBUTES,
+                ("0", "0", _number(width), _number(height)),
+                strict=True,
+            )
         )
         # The viewport maps the viewBox origin to 0, 0: the transform moves it back.
         matrix = multiply(placement.matrix, (1, 0, 0, 1, min_x, min_y))
@@ -628,7 +645,7 @@ def _number(value) -> str:
 
 
 def _rect_attributes(rect: Rect) -> dict[str, str]:
-    return {name: _number(getattr(rect, name)) for name in _BAY_ATTRIBUTES}
+    return {name: _number(getattr(rect, name)) for name in BAY_ATTRIBUTES}
 
 
 def _connector(key, item, resolved, states, module=None) -> Connector:

@@ -6,7 +6,7 @@ from django.db import DEFAULT_DB_ALIAS, IntegrityError, router, transaction
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from ..models import OVERRIDE_RELATIONS, Association, BindingOverride, type_field
+from ..models import OVERRIDE_RELATIONS, Association, BindingOverride, type_scope
 from .overrides import depending_on
 from .type_lock import lock_types
 
@@ -34,27 +34,31 @@ def can_activate(user) -> bool:
 
 def activate(user, revision, hardware_type) -> Association:
     """Make the revision the active one for the device type or module type; return the association."""
-    lookup = {type_field(hardware_type): hardware_type}
     # NetBox Branching routes Association to the branch and its ChangeDiff rows to main.
     try:
         with (
             transaction.atomic(using=DEFAULT_DB_ALIAS),
             transaction.atomic(using=router.db_for_write(Association)),
         ):
-            return _activate(user, revision, hardware_type, lookup)
+            return _activate(user, revision, hardware_type)
     except IntegrityError as exc:
         # Only a concurrent first activation of the type is expected; other errors stay visible.
-        if not Association.objects.filter(**lookup).exists():
+        if not _associations(hardware_type).exists():
             raise
         raise ActivationRejected(RACED_MESSAGE) from exc
 
 
-def _activate(user, revision, hardware_type, lookup) -> Association:
+def _associations(hardware_type):
+    return Association.objects.filter(type_scope(hardware_type).among([hardware_type]))
+
+
+def _activate(user, revision, hardware_type) -> Association:
     # The writers of binding overrides take the same lock.
     lock_types([hardware_type], router.db_for_write(Association))
-    association = Association.objects.select_for_update().filter(**lookup).first()
+    association = _associations(hardware_type).select_for_update().first()
     if association is None:
-        association, action = Association(**lookup), "add"
+        association = Association(**{type_scope(hardware_type).field: hardware_type})
+        action = "add"
     else:
         _require(user, "change", association)
         if association.revision_id == revision.pk:
