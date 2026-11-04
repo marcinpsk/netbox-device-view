@@ -14,7 +14,9 @@ from dcim.models import (
     PowerPort,
 )
 from django.conf import settings
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from lxml import etree
 from users.models import ObjectPermission, User
@@ -309,3 +311,18 @@ class DevicePagePanelTests(CompositionTestCase):
         with override_settings(PLUGINS_CONFIG=config):
             content = self.client.get(self.device.get_absolute_url()).content.decode()
         self.assertIsNotNone(self.group(faces(content)[0], self.inventory.nm1))
+
+
+class QueryTests(CompositionTestCase):
+    def test_one_more_module_of_a_drawn_type_adds_no_query(self):
+        self.tab()
+        with CaptureQueriesContext(connection) as before:
+            self.tab()
+        self.inventory.install(
+            ModuleBay.objects.get(device=self.device, name="Spare"),
+            self.inventory.nm_type,
+        )
+        with CaptureQueriesContext(connection) as after:
+            content = self.tab()
+        self.assertEqual(content.count('class="dv-art-module-art"'), 5)
+        self.assertEqual(len(after), len(before))
