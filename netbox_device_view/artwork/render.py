@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 
 ARTWORK = "artwork"
 DAMAGED = "damaged"
-# An installed module without drawable artwork; this version draws an outline of its bay.
-SCHEMATIC = "schematic"
+# An installed module without drawable artwork: an outline of its bay with the model of its type.
+OUTLINE = "outline"
 # The warnings of a placed module.
 SIZE_MISMATCH = "size_mismatch"
 NOT_FINITE = "placement_not_finite"
@@ -113,8 +113,8 @@ _SHAPE = "-shape-"
 _PAINT = frozenset(
     {"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "visibility"}
 )
-# The outline width as a part of the larger face dimension.
-_OUTLINE = 1 / 300
+# The width of a connector outline as a part of the larger face dimension.
+_OUTLINE_WIDTH = 1 / 300
 # The outer mark of a connector: its cable status or marked connected, else several or unresolved.
 _CABLE_MARKS = {
     "connected": "cable-connected",
@@ -190,7 +190,7 @@ class ArtworkWarning:
 
 @dataclass(frozen=True)
 class PlacedModule:
-    """One installed module in a bay of its parent: drawn with its artwork, or as a schematic."""
+    """One installed module in a bay of its parent: drawn with its artwork, or as an outline."""
 
     module: Module
     # The installed module that has the bay; None for a bay of the device.
@@ -383,7 +383,7 @@ class _Composer:
             root.attrib.pop(name, None)
         view_box = parse_view_box(root.get("viewBox").strip())
         # Module faces keep the outline width of the device face: placement does not scale.
-        self.outline = max(view_box[2:]) * _OUTLINE
+        self.outline_width = max(view_box[2:]) * _OUTLINE_WIDTH
         first = len(self.modules)
         self.compose(
             root, elements, revision, face, _Scope(None, part_id, face, IDENTITY, 0, 0)
@@ -393,7 +393,9 @@ class _Composer:
         details = ()
         if not self.plain:
             root.set("class", "dv-art-face")
-            _mark_connectors(root, prefix, connectors, elements, view_box, self.outline)
+            _mark_connectors(
+                root, prefix, connectors, elements, view_box, self.outline_width
+            )
             details = (
                 *(c.details(prefix) for c in connectors if c.key in elements),
                 *(
@@ -470,7 +472,7 @@ class _Composer:
             )
             self.modules.append(
                 placed(
-                    representation=SCHEMATIC,
+                    representation=OUTLINE,
                     bay=None,
                     prefix="",
                     ids=frozenset(),
@@ -512,14 +514,14 @@ class _Composer:
                 warnings = (ArtworkWarning(DAMAGED_ARTWORK, message),)
             self.modules.append(
                 placed(
-                    representation=SCHEMATIC,
+                    representation=OUTLINE,
                     bay=absolute,
                     prefix="",
                     ids=frozenset(),
                     warnings=(*duplicate, *warnings),
                 )
             )
-            self.outline_part(group, bay, module)
+            self.outline(group, bay, module)
             return
         [face] = revision.face_names
         prefix = f"{inner.part_id}-{face}-"
@@ -552,7 +554,9 @@ class _Composer:
         )
         if not self.plain:
             drawn = [c for c in connectors if c.face == face]
-            _mark_connectors(child, prefix, drawn, elements, view_box, self.outline)
+            _mark_connectors(
+                child, prefix, drawn, elements, view_box, self.outline_width
+            )
             body = self.body(group, module, "dv-art-module-body")
             etree.SubElement(body, _RECT, {**_rect_attributes(bay), "fill": "none"})
         # The module root stays a viewport, so its percentage lengths keep their meaning.
@@ -586,9 +590,9 @@ class _Composer:
         )
         return body
 
-    def outline_part(self, group, bay, module):
+    def outline(self, group, bay, module):
         """Draw the module as an outline of its bay with the name of its type."""
-        body = self.body(group, module, "dv-art-module-body dv-art-schematic")
+        body = self.body(group, module, "dv-art-module-body dv-art-outline")
         etree.SubElement(
             body,
             _RECT,
@@ -596,7 +600,7 @@ class _Composer:
                 **_rect_attributes(bay),
                 "fill": "#f8f9fa",
                 "stroke": "#6c757d",
-                "stroke-width": _number(self.outline),
+                "stroke-width": _number(self.outline_width),
             },
         )
         name = module.module_type.model
@@ -664,7 +668,7 @@ def _parse_face(data: bytes, prefix: str):
     return root, elements
 
 
-def _mark_connectors(root, prefix, connectors, elements, view_box, outline):
+def _mark_connectors(root, prefix, connectors, elements, view_box, outline_width):
     """Mark each connector with its facts, and link it to its component when it has one."""
     defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
@@ -674,7 +678,7 @@ def _mark_connectors(root, prefix, connectors, elements, view_box, outline):
             continue
         outer, inner = _marks(connector)
         marks = ring = None
-        space = _filter_space(view_box, _user_space(element), outline)
+        space = _filter_space(view_box, _user_space(element), outline_width)
         if space is not None:
             if outer or inner:
                 marks = _MarkFilter(f"{prefix}{_MARKS}{connector.key}", *space).draw(
@@ -889,12 +893,12 @@ def _user_space(element):
     return matrix
 
 
-def _filter_space(view_box, matrix, outline):
+def _filter_space(view_box, matrix, outline_width):
     """Return (region, radii) of a filter in the user space that ``matrix`` maps to the face.
 
-    The region covers the face, and the radii are ``outline``, the outline width
-    in face units, on each local axis. None when the matrix cannot be inverted:
-    the connector is not drawn.
+    The region covers the face, and the radii are ``outline_width``, in face
+    units, on each local axis. None when the matrix cannot be inverted: the
+    connector is not drawn.
     """
     a, b, c, d, e, f = matrix
     determinant = a * d - b * c
@@ -913,7 +917,7 @@ def _filter_space(view_box, matrix, outline):
     xs, ys = [x for x, _ in corners], [y for _, y in corners]
     region = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
     # Each local axis keeps the face outline width: divide by the face length of its unit vector.
-    radii = (outline / math.hypot(a, b), outline / math.hypot(c, d))
+    radii = (outline_width / math.hypot(a, b), outline_width / math.hypot(c, d))
     if not all(math.isfinite(value) for value in (*region, *radii)):
         return None
     return region, radii

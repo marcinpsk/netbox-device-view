@@ -172,7 +172,7 @@ Each fact is its own field, and no field combines them. A disabled interface wit
 | `parent_module_id` | int \| null | The module that has the bay. `null` for a bay of the device. |
 | `bay_key` | string | The bay key in the manifest of the parent. |
 | `face` | string | The face of the device that shows the module. |
-| `representation` | string | `"artwork"`, or `"schematic"` when the module type has no active artwork, or a stored file of its revision is damaged. This version draws a schematic as an outline of the bay with the model of the module type. |
+| `representation` | string | `"artwork"`, or `"outline"`: an outline of the bay with the model of the module type, when the module type has no active artwork, a stored file of its revision is damaged, the placement is not a finite number, or the module is too deep. A client must accept `"schematic"`: a later version can draw a schematic of the module and its components. |
 | `artwork` | object \| null | `definition_key`, `revision_id` and `digest` of the active revision of the module type. `null` without one. |
 | `placement` | object \| null | The bay in the coordinates of the device face: `x`, `y`, `width`, `height`, and `rotate`, the rotation of the module face in degrees. `null` when the module is not drawn. |
 | `element_id` | string \| null | The `id` of the group that draws the module in the `svg` of its face. `null` when the module is not drawn. |
@@ -192,8 +192,8 @@ The list has the parents before their children, in the order of the bay keys. A 
 |---|---|
 | `size_mismatch` | The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. |
 | `placement_not_finite` | A value of the bay rect is not a finite number. The module is not drawn. |
-| `damaged_artwork` | A stored file of the active revision of the module type is missing or does not match its digest. The module shows as a schematic. |
-| `too_deep` | The module is more than 8 modules deep on its placement path. The module shows as a schematic. |
+| `damaged_artwork` | A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. |
+| `too_deep` | The module is more than 8 modules deep on its placement path. The module shows as an outline. |
 | `duplicate_bay` | Two or more bays of the parent name the module bay of the module after `{module}` resolves. The module shows only in the first bay key. |
 
 ---

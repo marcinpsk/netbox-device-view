@@ -107,11 +107,11 @@ class ModuleEntryTests(ModuleApiTestCase):
             {"x": 120, "y": 2, "width": 30, "height": 40, "rotate": 90},
         )
 
-    def test_a_module_without_artwork_is_a_schematic_without_connectors(self):
+    def test_a_module_without_artwork_is_an_outline_without_connectors(self):
         fan = self.modules()[self.inventory.fan.pk]
         self.assertEqual(
             (fan["representation"], fan["artwork"], fan["connectors"]),
-            ("schematic", None, []),
+            ("outline", None, []),
         )
         self.assertEqual(
             fan["element_id"], f"dv-a-d{self.device.pk}-m{self.inventory.fan.pk}"
