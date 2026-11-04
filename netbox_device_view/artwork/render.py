@@ -79,8 +79,6 @@ _NOT_XML = dict.fromkeys(
 )
 _G, _A, _RECT = (f"{{{SVG_NS}}}{tag}" for tag in ("g", "a", "rect"))
 _BAY_ATTRIBUTES = ("x", "y", "width", "height")
-# The root attributes that place a face in a document; a placed face uses the transform of its bay.
-_PLACEMENT_ATTRIBUTES = frozenset({"viewBox", "preserveAspectRatio", *_BAY_ATTRIBUTES})
 # A generated local id starts with "-"; an author id starts with a letter.
 _MARKS = "-marks-"
 _FOCUS = "-focus-"
@@ -516,16 +514,19 @@ class _Composer:
             _mark_connectors(child, prefix, drawn, elements, view_box, self.outline)
             body = self.body(group, module, "dv-art-module-body")
             etree.SubElement(body, _RECT, {**_rect_attributes(bay), "fill": "none"})
-        art = etree.SubElement(
-            group,
-            _G,
-            {k: v for k, v in child.attrib.items() if k not in _PLACEMENT_ATTRIBUTES},
+        # The module root stays a viewport, so its percentage lengths keep their meaning.
+        min_x, min_y, width, height = view_box
+        child.attrib.update(
+            {"x": "0", "y": "0", "width": _number(width), "height": _number(height)}
         )
-        art.set("transform", f"matrix({' '.join(map(_number, placement.matrix))})")
+        # The viewport maps the viewBox origin to 0, 0: the transform moves it back.
+        matrix = multiply(placement.matrix, (1, 0, 0, 1, min_x, min_y))
+        art = etree.SubElement(
+            group, _G, transform=f"matrix({' '.join(map(_number, matrix))})"
+        )
         if not self.plain:
             art.set("class", "dv-art-module-art")
-        art.text = child.text
-        art.extend(child)
+        art.append(child)
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
