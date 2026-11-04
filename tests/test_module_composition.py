@@ -12,6 +12,7 @@ from dcim.models import (
     Interface,
     Module,
     ModuleBay,
+    ModuleBayTemplate,
     PowerPort,
 )
 from django.conf import settings
@@ -24,11 +25,12 @@ from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork import activation
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.render import MAX_MODULE_DEPTH
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.details import details_id
 
 from .artwork_samples import bundle, definition
-from .module_samples import CHASSIS_SVG, NM_MANIFEST, NM_SVG, Inventory
+from .module_samples import CHASSIS_SVG, NM_MANIFEST, NM_SVG, Inventory, manifest
 from .permissions import grant
 from .test_artwork_device_view import SVG_NS, TAB_URL, faces, ids, links, references
 
@@ -420,5 +422,47 @@ class DuplicateBayTests(CompositionTestCase):
         self.assertIn(
             "ACME SFP-10G in Slot 1: the bays bay-alias and bay-slot map to the module"
             " bay Slot 1, so the module shows only in bay-alias.",
+            warnings(content),
+        )
+
+
+class DepthTests(CompositionTestCase):
+    def test_a_module_deeper_than_the_limit_shows_as_an_outline_with_a_warning(self):
+        loop = Inventory.module_type(self.inventory.nm_type.manufacturer, "LOOP")
+        ModuleBayTemplate.objects.create(module_type=loop, name="Sub", position="1")
+        files = {
+            "manifest.yaml": manifest(
+                "acme/loop",
+                "module",
+                "  installed: {file: installed.svg}\n",
+                bays="  bay-sub: {face: installed, module_bay: Sub}",
+            ),
+            "installed.svg": (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+                '<rect id="bay-sub" width="8" height="8"/></svg>'
+            ),
+        }
+        [imported] = import_bundle(
+            self.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
+        )
+        activation.activate(self.admin, imported.revision, loop)
+        chain = []
+        bay = ModuleBay.objects.get(device=self.device, name="Spare")
+        for _level in range(MAX_MODULE_DEPTH + 1):
+            chain.append(self.inventory.install(bay, loop))
+            bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
+
+        content = self.tab()
+
+        front = faces(content)[0]
+        self.assertIsNotNone(art(self.group(front, *chain[:-1])))
+        deepest = self.group(front, *chain)
+        self.assertEqual(
+            deepest.find(f"{{{SVG_NS}}}a").get("class"),
+            "dv-art-module-body dv-art-schematic",
+        )
+        self.assertIn(
+            f"ACME LOOP in Sub: the module is more than {MAX_MODULE_DEPTH} modules"
+            " deep, so it shows as an outline.",
             warnings(content),
         )
