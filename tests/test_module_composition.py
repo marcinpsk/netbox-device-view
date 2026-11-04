@@ -257,7 +257,7 @@ class LinkTests(CompositionTestCase):
     def test_a_module_without_artwork_is_an_outline_with_its_name_and_link(self):
         group = self.group(self.front(), self.inventory.fan)
         [body] = group.findall(f"{{{SVG_NS}}}a")
-        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
+        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
         self.assertEqual(body.get("href"), self.inventory.fan.get_absolute_url())
         rect = body.find(f"{{{SVG_NS}}}rect")
         self.assertEqual(
@@ -357,7 +357,7 @@ class WarningTests(CompositionTestCase):
         front = faces(content)[0]
         for module in (self.inventory.nm1, self.inventory.nm2):
             body = self.group(front, module).find(f"{{{SVG_NS}}}a")
-            self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
+            self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
         self.assertEqual(
             [warning.split(":")[0] for warning in warnings(content)],
             ["ACME NM-2X in NM 1", "ACME NM-2X in NM 2"],
@@ -459,7 +459,7 @@ class DepthTests(CompositionTestCase):
         deepest = self.group(front, *chain)
         self.assertEqual(
             deepest.find(f"{{{SVG_NS}}}a").get("class"),
-            "dv-art-module-body dv-art-schematic",
+            "dv-art-module-body dv-art-outline",
         )
         self.assertIn(
             f"ACME LOOP in Sub: the module is more than {MAX_MODULE_DEPTH} modules"
