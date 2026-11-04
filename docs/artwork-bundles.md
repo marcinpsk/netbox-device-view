@@ -222,8 +222,9 @@ In the UI, go to **Plugins → Artwork Revisions**, open the revision and click 
 The artwork view shows:
 
 - The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
-- A link on each connector whose binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component.
-- An outline on each connector whose component has a cable.
+- A link on each connector where exactly one binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component. A connector where two or more bindings find a component has no link.
+- An outline on each linked connector whose component has a cable.
+- A tooltip on each linked connector that names its component. When the connector has its own title, the tooltip shows that title first.
 
 Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
