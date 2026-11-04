@@ -439,48 +439,69 @@ class _Composer:
             (scope.rotate + rotate) % 360,
             scope.depth + 1,
         )
-        connectors = () if revision is None else self.connectors(revision, module)
-        placed = functools.partial(
-            PlacedModule,
-            module=module,
-            parent=scope.module,
-            bay_key=key,
-            face=scope.face,
-            revision=revision,
-            rotate=inner.rotate,
-            part_id=inner.part_id,
-            connectors=connectors,
-        )
         label = part_label(module)
-        duplicate = ()
+        warnings = []
+
+        def warn(code, text):
+            warnings.append(ArtworkWarning(code, f"{label}: {text}"))
+
         if others:
-            message = (
-                f"{label}: the bays {key} and {', '.join(others)} map to the module"
-                f" bay {module.module_bay.name}, so the module shows only in {key}."
+            warn(
+                WarningCode.DUPLICATE_BAY,
+                f"the bays {key} and {', '.join(others)} map to the module bay"
+                f" {module.module_bay.name}, so the module shows only in {key}.",
             )
-            duplicate = (ArtworkWarning(WarningCode.DUPLICATE_BAY, message),)
+        connectors = () if revision is None else self.connectors(revision, module)
+        # The children come after their parent, so the parent takes this index.
+        index = len(self.modules)
         bay = Rect(*(float(rect.get(name, "0")) for name in BAY_ATTRIBUTES))
+        absolute, drawn = None, None
         if not all(map(math.isfinite, vars(bay).values())):
-            message = (
-                f"{label}: the bay {key} has a position or size that is not a finite"
-                " number, so the module is not drawn."
+            warn(
+                WarningCode.NOT_FINITE,
+                f"the bay {key} has a position or size that is not a finite number,"
+                " so the module is not drawn.",
             )
-            self.modules.append(
-                placed(
-                    representation=OUTLINE,
-                    bay=None,
-                    prefix="",
-                    ids=frozenset(),
-                    warnings=(
-                        *duplicate,
-                        ArtworkWarning(WarningCode.NOT_FINITE, message),
-                    ),
+        else:
+            group = self.module_group(rect, inner.part_id, bay)
+            absolute = transform_rect(scope.matrix, bay)
+            if inner.depth > MAX_MODULE_DEPTH:
+                warn(
+                    WarningCode.TOO_DEEP,
+                    f"the module is more than {MAX_MODULE_DEPTH} modules deep, so it"
+                    " shows as an outline.",
                 )
-            )
-            return
-        clip = f"{inner.part_id}--clip"
+            elif revision is not None:
+                drawn = self.artwork(
+                    group, bay, rotate, revision, connectors, inner, key, warn
+                )
+            if drawn is None:
+                self.outline(group, bay, module)
+        prefix, ids = drawn or ("", frozenset())
+        self.modules.insert(
+            index,
+            PlacedModule(
+                module=module,
+                parent=scope.module,
+                bay_key=key,
+                face=scope.face,
+                representation=OUTLINE if drawn is None else ARTWORK,
+                revision=revision,
+                bay=absolute,
+                rotate=inner.rotate,
+                part_id=inner.part_id,
+                prefix=prefix,
+                connectors=connectors,
+                ids=ids,
+                warnings=tuple(warnings),
+            ),
+        )
+
+    def module_group(self, rect, part_id, bay):
+        """Return the group of a module, clipped to its bay, after the top-level element of the parent face that holds the bay."""
+        clip = f"{part_id}--clip"
         group = etree.Element(
-            _G, {"id": inner.part_id, "clip-path": f"url(#{clip})", **INHERITED_INITIAL}
+            _G, {"id": part_id, "clip-path": f"url(#{clip})", **INHERITED_INITIAL}
         )
         etree.SubElement(
             etree.SubElement(group, f"{{{SVG_NS}}}clipPath", id=clip),
@@ -492,70 +513,43 @@ class _Composer:
         while top.getparent().getparent() is not None:
             top = top.getparent()
         top.addnext(group)
-        absolute = transform_rect(scope.matrix, bay)
-        too_deep = inner.depth > MAX_MODULE_DEPTH
-        data = None if revision is None or too_deep else self.face_data(revision)
+        return group
+
+    def artwork(self, group, bay, rotate, revision, connectors, scope, key, warn):
+        """Draw the artwork of the module of ``scope`` into ``group``; return (prefix, ids), or None when it cannot."""
+        data = self.face_data(revision)
         if data is None:
-            warnings = ()
-            if too_deep:
-                message = (
-                    f"{label}: the module is more than {MAX_MODULE_DEPTH} modules"
-                    " deep, so it shows as an outline."
-                )
-                warnings = (ArtworkWarning(WarningCode.TOO_DEEP, message),)
-            elif revision is not None:
-                message = (
-                    f"{label}: a stored file of the active {revision.definition.key}"
-                    " revision is missing or does not match its digest. Import the"
-                    " revision again."
-                )
-                warnings = (ArtworkWarning(WarningCode.DAMAGED_ARTWORK, message),)
-            self.modules.append(
-                placed(
-                    representation=OUTLINE,
-                    bay=absolute,
-                    prefix="",
-                    ids=frozenset(),
-                    warnings=(*duplicate, *warnings),
-                )
+            warn(
+                WarningCode.DAMAGED_ARTWORK,
+                f"a stored file of the active {revision.definition.key} revision is"
+                " missing or does not match its digest. Import the revision again.",
             )
-            self.outline(group, bay, module)
-            return
+            return None
         [face] = revision.face_names
-        prefix = f"{inner.part_id}-{face}-"
+        prefix = f"{scope.part_id}-{face}-"
         child, elements = _parse_face(data[face], prefix)
         view_box = parse_view_box(child.get("viewBox").strip())
         placement = place(view_box, bay, rotate)
-        warnings = ()
         if placement.size_mismatch:
-            message = (
-                f"{label}: the artwork is {_number(placement.size[0])} ×"
+            warn(
+                WarningCode.SIZE_MISMATCH,
+                f"the artwork is {_number(placement.size[0])} ×"
                 f" {_number(placement.size[1])} mm, but the bay {key} is"
-                f" {_number(bay.width)} × {_number(bay.height)} mm."
+                f" {_number(bay.width)} × {_number(bay.height)} mm.",
             )
-            warnings = (ArtworkWarning(WarningCode.SIZE_MISMATCH, message),)
-        self.modules.append(
-            placed(
-                representation=ARTWORK,
-                bay=absolute,
-                prefix=prefix,
-                ids=frozenset(elements),
-                warnings=(*duplicate, *warnings),
-            )
-        )
         self.compose(
             child,
             elements,
             revision,
             face,
-            replace(inner, matrix=multiply(scope.matrix, placement.matrix)),
+            replace(scope, matrix=multiply(scope.matrix, placement.matrix)),
         )
         if not self.plain:
             drawn = [c for c in connectors if c.face == face]
             _mark_connectors(
                 child, prefix, drawn, elements, view_box, self.outline_width
             )
-            body = self.body(group, module, "dv-art-module-body")
+            body = self.body(group, scope.module, "dv-art-module-body")
             etree.SubElement(body, _RECT, {**_rect_attributes(bay), "fill": "none"})
         # The module root stays a viewport, so its percentage lengths keep their meaning.
         min_x, min_y, width, height = view_box
@@ -574,6 +568,7 @@ class _Composer:
         if not self.plain:
             art.set("class", "dv-art-module-art")
         art.append(child)
+        return prefix, frozenset(elements)
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
@@ -595,6 +590,7 @@ class _Composer:
     def outline(self, group, bay, module):
         """Draw the module as an outline of its bay with the name of its type."""
         body = self.body(group, module, "dv-art-module-body dv-art-outline")
+        # The plain face of the API has no page CSS, so it needs these colours; the page CSS sets theme colours.
         etree.SubElement(
             body,
             _RECT,
