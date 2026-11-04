@@ -70,7 +70,7 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 
   <!-- port elements, with the state that the server found -->
   <g class="dv-port {stylename} {status class}" data-stylename="{stylename}" tabindex="0" role="link"
-     data-connection-state="{state}" data-href="{component URL}" data-bs-title="..." data-bs-content="...">
+     data-connection-state="{state}" data-href="{component URL}" data-dv-details="{details id}">
     <title>{component name}</title>
     <rect class="dv-port-rect" .../>
     <text class="dv-port-label" .../>
