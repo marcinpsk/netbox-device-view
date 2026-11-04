@@ -269,6 +269,17 @@ class LinkTests(CompositionTestCase):
             body.find(f"{{{SVG_NS}}}title").text, "Module ACME FAN-1 in FAN"
         )
 
+    def test_an_outline_drops_the_characters_that_xml_does_not_allow(self):
+        # NetBox accepts these characters in a model name; lxml refuses them.
+        type(self.inventory.fan.module_type).objects.filter(
+            pk=self.inventory.fan.module_type_id
+        ).update(model="FAN\ufffe\uffff\x01-1")
+        [body] = self.group(self.front(), self.inventory.fan).findall(f"{{{SVG_NS}}}a")
+        self.assertEqual(body.find(f"{{{SVG_NS}}}text").text, "FAN-1")
+        self.assertEqual(
+            body.find(f"{{{SVG_NS}}}title").text, "Module ACME FAN-1 in FAN"
+        )
+
     def test_the_details_of_a_module_connector_show_its_component_and_module(self):
         content = self.tab()
         ident = details_id(f"{self.part_id(self.inventory.nm2)}-installed-", "con-p1")
