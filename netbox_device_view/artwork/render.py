@@ -604,9 +604,7 @@ class _Composer:
         body = etree.SubElement(
             group, _A, {"class": classes, "href": module.get_absolute_url()}
         )
-        etree.SubElement(body, f"{{{SVG_NS}}}title").text = (
-            f"Module {part_label(module)}"
-        )
+        etree.SubElement(body, _TITLE).text = _xml_text(f"Module {part_label(module)}")
         return body
 
     def outline(self, group, bay, module):
@@ -643,7 +641,7 @@ class _Composer:
                 "fill": "#212529",
             },
         )
-        text.text = name
+        text.text = _xml_text(name)
 
 
 def _finite(*values) -> bool:
