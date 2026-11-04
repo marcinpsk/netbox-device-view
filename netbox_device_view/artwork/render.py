@@ -249,6 +249,9 @@ def _link(element, state: ComponentState, outline):
         title += ", cable attached"
     if outline is not None:
         link.set("filter", f"url(#{outline.get('id')})")
+    # A browser shows the title nearest to the hovered element, so each title names the component.
+    for own in element.iter(_TITLE):
+        own.text = _xml_text(f"{own.text} · {title}" if own.text else title)
     etree.SubElement(link, _TITLE).text = _xml_text(title)
     link.tail, element.tail = element.tail, None
     element.addprevious(link)

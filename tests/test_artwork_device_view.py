@@ -354,6 +354,20 @@ class ArtworkTabTests(ArtworkTestCase):
         # The console port with the same name does not collide with the interface binding.
         self.assertNotIn(self.console.get_absolute_url(), self.tab())
 
+    def test_a_title_in_the_connector_keeps_its_text_and_names_the_component(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                'style="fill:url(#metal);stroke:#000"/>',
+                'style="fill:url(#metal);stroke:#000"><title>Port 1</title></rect>',
+            ),
+        )
+        self.activate()
+        link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
+        [own] = link[1].iter(f"{{{SVG_NS}}}title")
+        self.assertEqual(link[0].text, "Interface eth1")
+        self.assertEqual(own.text, "Port 1 · Interface eth1")
+
     def test_a_name_with_characters_that_xml_does_not_allow_renders(self):
         # NetBox accepts these characters in a component name; lxml refuses them.
         name = "eth\ufffe\uffff\x011"
