@@ -4,12 +4,12 @@ import re
 from pathlib import Path
 
 import pytest
-from dcim.models import Interface
+from dcim.models import Interface, Module
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.api import device_artwork
 from netbox_device_view.api.rendered_layout import UnavailableReason
-from netbox_device_view.artwork import limits
+from netbox_device_view.artwork import limits, placement, render
 from netbox_device_view.artwork.manifest import MAX_BINDINGS
 from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
@@ -111,7 +111,7 @@ def test_artwork_api_page_states_the_values_of_the_code():
         for value in (
             device_artwork.ARTWORK,
             device_artwork.LAYOUT,
-            device_artwork.SCHEMATIC,
+            render.SCHEMATIC,
             device_artwork.UNAVAILABLE,
         )
     )
@@ -137,3 +137,46 @@ def test_artwork_api_page_documents_each_binding_field():
     }
     missing = Binding(Interface, "eth1", MISSING, None)
     assert documented == set(device_artwork._binding(missing))
+
+
+def _documented_fields(text, heading):
+    """Return the names in the first column of the first table under ``heading``."""
+    table = text.split(f"### {heading}\n", 1)[1].split("###", 1)[0].split("\n\n|")[0]
+    return {
+        name
+        for line in table.splitlines()
+        if line.startswith("| `")
+        for name in re.findall(r"`(\w+)`", line.split("|")[1])
+    }
+
+
+def test_artwork_api_page_documents_each_module_field_and_warning_code():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    module = render.PlacedModule(
+        module=Module(pk=1, module_bay_id=2),
+        parent=None,
+        bay_key="bay-nm",
+        face="front",
+        representation=render.SCHEMATIC,
+        revision=None,
+        bay=None,
+        rotate=0,
+        part_id="dv-a-d1-m1",
+        prefix="",
+        connectors=(),
+        ids=frozenset(),
+        warnings=(),
+    )
+    assert _documented_fields(text, "Module") == set(device_artwork._module(module))
+    assert _documented_fields(text, "Warning") == {"code", "message"}
+    section = text.split("### Warning\n", 1)[1].split("###", 1)[0]
+    codes = section.split("| Code |", 1)[1]
+    documented = {
+        line.split("`")[1] for line in codes.splitlines() if line.startswith("| `")
+    }
+    assert documented == {
+        render.SIZE_MISMATCH,
+        render.NOT_FINITE,
+        render.DAMAGED_ARTWORK,
+    }
+    assert f"differ by more than {placement.SIZE_TOLERANCE} mm" in text
