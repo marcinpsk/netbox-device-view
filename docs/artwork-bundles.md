@@ -260,7 +260,7 @@ The plugin places the module face in the bay at true scale:
 Each installed module uses the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
 
 - A click on the body of a module opens the module. A click on one of its connectors opens the component, or the details, as for a connector of the device. The details name the module.
-- A module type without active artwork shows as an outline of the bay with the model of the type. A click on it opens the module.
+- A module type without active artwork shows as an outline of the bay with the model of the type. A click on it opens the module. The outline has no bays, so the modules that are installed in that module do not show.
 - An empty bay shows only the artwork of the parent.
 - A module or a module bay that you cannot view does not show, so its bay looks empty.
 
