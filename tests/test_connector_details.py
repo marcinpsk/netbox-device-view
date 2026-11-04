@@ -1,5 +1,6 @@
 """Each connector and layout key has details: its bindings, with the objects that the user can view."""
 
+import copy
 import html
 import re
 from pathlib import Path
@@ -18,11 +19,14 @@ from dcim.models import (
     PowerPort,
     RearPort,
 )
+from django.conf import settings
 from django.contrib.staticfiles import finders
+from django.test import override_settings
 from django.urls import reverse
 from users.models import ObjectPermission
 
 from netbox_device_view.components import BINDABLE_MODELS
+from netbox_device_view.details import details_id
 from netbox_device_view.models import DeviceView, RenderMode
 
 from .permissions import grant
@@ -130,9 +134,23 @@ class ArtworkDetailsTests(ArtworkTestCase):
         self.assertEqual(facts(fragment)["Cable"], "No cable")
         self.assertNotIn("Peers", facts(fragment))
         self.assertNotIn("server1", text(fragment))
-        self.assertEqual(
-            [label for label, _ in links(fragment)], ["Interface eth1", "Trace"]
-        )
+        self.assertEqual([label for label, _ in links(fragment)], ["Interface eth1"])
+
+    def test_the_trace_link_needs_the_view_permission_on_cables(self):
+        self.activate()
+        trace = f"{self.eth1.get_absolute_url()}trace/"
+        config = copy.deepcopy(settings.PLUGINS_CONFIG)
+        config["netbox_device_view"]["show_on_device_tab"] = True
+        for cables in (True, False):
+            if not cables:
+                ObjectPermission.objects.filter(name__startswith="dcim.cable").delete()
+            with override_settings(PLUGINS_CONFIG=config):
+                page = self.client.get(self.device.get_absolute_url()).content.decode()
+            for surface, content in (("tab", self.tab()), ("device page", page)):
+                with self.subTest(surface=surface, cables=cables):
+                    ident = details_id(f"dv-o-d{self.device.pk}-front-", "con-eth1")
+                    _, fragment = details(content, ident)
+                    self.assertEqual(("Trace", trace) in links(fragment), cables)
 
     def test_two_found_bindings_open_a_chooser_of_both_components(self):
         activate_second_binding(self, "{component: consoleport, name: eth1}")
