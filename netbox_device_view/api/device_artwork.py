@@ -9,11 +9,11 @@ import logging
 
 from dcim.models import Device
 
+from ..artwork.manifest import DEVICE_KIND
 from ..artwork.render import (
     API,
     ARTWORK,
     DAMAGED,
-    DAMAGED_ARTWORK,
     active_revisions,
     resolve_device,
 )
@@ -29,6 +29,7 @@ LAYOUT = "layout"
 UNAVAILABLE = "unavailable"
 # Reserved for a generic schematic (#47); no member gets it yet.
 SCHEMATIC = "schematic"
+DAMAGED_ARTWORK = "damaged_artwork"
 # The ComponentState facts that a binding gives as they are.
 _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_complete")
 
@@ -36,7 +37,9 @@ _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_co
 def compose_device_artwork(device: Device, user) -> dict:
     """Return the artwork envelope of ``device`` with only the objects that ``user`` can view."""
     members = panel_members(device, user)
-    revisions = active_revisions({member.device_type_id for member in members})
+    revisions = active_revisions(
+        DEVICE_KIND, {member.device_type_id for member in members}
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "device_id": device.pk,

@@ -12,6 +12,7 @@ from dcim.models import (
 )
 from django.core.exceptions import ObjectDoesNotExist
 
+from .artwork.manifest import DEVICE_KIND
 from .artwork.render import (
     active_revisions,
     has_active_artwork,
@@ -388,7 +389,9 @@ def panel_title(obj, user):
 def artwork_parts(obj, user):
     """Return the artwork Part of each member that ``user`` can view, or None unless every member has active artwork."""
     members = panel_members(obj, user)
-    revisions = active_revisions({member.device_type_id for member in members})
+    revisions = active_revisions(
+        DEVICE_KIND, {member.device_type_id for member in members}
+    )
     if not members or any(member.device_type_id not in revisions for member in members):
         return None
     return [

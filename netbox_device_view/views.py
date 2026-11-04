@@ -450,9 +450,7 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
 
     @staticmethod
     def _form(request, revision, data=None):
-        return forms.ActivateRevisionForm(
-            data, user=request.user, kind=revision.definition.kind
-        )
+        return forms.ActivateRevisionForm(data, user=request.user, revision=revision)
 
     def get(self, request, pk):
         revision = self._revision(request, pk)

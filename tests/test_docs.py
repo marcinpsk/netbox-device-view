@@ -177,11 +177,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         line.split("`")[1] for line in codes.splitlines() if line.startswith("| `")
     }
     assert documented == {
-        render.SIZE_MISMATCH,
-        render.NOT_FINITE,
-        render.DAMAGED_ARTWORK,
-        render.DUPLICATE_BAY,
-        render.TOO_DEEP,
+        value for name, value in vars(render.WarningCode).items() if name.isupper()
     }
     assert (
         f"more than {render.MAX_MODULE_DEPTH} modules deep on its placement path"

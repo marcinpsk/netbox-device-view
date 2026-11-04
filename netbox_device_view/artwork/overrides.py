@@ -66,27 +66,24 @@ def _instance_scope(model):
 
 def part_overrides(parts) -> list[BindingOverride]:
     """Return the overrides of the devices and installed modules ``parts`` and of their types, in one query."""
-    lookups = defaultdict(set)
+    ids = defaultdict(set)
     for part in parts:
         spec = _instance_scope(type(part))
-        lookups[f"{spec.type_field}__in"].add(getattr(part, f"{spec.type_field}_id"))
-        lookups[f"{spec.field}__in"].add(part.pk)
+        ids[SCOPES[spec.type_field]].add(SCOPES[spec.type_field].id_of(part))
+        ids[spec].add(part.pk)
     condition = functools.reduce(
-        operator.or_, (Q(**{name: ids}) for name, ids in lookups.items())
+        operator.or_, (spec.among(values) for spec, values in ids.items())
     )
     return list(BindingOverride.objects.filter(condition))
 
 
-def connector_bindings(revision, part, overrides=None) -> dict[str, list]:
+def connector_bindings(revision, part, overrides) -> dict[str, list]:
     """Return {connector key: bindings} of ``revision`` for one device or installed module.
 
-    ``overrides`` comes from part_overrides() for parts that include ``part``;
-    without it, the overrides of ``part`` are read.
+    ``overrides`` comes from part_overrides() for parts that include ``part``.
     """
     spec = _instance_scope(type(part))
-    type_id = getattr(part, f"{spec.type_field}_id")
-    if overrides is None:
-        overrides = part_overrides([part])
+    type_spec = SCOPES[spec.type_field]
     result = {
         key: connector["bindings"]
         for key, connector in revision.manifest["connectors"].items()
@@ -96,8 +93,8 @@ def connector_bindings(revision, part, overrides=None) -> dict[str, list]:
         for override in overrides
         if override.definition_id == revision.definition_id
         and (
-            getattr(override, f"{spec.type_field}_id") == type_id
-            or getattr(override, f"{spec.field}_id") == part.pk
+            type_spec.id_of(override) == type_spec.id_of(part)
+            or spec.id_of(override) == part.pk
         )
     ]
     # The instance override comes last, so it replaces the type override.

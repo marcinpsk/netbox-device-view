@@ -33,8 +33,7 @@ from .artwork.manifest import (
 from .components import BINDING_MODELS
 from .models import (
     SCOPE_FIELDS,
-    SCOPES,
-    TYPE_FIELDS,
+    TYPE_SCOPES,
     Association,
     BindingOverride,
     DeviceView,
@@ -209,11 +208,26 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
         fields = ("key_owner",)
 
 
-_ACTIVATION_HELP = {
-    DEVICE_KIND: _("The Device View of every device of this type shows the revision."),
-    MODULE_KIND: _(
-        "Every installed module of this type shows the revision in the bay of its"
-        " device."
+# The text of the activation page and the help of its type field, for each definition kind.
+_ACTIVATION_TEXTS = {
+    DEVICE_KIND: (
+        _(
+            "After activation, the Device View of each device of the selected type"
+            " shows this revision of {key}. A type that already has an active revision"
+            " changes to this one."
+        ),
+        _("The Device View of every device of this type shows the revision."),
+    ),
+    MODULE_KIND: (
+        _(
+            "After activation, each installed module of the selected type shows this"
+            " revision of {key} in the bay of its device. A type that already has an"
+            " active revision changes to this one."
+        ),
+        _(
+            "Every installed module of this type shows the revision in the bay of its"
+            " device."
+        ),
     ),
 }
 
@@ -221,15 +235,22 @@ _ACTIVATION_HELP = {
 class ActivateRevisionForm(forms.Form):
     """The one type field of the revision's kind: a device type, or a module type."""
 
-    def __init__(self, *args, user, kind, **kwargs):
+    def __init__(self, *args, user, revision, **kwargs):
         super().__init__(*args, **kwargs)
-        self.type_field = TYPE_FIELDS[kind]
-        model = SCOPES[self.type_field].model
+        kind = revision.definition.kind
+        scope = TYPE_SCOPES[kind]
+        self.type_field = scope.field
+        intro, help_text = _ACTIVATION_TEXTS[kind]
+        self.intro = intro.format(key=revision.definition.key)
         self.fields[self.type_field] = DynamicModelChoiceField(
-            queryset=model.objects.restrict(user, "view"),
-            label=capfirst(model._meta.verbose_name),
-            help_text=_ACTIVATION_HELP[kind],
+            queryset=scope.model.objects.restrict(user, "view"),
+            label=capfirst(scope.model._meta.verbose_name),
+            help_text=help_text,
         )
+
+    @property
+    def type_bound_field(self):
+        return self[self.type_field]
 
     @property
     def hardware_type(self):
