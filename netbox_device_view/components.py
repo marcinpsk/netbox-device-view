@@ -328,6 +328,17 @@ def bind_layout(states, face=None):
     return bindings
 
 
+def resolve_name(model, name, module) -> str | None:
+    """Return the name that NetBox gives a ``model`` component of ``module`` from the template name ``name``.
+
+    None when the ``{module}`` tokens do not fit the depth of the bay of ``module``.
+    """
+    try:
+        return _TEMPLATE_MODELS[model](name=name).resolve_name(module)
+    except ValueError:
+        return None
+
+
 def find(states, model, name, module=None):
     """Return the states of ``model`` components named ``name`` in the scope of ``module``.
 
@@ -336,7 +347,7 @@ def find(states, model, name, module=None):
     resolve the way NetBox names the components of that module.
     """
     if module is not None:
-        name = _TEMPLATE_MODELS[model](name=name).resolve_name(module)
+        name = resolve_name(model, name, module)
     module_id = module.pk if module is not None else None
     return [
         state
