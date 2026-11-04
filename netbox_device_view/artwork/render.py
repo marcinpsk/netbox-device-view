@@ -45,6 +45,9 @@ OVERVIEW = "o"
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
+_TITLE = f"{{{SVG_NS}}}title"
+# XML 1.0 does not allow these characters, and lxml refuses them; NetBox names can hold them.
+_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 # A generated local id starts with "-"; an author id starts with a letter.
 _OCCUPIED = "-occupied-"
 # The outline width as a part of the larger face dimension.
@@ -157,7 +160,7 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
     for element in root.iter(f"{{{SVG_NS}}}title", f"{{{SVG_NS}}}desc"):
         text = "".join(element.itertext())
         element[:] = []
-        element.text = text
+        element.text = _xml_text(text)
     elements = {}
     for element in root.iter(etree.Element):
         ident = element.get("id")
@@ -246,10 +249,15 @@ def _link(element, state: ComponentState, outline):
         title += ", cable attached"
     if outline is not None:
         link.set("filter", f"url(#{outline.get('id')})")
-    etree.SubElement(link, f"{{{SVG_NS}}}title").text = title
+    etree.SubElement(link, _TITLE).text = _xml_text(title)
     link.tail, element.tail = element.tail, None
     element.addprevious(link)
     link.append(element)
+
+
+def _xml_text(value: str) -> str:
+    """Return ``value`` without the characters that XML 1.0 does not allow."""
+    return _NOT_XML.sub("", value)
 
 
 def _user_space(element):

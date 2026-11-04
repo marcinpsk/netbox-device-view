@@ -354,6 +354,20 @@ class ArtworkTabTests(ArtworkTestCase):
         # The console port with the same name does not collide with the interface binding.
         self.assertNotIn(self.console.get_absolute_url(), self.tab())
 
+    def test_a_name_with_characters_that_xml_does_not_allow_renders(self):
+        # NetBox accepts these characters in a component name; lxml refuses them.
+        name = "eth\ufffe\uffff\x011"
+        Interface.objects.filter(pk=self.eth1.pk).update(name=name)
+        manifest = copy.deepcopy(self.revision.manifest)
+        manifest["connectors"]["con-eth1"]["bindings"][0]["name"] = name
+        type(self.revision).objects.filter(pk=self.revision.pk).update(
+            manifest=manifest
+        )
+        self.activate()
+        link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
+        self.assertEqual(link.get("href"), self.eth1.get_absolute_url())
+        self.assertEqual(link[0].text, "Interface eth1")
+
     def test_each_face_scrolls_with_the_keyboard(self):
         self.activate()
         viewports = re.findall(r'<div class="dv-art-viewport"[^>]*>', self.tab())
