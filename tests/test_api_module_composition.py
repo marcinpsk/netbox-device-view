@@ -9,7 +9,7 @@ from users.models import Token
 from .module_samples import CHASSIS_SVG
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, links
-from .test_module_composition import CompositionTestCase
+from .test_module_composition import CompositionTestCase, activate_alias_revision
 
 
 class ModuleApiTestCase(CompositionTestCase):
@@ -177,4 +177,21 @@ class ModuleWarningTests(ModuleApiTestCase):
         )
         self.assertEqual(
             [connector["element_id"] for connector in nm2["connectors"]], [None]
+        )
+
+
+class DuplicateBayApiTests(ModuleApiTestCase):
+    def test_a_module_that_two_bays_name_has_one_entry_with_a_warning(self):
+        activate_alias_revision(self)
+        entries = [
+            entry
+            for entry in self.artwork()["modules"]
+            if entry["module_id"] == self.inventory.sfp.pk
+        ]
+        self.assertEqual(
+            [
+                (entry["bay_key"], [w["code"] for w in entry["warnings"]])
+                for entry in entries
+            ],
+            [("bay-alias", ["duplicate_bay"])],
         )

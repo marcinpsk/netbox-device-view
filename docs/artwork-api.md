@@ -193,6 +193,7 @@ The list has the parents before their children, in the order of the bay keys. A 
 | `size_mismatch` | The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. |
 | `placement_not_finite` | A value of the bay rect is not a finite number. The module is not drawn. |
 | `damaged_artwork` | A stored file of the active revision of the module type is missing or does not match its digest. The module shows as a schematic. |
+| `duplicate_bay` | Two or more bays of the parent name the module bay of the module after `{module}` resolves. The module shows only in the first bay key. |
 
 ---
 
