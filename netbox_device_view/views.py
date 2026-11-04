@@ -41,7 +41,6 @@ from .artwork import activation, overrides
 from .artwork import importing as artwork_importing
 from .artwork.branching import main_schema
 from .artwork.errors import ArtworkError
-from .artwork.manifest import DEVICE_KIND
 from .artwork.type_lock import lock_bulk_writes
 from .components import binding_labels
 from .utils import (
@@ -399,10 +398,7 @@ class ActivateRevision(ObjectAction):
 
     @classmethod
     def render(cls, context, obj, **kwargs):
-        # Module definitions are activated for module types with module composition.
-        if obj.definition.kind != DEVICE_KIND or not activation.can_activate(
-            context["request"].user
-        ):
+        if not activation.can_activate(context["request"].user):
             return ""
         return super().render(context, obj, **kwargs)
 
@@ -441,7 +437,7 @@ class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
 
 
 class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
-    """Make a revision the active artwork of a device type."""
+    """Make a revision the active artwork of a device type or a module type."""
 
     template_name = "netbox_device_view/artwork_activate.html"
 
@@ -458,23 +454,30 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
 
     def _revision(self, request, pk):
         return get_object_or_404(
-            models.DefinitionRevision.objects.restrict(request.user, "view"), pk=pk
+            models.DefinitionRevision.objects.restrict(
+                request.user, "view"
+            ).select_related("definition"),
+            pk=pk,
+        )
+
+    @staticmethod
+    def _form(request, revision, data=None):
+        return forms.ActivateRevisionForm(
+            data, user=request.user, kind=revision.definition.kind
         )
 
     def get(self, request, pk):
         revision = self._revision(request, pk)
-        return self._render(
-            request, revision, forms.ActivateRevisionForm(user=request.user)
-        )
+        return self._render(request, revision, self._form(request, revision))
 
     def post(self, request, pk):
         revision = self._revision(request, pk)
-        form = forms.ActivateRevisionForm(request.POST, user=request.user)
+        form = self._form(request, revision, request.POST)
         if not form.is_valid():
             return self._render(request, revision, form, status=400)
         try:
             association = activation.activate(
-                request.user, revision, form.cleaned_data["device_type"]
+                request.user, revision, form.hardware_type
             )
         except ValidationError as exc:
             form.add_error(None, exc.messages)
@@ -485,7 +488,7 @@ class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
         messages.success(
             request,
             _("{type} now shows {revision}.").format(
-                type=association.device_type.full_name, revision=revision
+                type=association.hardware_type.full_name, revision=revision
             ),
         )
         # The association page needs view permission on it; the revision page needs none more.
