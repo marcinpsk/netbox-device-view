@@ -352,7 +352,7 @@ class WarningTests(CompositionTestCase):
             "acme/ch-4",
             "front.svg",
             CHASSIS_SVG.replace(
-                'x="320" y="7" width="100"', 'x="1e308" y="7" width="1e308"'
+                'x="320" y="7" width="100"', 'x="1.6e308" y="7" width="1e308"'
             ),
         )
         content = self.tab()

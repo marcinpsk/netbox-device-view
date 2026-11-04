@@ -181,7 +181,7 @@ class ModuleWarningTests(ModuleApiTestCase):
             "acme/ch-4",
             "front.svg",
             CHASSIS_SVG.replace(
-                'x="320" y="7" width="100"', 'x="1e308" y="7" width="1e308"'
+                'x="320" y="7" width="100"', 'x="1.6e308" y="7" width="1e308"'
             ),
         )
         nm2 = self.modules()[self.inventory.nm2.pk]
@@ -199,6 +199,9 @@ class ModuleWarningTests(ModuleApiTestCase):
                 ["placement_not_finite"],
             ),
         )
+        # The centre of the label overflows too; the face holds no infinite number.
+        [face] = self.artwork()["faces"]
+        self.assertNotIn("inf", face["svg"])
 
     def test_a_module_that_is_not_drawn_has_no_placement_or_element(self):
         self.store_face(

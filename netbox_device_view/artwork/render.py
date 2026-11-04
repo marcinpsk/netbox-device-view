@@ -611,12 +611,16 @@ class _Composer:
         name = module.module_type.model
         # The label is not turned with the bay, so it stays readable.
         size = min(bay.height * 0.4, bay.width * 0.9 / (0.6 * max(len(name), 1)))
+        x, y = bay.x + bay.width / 2, bay.y + bay.height / 2
+        # A finite bay can have a centre that overflows; the outline then has no label.
+        if not _finite(x, y, size):
+            return
         text = etree.SubElement(
             body,
             f"{{{SVG_NS}}}text",
             {
-                "x": _number(bay.x + bay.width / 2),
-                "y": _number(bay.y + bay.height / 2),
+                "x": _number(x),
+                "y": _number(y),
                 "font-size": _number(size),
                 "font-family": "sans-serif",
                 "text-anchor": "middle",
