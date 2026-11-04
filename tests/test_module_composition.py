@@ -229,6 +229,8 @@ class LinkTests(CompositionTestCase):
             self.inventory.nm2, "TenGigabitEthernet1/2/1"
         )
         self.assertIn(f'href="{interface.get_absolute_url()}"', template[2])
+        # The entry names the component that NetBox gives the module, not the template.
+        self.assertIn("Interface TenGigabitEthernet1/2/1</a>", template[2])
         self.assertIn(f'href="{self.inventory.nm2.get_absolute_url()}"', template[2])
 
 
