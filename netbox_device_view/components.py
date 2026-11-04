@@ -221,7 +221,8 @@ def _queryset(model, device, user):
             Q(module__isnull=True) | Q(module__in=Module.objects.restrict(user, "view"))
         )
         .exclude(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
-        .select_related("cable", "module")
+        # The details of a port name its module: the bay and the type.
+        .select_related("cable", "module__module_bay", "module__module_type")
         .prefetch_related(
             GenericPrefetch("cable__terminations__termination", _peer_querysets())
         )
