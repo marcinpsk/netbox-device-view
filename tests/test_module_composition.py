@@ -143,6 +143,25 @@ class PlacementTests(CompositionTestCase):
         self.assertEqual(viewport.getparent(), art(group))
         self.assertEqual(connector.get("x"), "10%")
 
+    def test_a_module_does_not_take_the_presentation_attributes_of_the_chassis(self):
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace(
+                '<rect id="bay-nm1" x="200" y="7" width="100" height="30" fill="#111"/>',
+                '<g fill="none" stroke-dasharray="2" opacity="0.5">'
+                '<rect id="bay-nm1" x="200" y="7" width="100" height="30"/></g>',
+            ),
+        )
+        front = self.front()
+        group = self.group(front, self.inventory.nm1)
+        # Outside the groups of the bay: their opacity and clip do not reach the module.
+        self.assertIs(group.getparent(), front)
+        self.assertEqual(
+            {name: group.get(name) for name in ("fill", "stroke", "stroke-dasharray")},
+            {"fill": "black", "stroke": "none", "stroke-dasharray": "none"},
+        )
+
     def test_a_rotated_bay_turns_the_module(self):
         group = self.group(self.front(), self.inventory.psu)
         # The 40 x 30 face turns by 90 degrees into the 30 x 40 bay at (120, 2).
