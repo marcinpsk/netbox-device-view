@@ -217,14 +217,15 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 ## Activate a revision
 
-An association links a device type to one revision of a device definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of the type then show the artwork instead of the layout.
+An association links a device type to one revision of a device definition, or a module type to one revision of a module definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of a device type then show the artwork instead of the layout. Each installed module of a module type shows its artwork in the bay of its parent: see [Module bays](#module-bays).
 
-In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to show the layout of the type again. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
+In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. For a device definition, select the **Device type**. For a module definition, select the **Module type**. A revision activates only for a type of its kind. Click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type, and you can filter it by device type or module type. Delete an association to show the layout of the type again, or the schematic of the modules of the type. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
 
 The artwork view shows:
 
 - The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
-- A link on each connector that has one binding, when the binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component.
+- A link on each connector that has one binding, when the binding finds a component. The binding uses the component type and the exact name. A connector of the device finds only components of the device itself, not of its modules. A connector of an installed module finds only components of that module. A click on the connector opens the component.
+- The installed modules in their bays, with a [warning list](#module-bays) below a face when a placement has a problem.
 - The [details](#connector-details) of each connector.
 - Marks for the connectivity facts of each connector, and a legend below the faces. Each fact has its own mark, so a disabled interface with a cable shows both. A mark changes only the outline, and each mark has its own pattern, so no fact depends on colour alone.
 - A tooltip on each connector that names every fact: enabled or disabled, the cable status or no cable, marked connected, path complete or incomplete, and the peers that you can view. When the connector has its own title, the tooltip shows that title first.
@@ -246,6 +247,32 @@ Decorative artwork has no link. A connector whose component does not exist, or t
 
 A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
 
+### Module bays
+
+A bay of the artwork shows the module that NetBox records in its module bay. A bay of a device definition maps to a module bay of the device by its exact name. A bay of a module definition maps to a module bay of the installed module, and its `{module}` tokens resolve as NetBox names the bays of that module. Thus a transceiver in a bay of a network module shows inside the network module, at any depth. Inventory items and device bays do not show.
+
+The plugin places the module face in the bay at true scale:
+
+1. It moves the face so that its `viewBox` starts at the origin.
+2. It turns the face by the `rotate` value of the bay: 0, 90, 180 or 270 degrees, clockwise.
+3. It puts the top-left corner of the turned face at the top-left corner of the bay.
+4. It clips the module to the bay rect.
+
+Each installed module uses the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
+
+- A click on the body of a module opens the module. A click on one of its connectors opens the component, or the details, as for a connector of the device. The details name the module.
+- A module type without active artwork shows as an outline of the bay with the model of the type. A click on it opens the module.
+- An empty bay shows only the artwork of the parent.
+- A module or a module bay that you cannot view does not show, so its bay looks empty.
+
+A list below the face shows these warnings:
+
+- The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. Correct the bay rect or the `viewBox`.
+- A value of the bay rect is not a finite number. The module does not show.
+- A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. Import the revision again.
+
+The [artwork API](artwork-api.md#module) gives each placed module and its warnings.
+
 ### Connector details
 
 The details of a connector show each binding. For a component that the binding finds, the details show the component, its module, enabled or disabled, the cable and its status, marked connected, the path state and the peers, each with a link, and a link to the trace. They show only the objects that you can view: a hidden cable shows as no cable, and a hidden peer is not in the list.
@@ -260,11 +287,11 @@ Press **Escape** or click the close button to close the details. The focus then 
 
 ### Permissions
 
-- A first activation for a device type needs the **add** permission on **Artwork association**. A later activation needs the **change** permission. Constraints of these permissions apply to the association after the change.
-- You must be able to view the revision and the device type.
+- A first activation for a type needs the **add** permission on **Artwork association**. A later activation needs the **change** permission. Constraints of these permissions apply to the association after the change.
+- You must be able to view the revision and the type.
 - The association pages need the **view** permission on **Artwork association**.
-- The artwork view needs no permission on the association or the revision. Components, cables and modules show only when you can view them.
-- An activation fails when a [binding override](#binding-overrides) of the definition key, for the type or for one of its devices, names a connector that the revision does not have. The message names each such override. If you cannot view all of them, the message names none.
+- The artwork view needs no permission on the association or the revision. Components, cables, modules and module bays show only when you can view them.
+- An activation fails when a [binding override](#binding-overrides) of the definition key, for the type or for one of its devices or installed modules, names a connector that the revision does not have. The message names each such override. If you cannot view all of them, the device of each, and the installed module of each, the message names none.
 
 ---
 
@@ -274,9 +301,10 @@ A binding override replaces the bindings of one connector without a change to th
 
 - A device type: the override applies to each device of the type.
 - A device: the override applies to that device only.
-- A module type or an installed module. The model, the pages and the API accept these scopes, but you cannot add one yet: an override needs the active artwork of its module type, and the plugin cannot activate module artwork before module composition (#45). Activation writes device type associations only.
+- A module type: the override applies to each installed module of the type.
+- An installed module: the override applies to that module only.
 
-The bindings of a connector resolve in this order: the bindings of the artwork, then the override of the type, then the override of the device. Each level replaces the list of the level below it. The lists do not merge. The Device View tab, the device page panel and the [artwork API](artwork-api.md) use the same resolution.
+The bindings of a connector resolve in this order: the bindings of the artwork, then the override of the type, then the override of the device or the installed module. Each level replaces the list of the level below it. The lists do not merge. The Device View tab, the device page panel and the [artwork API](artwork-api.md) use the same resolution.
 
 An override has the schema of the `bindings` of a manifest connector: 0 to 16 bindings, each with a `component` type and a `name`. An empty list leaves the connector with no binding. A binding that finds no component is a missing binding: the connector has the mark for no component found.
 
