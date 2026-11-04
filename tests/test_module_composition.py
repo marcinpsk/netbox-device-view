@@ -111,6 +111,38 @@ class PlacementTests(CompositionTestCase):
             f"{self.part_id(self.inventory.nm1)}-installed-con-p1", ids(group)
         )
 
+    def test_a_module_face_keeps_its_own_viewport(self):
+        # Percentage lengths resolve against the nearest viewport: the module face, not the chassis.
+        self.store_face(
+            "acme/nm-2x",
+            "installed.svg",
+            NM_SVG.replace('viewBox="0 0 100 30"', 'viewBox="5 7 100 30"').replace(
+                '<rect id="con-p1" x="10"', '<rect id="con-p1" x="10%"'
+            ),
+        )
+        group = self.group(self.front(), self.inventory.nm1)
+        # The viewport maps the viewBox origin (5, 7) to the bay origin.
+        self.assertEqual(art(group).get("transform"), "matrix(1 0 0 1 200 7)")
+        [connector] = group.findall(
+            f".//*[@id='{self.part_id(self.inventory.nm1)}-installed-con-p1']"
+        )
+        viewport = next(connector.iterancestors(f"{{{SVG_NS}}}svg"))
+        self.assertEqual(
+            {
+                name: viewport.get(name)
+                for name in ("viewBox", "x", "y", "width", "height")
+            },
+            {
+                "viewBox": "5 7 100 30",
+                "x": "0",
+                "y": "0",
+                "width": "100",
+                "height": "30",
+            },
+        )
+        self.assertEqual(viewport.getparent(), art(group))
+        self.assertEqual(connector.get("x"), "10%")
+
     def test_a_rotated_bay_turns_the_module(self):
         group = self.group(self.front(), self.inventory.psu)
         # The 40 x 30 face turns by 90 degrees into the 30 x 40 bay at (120, 2).
