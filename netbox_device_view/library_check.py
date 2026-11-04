@@ -151,6 +151,12 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
     kind = manifest.data["kind"]
     path = f"{ARTWORK}/{definition.manifest_path}"
     type_path = f"{COMMUNITY_DIRECTORIES[kind]}/{definition.directory}.yaml"
+    # The community root can be a link; a link below it is a problem, as in the library.
+    parts = Path(type_path).parts
+    if any(
+        community.joinpath(*parts[:n]).is_symlink() for n in range(1, len(parts) + 1)
+    ):
+        return [Issue(path, None, f"The community type {type_path} is {NOT_REGULAR}")]
     try:
         names, bays = _community_names(community / type_path)
     except FileNotFoundError:
