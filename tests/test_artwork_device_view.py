@@ -354,6 +354,14 @@ class ArtworkTabTests(ArtworkTestCase):
         # The console port with the same name does not collide with the interface binding.
         self.assertNotIn(self.console.get_absolute_url(), self.tab())
 
+    def test_each_face_scrolls_with_the_keyboard(self):
+        self.activate()
+        viewports = re.findall(r'<div class="dv-art-viewport"[^>]*>', self.tab())
+        self.assertEqual(len(viewports), 2)
+        for viewport, face in zip(viewports, ("Front", "Rear")):
+            self.assertIn('tabindex="0"', viewport)
+            self.assertIn(f'aria-label="Artwork of the {face} face"', viewport)
+
     def test_a_face_binds_front_and_rear_ports_of_either_type(self):
         self.activate()
         front, rear = faces(self.tab())
