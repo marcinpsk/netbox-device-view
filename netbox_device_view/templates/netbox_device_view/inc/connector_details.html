@@ -34,7 +34,8 @@
 			<dd><ul class="list-unstyled mb-0">{% for label, url in state.peer_links %}<li><a href="{{ url }}">{{ label }}</a></li>{% endfor %}</ul></dd>
 			{% endif %}
 		</dl>
-		<a class="btn btn-sm btn-outline-secondary" href="{{ component.get_absolute_url }}trace/"><i class="mdi mdi-transit-connection-variant" aria-hidden="true"></i> {% trans "Trace" %}</a>
+		{# The trace page of NetBox also needs the view permission on cables. #}
+		{% if perms.dcim.view_cable %}<a class="btn btn-sm btn-outline-secondary" href="{{ component.get_absolute_url }}trace/"><i class="mdi mdi-transit-connection-variant" aria-hidden="true"></i> {% trans "Trace" %}</a>{% endif %}
 		{% endwith %}{% endwith %}
 		{% elif entry.missing %}
 		<h3 class="h4 mb-1">{{ entry.label }}</h3>
