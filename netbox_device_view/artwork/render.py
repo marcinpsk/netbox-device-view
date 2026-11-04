@@ -75,6 +75,29 @@ _TITLE = f"{{{SVG_NS}}}title"
 _NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 _G, _A, _RECT = (f"{{{SVG_NS}}}{tag}" for tag in ("g", "a", "rect"))
 _BAY_ATTRIBUTES = ("x", "y", "width", "height")
+# The initial value of each inherited property of the profile: a module does not take them from its parent.
+# font-family is not reset, because its initial value depends on the browser.
+INHERITED_INITIAL = {
+    "fill": "black",
+    "fill-opacity": "1",
+    "fill-rule": "nonzero",
+    "stroke": "none",
+    "stroke-width": "1",
+    "stroke-opacity": "1",
+    "stroke-linecap": "butt",
+    "stroke-linejoin": "miter",
+    "stroke-dasharray": "none",
+    "stroke-dashoffset": "0",
+    "stroke-miterlimit": "4",
+    "visibility": "visible",
+    "clip-rule": "nonzero",
+    "font-size": "medium",
+    "font-weight": "normal",
+    "font-style": "normal",
+    "text-anchor": "start",
+    "dominant-baseline": "auto",
+    "letter-spacing": "normal",
+}
 # A generated local id starts with "-"; an author id starts with a letter.
 _MARKS = "-marks-"
 # The outline width as a part of the larger face dimension.
@@ -434,15 +457,20 @@ class _Composer:
                 )
             )
             return
-        group = etree.Element(_G, id=inner.part_id)
         clip = f"{inner.part_id}--clip"
-        group.set("clip-path", f"url(#{clip})")
+        group = etree.Element(
+            _G, {"id": inner.part_id, "clip-path": f"url(#{clip})", **INHERITED_INITIAL}
+        )
         etree.SubElement(
             etree.SubElement(group, f"{{{SVG_NS}}}clipPath", id=clip),
             _RECT,
             _rect_attributes(bay),
         )
-        rect.addnext(group)
+        # Outside the groups of the bay, so their opacity, clip and display do not reach the module.
+        top = rect
+        while top.getparent().getparent() is not None:
+            top = top.getparent()
+        top.addnext(group)
         absolute = transform_rect(scope.matrix, bay)
         data = None if revision is None else self.face_data(revision)
         if data is None:

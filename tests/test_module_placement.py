@@ -3,6 +3,8 @@
 import pytest
 
 from netbox_device_view.artwork.placement import Rect, place, transform_rect
+from netbox_device_view.artwork.render import INHERITED_INITIAL
+from netbox_device_view.artwork.svg import PROPERTIES
 
 # A child face whose viewBox does not start at the origin.
 VIEW_BOX = (5, 7, 100, 30)
@@ -62,3 +64,12 @@ def test_a_rect_in_a_rotated_module_maps_to_its_bounds_in_the_parent():
     # A 14 x 10 bay at (40, 10) of a 100 x 30 face, placed in a bay turned by 90 degrees.
     matrix = place((0, 0, 100, 30), Rect(300, 5, 30, 100), 90).matrix
     assert transform_rect(matrix, Rect(40, 10, 14, 10)) == Rect(310, 45, 10, 14)
+
+
+# Profile properties that CSS does not inherit; a module group cannot reset their effect.
+NOT_INHERITED = {"opacity", "display", "clip-path", "stop-color", "stop-opacity"}
+
+
+def test_a_module_resets_each_inherited_property_of_the_profile():
+    # font-family keeps the font of the page: its initial value depends on the browser.
+    assert set(INHERITED_INITIAL) | {"font-family"} | NOT_INHERITED == set(PROPERTIES)

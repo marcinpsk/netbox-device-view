@@ -257,6 +257,8 @@ The plugin places the module face in the bay at true scale:
 3. It puts the top-left corner of the turned face at the top-left corner of the bay.
 4. It clips the module to the bay rect.
 
+The module draws as its own file does: it does not take the presentation attributes, opacity or clip of the groups of the parent artwork. Only `font-family` passes from the parent, because its initial value depends on the browser. Set the font of module text in the module artwork.
+
 Each installed module uses the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
 
 - A click on the body of a module opens the module. A click on one of its connectors opens the component, or the details, as for a connector of the device. The details name the module.
