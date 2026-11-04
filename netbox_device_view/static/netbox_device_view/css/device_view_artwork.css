@@ -98,6 +98,12 @@
     color: var(--tblr-warning-text-emphasis, var(--tblr-body-color));
 }
 
+/* A long warning wraps beside its icon, not under it. */
+.dv-art-warnings li {
+    display: flex;
+    gap: 0.25rem;
+}
+
 /* The marks take the colours of the NetBox theme; each mark also has its own pattern. */
 .dv-art-flood-cable-connected {
     flood-color: var(--tblr-success);
