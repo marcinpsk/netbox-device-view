@@ -255,6 +255,12 @@ class BindingRowForm(forms.Form):
         widget=forms.TextInput(attrs={"class": "form-control"}),
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A row shows no label, so each input takes the name of its column.
+        for field in self.fields.values():
+            field.widget.attrs["aria-label"] = field.label
+
     def clean(self):
         data = super().clean()
         if bool(data.get("component")) != bool(data.get("name")):

@@ -178,6 +178,17 @@ class AddTests(OverridePageTestCase):
         self.assertIn('name="binding-0-name"', page)
         self.assertIn('maxlength="64"', page)
 
+    def test_each_input_of_a_binding_row_has_a_name(self):
+        page = self.client.get(reverse(ADD_URL)).content.decode()
+        inputs = re.findall(r"<(?:select|input)[^>]*binding-[^>]*>", page)
+        # The first row, and the empty row that the script copies.
+        self.assertEqual(len([i for i in inputs if 'type="hidden"' not in i]), 4)
+        for tag in inputs:
+            if 'type="hidden"' in tag:
+                continue
+            label = "Component type" if "-component" in tag else "Name"
+            self.assertIn(f'aria-label="{label}"', tag)
+
     def test_a_module_type_and_an_installed_module_can_have_overrides(self):
         [imported] = import_bundle(
             User.objects.get(username="admin"),
