@@ -290,6 +290,28 @@ class LibraryCheckTests(SimpleTestCase):
             ],
         )
 
+    def test_a_link_on_the_path_of_a_community_type_is_a_problem(self):
+        outside = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        # The type behind each link lacks eth1, so a followed link gives a name problem.
+        write(outside, {"ACME/SW-24.yaml": {**SW_24, "interfaces": []}})
+        problem = (
+            "artwork/ACME/SW-24/manifest.yaml: The community type"
+            f" device-types/ACME/SW-24.yaml is {NOT_REGULAR}"
+        )
+        vendor = self.community / "device-types/ACME"
+        (vendor / "SW-24.yaml").unlink()
+        (vendor / "SW-24.yaml").symlink_to(outside / "ACME/SW-24.yaml")
+        self.assertEqual(self.check_names()[1], [problem])
+        shutil.rmtree(vendor)
+        vendor.symlink_to(outside / "ACME")
+        self.assertEqual(self.check_names()[1], [problem])
+
+    def test_a_linked_community_directory_is_followed(self):
+        linked = Path(self.enterContext(tempfile.TemporaryDirectory())) / "community"
+        linked.symlink_to(self.community)
+        _, problems = self.check(str(self.library), "--device-types", str(linked))
+        self.assertEqual(problems, [])
+
     def test_a_directory_without_layouts_or_artwork_is_an_error(self):
         summary, problems = self.check(str(self.library / "device-types"))
         self.assertEqual(problems, [".: no device-types/ or artwork/ directory."])
