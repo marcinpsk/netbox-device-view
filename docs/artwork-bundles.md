@@ -269,7 +269,7 @@ Each installed module uses the active revision of its own module type. The revis
 A list below the face shows these warnings:
 
 - The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. Correct the bay rect or the `viewBox`.
-- A value of the bay rect is not a finite number. The module does not show.
+- A value of the bay rect, or of the placement that the plugin computes from it, is not a finite number. The module shows as an outline when the bay rect is finite. Otherwise it does not show.
 - A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. Import the revision again.
 - A module is more than 8 modules deep: for example the ninth module in a chain of modules in bays of modules. It shows as an outline, and the modules in it do not show. The limit keeps the page below the nesting depth that browsers parse.
 - Two bays of a module definition name one module bay after `{module}` resolves, for example `Slot {module}` and `Slot 1` in a module at position 1. The module shows only in the first bay key, in sort order. The import cannot find this, because the names differ before NetBox resolves them.

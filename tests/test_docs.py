@@ -163,7 +163,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         revision=None,
         bay=None,
         rotate=0,
-        part_id="dv-a-d1-m1",
+        element_id="dv-a-d1-m1",
         prefix="",
         connectors=(),
         ids=frozenset(),

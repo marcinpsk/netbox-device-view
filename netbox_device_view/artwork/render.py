@@ -73,6 +73,11 @@ class WarningCode:
     TOO_DEEP = "too_deep"
 
 
+# A finite bay can still overflow: x + width, or the transforms of the parents.
+_PLACEMENT_NOT_FINITE = (
+    "the placement in bay {key} is not a finite number, so the module shows as an"
+    " outline."
+)
 # Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
 MAX_MODULE_DEPTH = 8
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
@@ -195,12 +200,12 @@ class PlacedModule:
     representation: str
     # The active revision of the module type, or None.
     revision: DefinitionRevision | None
-    # The bay in the coordinates of the device face; None when it is not finite and nothing is drawn.
+    # The bay in the coordinates of the device face; None when it is not finite.
     bay: Rect | None
     # The rotation from the module face to the device face.
     rotate: int
-    # The id of the group of the module, and the prefix of the ids of its face.
-    part_id: str
+    # The id of the group that draws the module, or None; and the prefix of the ids of its face.
+    element_id: str | None
     prefix: str
     connectors: tuple[Connector, ...]
     # The ids of the stored module face that the group draws, without the prefix.
@@ -210,10 +215,6 @@ class PlacedModule:
     @property
     def label(self):
         return part_label(self.module)
-
-    @property
-    def element_id(self) -> str | None:
-        return None if self.bay is None else self.part_id
 
     def connector_id(self, key) -> str | None:
         return self.prefix + key if key in self.ids else None
@@ -455,8 +456,8 @@ class _Composer:
         # The children come after their parent, so the parent takes this index.
         index = len(self.modules)
         bay = Rect(*(float(rect.get(name, "0")) for name in BAY_ATTRIBUTES))
-        absolute, drawn = None, None
-        if not all(map(math.isfinite, vars(bay).values())):
+        absolute, drawn, element_id = None, None, None
+        if not _finite(*vars(bay).values()):
             warn(
                 WarningCode.NOT_FINITE,
                 f"the bay {key} has a position or size that is not a finite number,"
@@ -464,8 +465,12 @@ class _Composer:
             )
         else:
             group = self.module_group(rect, inner.part_id, bay)
+            element_id = inner.part_id
             absolute = transform_rect(scope.matrix, bay)
-            if inner.depth > MAX_MODULE_DEPTH:
+            if not _finite(*vars(absolute).values()):
+                warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+                absolute = None
+            elif inner.depth > MAX_MODULE_DEPTH:
                 warn(
                     WarningCode.TOO_DEEP,
                     f"the module is more than {MAX_MODULE_DEPTH} modules deep, so it"
@@ -489,7 +494,7 @@ class _Composer:
                 revision=revision,
                 bay=absolute,
                 rotate=inner.rotate,
-                part_id=inner.part_id,
+                element_id=element_id,
                 prefix=prefix,
                 connectors=connectors,
                 ids=ids,
@@ -530,6 +535,14 @@ class _Composer:
         child, elements = _parse_face(data[face], prefix)
         view_box = parse_view_box(child.get("viewBox").strip())
         placement = place(view_box, bay, rotate)
+        nested = (
+            None
+            if placement.matrix is None
+            else multiply(scope.matrix, placement.matrix)
+        )
+        if nested is None or not _finite(*nested):
+            warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+            return None
         if placement.size_mismatch:
             warn(
                 WarningCode.SIZE_MISMATCH,
@@ -537,13 +550,7 @@ class _Composer:
                 f" {_number(placement.size[1])} mm, but the bay {key} is"
                 f" {_number(bay.width)} × {_number(bay.height)} mm.",
             )
-        self.compose(
-            child,
-            elements,
-            revision,
-            face,
-            replace(scope, matrix=multiply(scope.matrix, placement.matrix)),
-        )
+        self.compose(child, elements, revision, face, replace(scope, matrix=nested))
         if not self.plain:
             drawn = [c for c in connectors if c.face == face]
             _mark_connectors(
@@ -618,6 +625,10 @@ class _Composer:
             },
         )
         text.text = name
+
+
+def _finite(*values) -> bool:
+    return all(map(math.isfinite, values))
 
 
 def _number(value) -> str:
