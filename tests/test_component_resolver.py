@@ -452,6 +452,12 @@ class TypedLookupTests(ResolverTestBase):
     def test_a_module_binding_does_not_find_device_components(self):
         self.assertEqual(self._found(Interface, "Gi1", self.module), [])
 
+    def test_the_name_of_the_module_of_a_component_needs_no_query(self):
+        # The details of each port name its module.
+        [state] = find(self._states(), Interface, "Te1/{module}/1", self.module)
+        with self.assertNumQueries(0):
+            self.assertEqual(str(state.component.module), str(self.module))
+
     def test_a_name_with_more_module_tokens_than_bay_levels_finds_nothing(self):
         # NetBox raises ValueError when the token count does not fit the depth.
         self.assertEqual(self._found(Interface, "Te{module}/{module}", self.module), [])
