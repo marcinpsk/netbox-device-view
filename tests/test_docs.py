@@ -64,6 +64,7 @@ MIB = 1024 * 1024
         f"The import shows at most {limits.MAX_ISSUES} errors.",
         f"An override has the schema of the `bindings` of a manifest connector: 0 to {MAX_BINDINGS} bindings",
         f"the bay differ by more than {placement.SIZE_TOLERANCE} mm. The module still shows.",
+        f"A module is more than {render.MAX_MODULE_DEPTH} modules deep",
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):
@@ -180,5 +181,10 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         render.NOT_FINITE,
         render.DAMAGED_ARTWORK,
         render.DUPLICATE_BAY,
+        render.TOO_DEEP,
     }
+    assert (
+        f"more than {render.MAX_MODULE_DEPTH} modules deep on its placement path"
+        in text
+    )
     assert f"differ by more than {placement.SIZE_TOLERANCE} mm" in text

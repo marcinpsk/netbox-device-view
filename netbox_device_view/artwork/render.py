@@ -65,6 +65,9 @@ SIZE_MISMATCH = "size_mismatch"
 NOT_FINITE = "placement_not_finite"
 DAMAGED_ARTWORK = "damaged_artwork"
 DUPLICATE_BAY = "duplicate_bay"
+TOO_DEEP = "too_deep"
+# Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
+MAX_MODULE_DEPTH = 8
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
 OVERVIEW = "o"
 API = "a"
@@ -326,6 +329,8 @@ class _Scope:
     # From the face coordinates of the part to the device face.
     matrix: tuple
     rotate: int
+    # The number of modules on the placement path: 0 for the device.
+    depth: int
 
 
 class _Composer:
@@ -381,7 +386,7 @@ class _Composer:
         self.outline = max(view_box[2:]) * _OUTLINE
         first = len(self.modules)
         self.compose(
-            root, elements, revision, face, _Scope(None, part_id, face, IDENTITY, 0)
+            root, elements, revision, face, _Scope(None, part_id, face, IDENTITY, 0, 0)
         )
         placed = self.modules[first:]
         connectors = [c for c in connectors if c.face == face]
@@ -435,6 +440,7 @@ class _Composer:
             scope.face,
             scope.matrix,
             (scope.rotate + rotate) % 360,
+            scope.depth + 1,
         )
         connectors = () if revision is None else self.connectors(revision, module)
         placed = functools.partial(
@@ -487,10 +493,17 @@ class _Composer:
             top = top.getparent()
         top.addnext(group)
         absolute = transform_rect(scope.matrix, bay)
-        data = None if revision is None else self.face_data(revision)
+        too_deep = inner.depth > MAX_MODULE_DEPTH
+        data = None if revision is None or too_deep else self.face_data(revision)
         if data is None:
             warnings = ()
-            if revision is not None:
+            if too_deep:
+                message = (
+                    f"{label}: the module is more than {MAX_MODULE_DEPTH} modules"
+                    " deep, so it shows as an outline."
+                )
+                warnings = (ArtworkWarning(TOO_DEEP, message),)
+            elif revision is not None:
                 message = (
                     f"{label}: a stored file of the active {revision.definition.key}"
                     " revision is missing or does not match its digest. Import the"
