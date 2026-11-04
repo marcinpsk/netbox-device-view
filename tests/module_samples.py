@@ -161,7 +161,7 @@ class Inventory:
                 ("NM 2", "2"),
                 ("PSU", "1"),
                 ("FAN", "1"),
-                ("Spare", "1"),
+                ("Spare", "3"),
             )
         }
         self.nm1 = self.install(bays["NM 1"], self.nm_type)

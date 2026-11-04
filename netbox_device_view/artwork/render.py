@@ -41,7 +41,7 @@ from ..details import (
     resolution,
 )
 from ..models import Association, DefinitionRevision
-from .overrides import connector_bindings
+from .overrides import connector_bindings, part_overrides
 from .placement import Rect, place, transform_rect
 from .storage import DamagedBlob, read_blob
 from .svg import (
@@ -336,12 +336,13 @@ class _Composer:
         self.revisions = active_revisions(
             {module.module_type_id for module in modules}, "module_type"
         )
+        self.overrides = part_overrides([device, *modules])
         self.faces = {}
         self.modules = []
 
     def connectors(self, revision, part) -> tuple[Connector, ...]:
         """Return the connectors of ``revision`` for a device or an installed module."""
-        bindings = connector_bindings(revision, part)
+        bindings = connector_bindings(revision, part, self.overrides)
         module = part if isinstance(part, Module) else None
         return tuple(
             _connector(key, item, bindings[key], self.states, module)
