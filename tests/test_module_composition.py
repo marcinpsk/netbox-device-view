@@ -1,6 +1,7 @@
 """The Device View tab draws each installed module in the bay of its parent, bound to the components of that module."""
 
 import copy
+import io
 import re
 import shutil
 import tempfile
@@ -21,10 +22,13 @@ from django.urls import reverse
 from lxml import etree
 from users.models import ObjectPermission, User
 
+from netbox_device_view.artwork import activation
+from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.details import details_id
 
-from .module_samples import CHASSIS_SVG, NM_SVG, Inventory
+from .artwork_samples import bundle, definition
+from .module_samples import CHASSIS_SVG, NM_MANIFEST, NM_SVG, Inventory
 from .permissions import grant
 from .test_artwork_device_view import SVG_NS, TAB_URL, faces, ids, links, references
 
@@ -80,6 +84,17 @@ def clip_rect(face, group):
 def art(group):
     """Return the group that holds the placed child face."""
     return group.find(f"{G}[@transform]")
+
+
+def warnings(content):
+    """Return the text of each item of the warning lists of a page."""
+    return [
+        " ".join(re.sub(r"<[^>]+>", " ", item).split())
+        for listing in re.findall(
+            r'<ul class="dv-art-warnings[^"]*"[^>]*>(.*?)</ul>', content, re.DOTALL
+        )
+        for item in re.findall(r"<li>(.*?)</li>", listing, re.DOTALL)
+    ]
 
 
 class PlacementTests(CompositionTestCase):
@@ -237,15 +252,6 @@ class VisibilityTests(CompositionTestCase):
 
 
 class WarningTests(CompositionTestCase):
-    def warnings(self, content):
-        return [
-            " ".join(re.sub(r"<[^>]+>", " ", item).split())
-            for listing in re.findall(
-                r'<ul class="dv-art-warnings[^"]*"[^>]*>(.*?)</ul>', content, re.DOTALL
-            )
-            for item in re.findall(r"<li>(.*?)</li>", listing, re.DOTALL)
-        ]
-
     def test_a_size_mismatch_is_a_warning_and_the_module_shows(self):
         self.store_face(
             "acme/ch-4",
@@ -256,7 +262,7 @@ class WarningTests(CompositionTestCase):
         )
         content = self.tab()
         self.assertEqual(
-            self.warnings(content),
+            warnings(content),
             [
                 (
                     "ACME NM-2X in NM 2: the artwork is 100 × 30 mm, but the bay"
@@ -272,7 +278,7 @@ class WarningTests(CompositionTestCase):
         )
         content = self.tab()
         self.assertEqual(
-            self.warnings(content),
+            warnings(content),
             [
                 (
                     "ACME NM-2X in NM 2: the bay bay-nm2 has a position or size that"
@@ -298,10 +304,10 @@ class WarningTests(CompositionTestCase):
             body = self.group(front, module).find(f"{{{SVG_NS}}}a")
             self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
         self.assertEqual(
-            [warning.split(":")[0] for warning in self.warnings(content)],
+            [warning.split(":")[0] for warning in warnings(content)],
             ["ACME NM-2X in NM 1", "ACME NM-2X in NM 2"],
         )
-        self.assertIn("a stored file", self.warnings(content)[0])
+        self.assertIn("a stored file", warnings(content)[0])
 
 
 class DevicePagePanelTests(CompositionTestCase):
@@ -326,3 +332,40 @@ class QueryTests(CompositionTestCase):
             content = self.tab()
         self.assertEqual(content.count('class="dv-art-module-art"'), 5)
         self.assertEqual(len(after), len(before))
+
+
+def activate_alias_revision(test):
+    """Activate a network module revision whose bays bay-alias and bay-slot both name Slot 1 in NM 1."""
+    # The import compares the names before {module} resolves, so it cannot see this.
+    bay = '  bay-slot: {face: installed, module_bay: "Slot {module}"}'
+    files = {
+        "manifest.yaml": NM_MANIFEST.replace(
+            bay, f'  bay-alias: {{face: installed, module_bay: "Slot 1"}}\n{bay}'
+        ),
+        "installed.svg": NM_SVG.replace(
+            '<rect id="bay-slot"',
+            '<rect id="bay-alias" x="60" y="10" width="14" height="10"/>\n'
+            '  <rect id="bay-slot"',
+        ),
+    }
+    [imported] = import_bundle(
+        test.admin, "alias.zip", io.BytesIO(bundle(definition("NM", files)))
+    )
+    activation.activate(test.admin, imported.revision, test.inventory.nm_type)
+
+
+class DuplicateBayTests(CompositionTestCase):
+    def test_two_bays_that_resolve_to_one_module_bay_draw_the_module_once(self):
+        activate_alias_revision(self)
+        content = self.tab()
+        front = faces(content)[0]
+        every_id = ids(front)
+        self.assertEqual(len(every_id), len(set(every_id)))
+        path = (self.inventory.nm1, self.inventory.sfp)
+        [sfp] = front.findall(f".//{G}[@id='{self.part_id(*path)}']")
+        self.assertEqual(clip_rect(front, sfp), ("60", "10", "14", "10"))
+        self.assertIn(
+            "ACME SFP-10G in Slot 1: the bays bay-alias and bay-slot map to the module"
+            " bay Slot 1, so the module shows only in bay-alias.",
+            warnings(content),
+        )

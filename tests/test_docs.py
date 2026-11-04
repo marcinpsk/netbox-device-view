@@ -179,5 +179,6 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         render.SIZE_MISMATCH,
         render.NOT_FINITE,
         render.DAMAGED_ARTWORK,
+        render.DUPLICATE_BAY,
     }
     assert f"differ by more than {placement.SIZE_TOLERANCE} mm" in text

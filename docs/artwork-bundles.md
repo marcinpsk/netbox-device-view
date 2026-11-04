@@ -270,6 +270,7 @@ A list below the face shows these warnings:
 - The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. Correct the bay rect or the `viewBox`.
 - A value of the bay rect is not a finite number. The module does not show.
 - A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. Import the revision again.
+- Two bays of a module definition name one module bay after `{module}` resolves, for example `Slot {module}` and `Slot 1` in a module at position 1. The module shows only in the first bay key, in sort order. The import cannot find this, because the names differ before NetBox resolves them.
 
 The [artwork API](artwork-api.md#module) gives each placed module and its warnings.
 
