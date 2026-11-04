@@ -154,7 +154,7 @@ The page links a connector to its component only when exactly one binding has `s
 | `status` | string | `"found"`, or `"missing"` when the device has no component of that type and name that the user can view. A component that the user cannot view is missing. |
 | `object_type` | string | `app_label.model_name` of the bound type, for example `"dcim.interface"` or `"dcim.powerport"`. Set for a missing binding too. |
 | `object_id` | int \| null | The component. `null` when missing. |
-| `name` | string | The component name. For a missing binding, the name in the binding list. |
+| `name` | string | The component name. For a missing binding, the name in the binding list. For a connector of a module, the name in which `{module}` resolves as NetBox names the components of that module. |
 | `enabled` | bool \| null | The administrative state of an interface. `null` for the other types, which have no `enabled` field. |
 | `cable_status` | string \| null | The status of the cable that the user can view: `"connected"`, `"planned"` or `"decommissioning"`. `null` without a cable, or with a cable that the user cannot view. |
 | `cable_color` | string \| null | As in a [rendered-layout hotspot](rendered-layout-api.md#hotspot). |
