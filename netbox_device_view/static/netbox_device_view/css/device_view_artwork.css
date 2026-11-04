@@ -86,6 +86,40 @@
     flood-color: var(--bs-primary, #0d6efd);
 }
 
+/* A click on the artwork of a module goes through to its body link, except on a connector or a module inside it. */
+.dv-art-module-art {
+    pointer-events: none;
+}
+
+.dv-art-module-body {
+    cursor: pointer;
+}
+
+.dv-art-module-body rect {
+    pointer-events: all;
+}
+
+.dv-art-module-body:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: 1px;
+}
+
+/* A module without artwork: an outline of its bay with the name of its type. */
+.dv-art-schematic rect {
+    fill: var(--tblr-bg-surface-secondary);
+    stroke: var(--tblr-secondary);
+}
+
+.dv-art-schematic text {
+    fill: var(--tblr-body-color);
+}
+
+.dv-art-warnings {
+    padding: 0.25rem 0.5rem;
+    border-top: 1px solid var(--bs-border-color, #dee2e6);
+    color: var(--tblr-warning-text-emphasis, var(--tblr-body-color));
+}
+
 /* The marks take the colours of the NetBox theme; each mark also has its own pattern. */
 .dv-art-flood-cable-connected {
     flood-color: var(--tblr-success);
