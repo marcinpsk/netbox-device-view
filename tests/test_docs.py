@@ -113,7 +113,7 @@ def test_artwork_api_page_states_the_values_of_the_code():
         for value in (
             device_artwork.ARTWORK,
             device_artwork.LAYOUT,
-            render.SCHEMATIC,
+            device_artwork.SCHEMATIC,
             device_artwork.UNAVAILABLE,
         )
     )
@@ -159,7 +159,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         parent=None,
         bay_key="bay-nm",
         face="front",
-        representation=render.SCHEMATIC,
+        representation=render.OUTLINE,
         revision=None,
         bay=None,
         rotate=0,

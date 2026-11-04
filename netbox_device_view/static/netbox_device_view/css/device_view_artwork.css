@@ -83,12 +83,12 @@
 }
 
 /* A module without artwork: an outline of its bay with the name of its type. */
-.dv-art-schematic rect {
+.dv-art-outline rect {
     fill: var(--tblr-bg-surface-secondary);
     stroke: var(--tblr-secondary);
 }
 
-.dv-art-schematic text {
+.dv-art-outline text {
     fill: var(--tblr-body-color);
 }
 

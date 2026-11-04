@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 LAYOUT = "layout"
 UNAVAILABLE = "unavailable"
+# Reserved for a generic schematic (#47); no member gets it yet.
+SCHEMATIC = "schematic"
 # The ComponentState facts that a binding gives as they are.
 _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_complete")
 
