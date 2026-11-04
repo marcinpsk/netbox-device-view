@@ -526,15 +526,7 @@ class VisualDefinitionView(generic.ObjectView):
     actions = (EditObject,)
 
     def get_extra_context(self, request, instance):
-        return {
-            "revisions": instance.revisions.restrict(request.user, "view"),
-            "binding_overrides": [
-                (override, binding_labels(override.bindings))
-                for override in instance.binding_overrides.restrict(
-                    request.user, "view"
-                ).select_related(*models.OVERRIDE_RELATIONS)
-            ],
-        }
+        return {"revisions": instance.revisions.restrict(request.user, "view")}
 
 
 class VisualDefinitionEditView(generic.ObjectEditView):

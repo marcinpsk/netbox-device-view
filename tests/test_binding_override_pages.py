@@ -1,5 +1,6 @@
 """Operators add, change and remove binding overrides on the plugin pages."""
 
+import html
 import io
 import re
 
@@ -571,18 +572,57 @@ class ListAndDetailTests(OverridePageTestCase):
             200,
         )
 
-    def test_the_definition_page_lists_the_overrides_that_the_user_can_view(self):
+    def embedded_overrides(self, **params):
+        """Return the definition page and the override table that it embeds."""
         grant(self.user, VisualDefinition, "view")
+        definition = self.revision.definition
+        page = self.client.get(reverse(DEFINITION_URL, args=[definition.pk]))
+        [url] = [
+            html.unescape(url)
+            for url in re.findall(r'hx-get="([^"]*)"', page.content.decode())
+            if url.startswith(f"{reverse(LIST_URL)}?")
+        ]
+        self.assertIn("embedded=True", url)
+        self.assertIn(f"definition_id={definition.pk}", url)
+        query = "".join(f"&{name}={value}" for name, value in params.items())
+        table = self.client.get(url + query, HTTP_HX_REQUEST="true")
+        return page.content.decode(), table.content.decode()
+
+    def test_the_definition_page_lists_the_overrides_that_the_user_can_view(self):
         ObjectPermission.objects.filter(
             name__startswith="netbox_device_view.bindingoverride"
         ).update(constraints={"device__isnull": True})
 
-        content = self.client.get(
-            reverse(DEFINITION_URL, args=[self.revision.definition_id])
-        ).content.decode()
+        page, table = self.embedded_overrides()
 
-        self.assertIn(self.type_override.get_absolute_url(), content)
-        self.assertNotIn(self.device_override.get_absolute_url(), content)
+        self.assertNotIn(self.type_override.get_absolute_url(), page)
+        self.assertIn(self.type_override.get_absolute_url(), table)
+        self.assertNotIn(self.device_override.get_absolute_url(), table)
+
+    def test_the_definition_page_shows_the_overrides_one_page_at_a_time(self):
+        overrides = [self.type_override, self.device_override]
+        for scope, key in (
+            ({"device_type": self.device_type}, "con-psu"),
+            ({"device_type": self.device_type}, "con-r1"),
+            ({"device_type": self.device_type}, "con-f1"),
+            ({"device": self.sw2}, "con-eth1"),
+            ({"device": self.sw2}, "con-r1"),
+            ({"device": self.sw2}, "con-f1"),
+        ):
+            overrides.append(
+                BindingOverride.objects.create(
+                    **scope,
+                    definition=self.revision.definition,
+                    connector_key=key,
+                    bindings=[],
+                )
+            )
+
+        # NetBox moves a last page of up to 5 rows onto the page before it.
+        _, table = self.embedded_overrides(per_page=1)
+
+        shown = [o for o in overrides if f'href="{o.get_absolute_url()}"' in table]
+        self.assertEqual(len(shown), 1)
 
     def test_the_menu_links_the_overrides_for_a_user_who_can_view_them(self):
         page = self.client.get(self.device.get_absolute_url())
