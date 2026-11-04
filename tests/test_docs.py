@@ -63,6 +63,7 @@ MIB = 1024 * 1024
         f"| Data Source files | {limits.MAX_MEMBERS} and {limits.MAX_EXPANDED_BYTES // MIB} MiB below the prefix |",
         f"The import shows at most {limits.MAX_ISSUES} errors.",
         f"An override has the schema of the `bindings` of a manifest connector: 0 to {MAX_BINDINGS} bindings",
+        f"the bay differ by more than {placement.SIZE_TOLERANCE} mm. The module still shows.",
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):
