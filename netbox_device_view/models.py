@@ -274,6 +274,19 @@ SCOPES = {
     )
 }
 SCOPE_FIELDS = tuple(SCOPES)
+# The type field of an association for each definition kind.
+TYPE_FIELDS = {spec.definition_kind: spec.type_field for spec in SCOPES.values()}
+
+
+def type_field(hardware_type) -> str:
+    """Return the field of an association that holds ``hardware_type``: device_type or module_type."""
+    return next(
+        field
+        for field in TYPE_FIELDS.values()
+        if isinstance(hardware_type, SCOPES[field].model)
+    )
+
+
 # The objects that the label and the type lock of an override read.
 OVERRIDE_RELATIONS = (
     "device_type__manufacturer",

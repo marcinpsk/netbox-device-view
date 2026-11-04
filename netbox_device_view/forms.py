@@ -23,10 +23,18 @@ from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
 from .artwork import overrides
-from .artwork.manifest import BINDING_COMPONENTS, MAX_BINDING_NAME_LENGTH, MAX_BINDINGS
+from .artwork.manifest import (
+    BINDING_COMPONENTS,
+    DEVICE_KIND,
+    MAX_BINDING_NAME_LENGTH,
+    MAX_BINDINGS,
+    MODULE_KIND,
+)
 from .components import BINDING_MODELS
 from .models import (
     SCOPE_FIELDS,
+    SCOPES,
+    TYPE_FIELDS,
     Association,
     BindingOverride,
     DeviceView,
@@ -201,23 +209,44 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
         fields = ("key_owner",)
 
 
-class ActivateRevisionForm(forms.Form):
-    device_type = DynamicModelChoiceField(
-        queryset=DeviceType.objects.all(),
-        label=_("Device type"),
-        help_text=_("The Device View of every device of this type shows the revision."),
-    )
+_ACTIVATION_HELP = {
+    DEVICE_KIND: _("The Device View of every device of this type shows the revision."),
+    MODULE_KIND: _(
+        "Every installed module of this type shows the revision in the bay of its"
+        " device."
+    ),
+}
 
-    def __init__(self, *args, user, **kwargs):
+
+class ActivateRevisionForm(forms.Form):
+    """The one type field of the revision's kind: a device type, or a module type."""
+
+    def __init__(self, *args, user, kind, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["device_type"].queryset = DeviceType.objects.restrict(user, "view")
+        self.type_field = TYPE_FIELDS[kind]
+        model = SCOPES[self.type_field].model
+        self.fields[self.type_field] = DynamicModelChoiceField(
+            queryset=model.objects.restrict(user, "view"),
+            label=capfirst(model._meta.verbose_name),
+            help_text=_ACTIVATION_HELP[kind],
+        )
+
+    @property
+    def hardware_type(self):
+        return self.cleaned_data[self.type_field]
 
 
 class AssociationFilterForm(SavedFiltersMixin, FilterForm):
     model = Association
-    fieldsets = (FieldSet("q", "filter_id"), FieldSet("device_type_id"))
+    fieldsets = (
+        FieldSet("q", "filter_id"),
+        FieldSet("device_type_id", "module_type_id", name=_("Type")),
+    )
     device_type_id = DynamicModelMultipleChoiceField(
         queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+    )
+    module_type_id = DynamicModelMultipleChoiceField(
+        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
     )
 
 
