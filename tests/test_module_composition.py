@@ -346,6 +346,31 @@ class WarningTests(CompositionTestCase):
         self.assertIsNotNone(self.group(front, self.inventory.nm1))
         self.assertNotIn("inf", etree.tostring(front, encoding="unicode"))
 
+    def test_a_finite_bay_with_a_placement_that_is_not_finite_shows_an_outline(self):
+        # The right edge x + width overflows to infinity.
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace(
+                'x="320" y="7" width="100"', 'x="1e308" y="7" width="1e308"'
+            ),
+        )
+        content = self.tab()
+        self.assertEqual(
+            warnings(content),
+            [
+                (
+                    "ACME NM-2X in NM 2: the placement in bay bay-nm2 is not a finite"
+                    " number, so the module shows as an outline."
+                )
+            ],
+        )
+        front = faces(content)[0]
+        [body] = self.group(front, self.inventory.nm2).findall(f"{{{SVG_NS}}}a")
+        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
+        self.assertEqual(body.get("href"), self.inventory.nm2.get_absolute_url())
+        self.assertNotIn("inf", etree.tostring(front, encoding="unicode"))
+
     def test_damaged_module_artwork_is_an_outline_with_a_warning(self):
         revision = self.inventory.revisions["acme/nm-2x"]
         blob = revision.files.get(path="installed.svg").blob

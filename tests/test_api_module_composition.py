@@ -176,6 +176,30 @@ class ModuleWarningTests(ModuleApiTestCase):
         )
         self.assertEqual(nm2["representation"], "artwork")
 
+    def test_a_finite_bay_with_a_placement_that_is_not_finite_is_an_outline(self):
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace(
+                'x="320" y="7" width="100"', 'x="1e308" y="7" width="1e308"'
+            ),
+        )
+        nm2 = self.modules()[self.inventory.nm2.pk]
+        self.assertEqual(
+            (
+                nm2["representation"],
+                nm2["placement"],
+                nm2["element_id"],
+                [warning["code"] for warning in nm2["warnings"]],
+            ),
+            (
+                "outline",
+                None,
+                f"dv-a-d{self.device.pk}-m{self.inventory.nm2.pk}",
+                ["placement_not_finite"],
+            ),
+        )
+
     def test_a_module_that_is_not_drawn_has_no_placement_or_element(self):
         self.store_face(
             "acme/ch-4", "front.svg", CHASSIS_SVG.replace('x="320"', 'x="1e999"')
