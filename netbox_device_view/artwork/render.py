@@ -63,6 +63,7 @@ SCHEMATIC = "schematic"
 SIZE_MISMATCH = "size_mismatch"
 NOT_FINITE = "placement_not_finite"
 DAMAGED_ARTWORK = "damaged_artwork"
+DUPLICATE_BAY = "duplicate_bay"
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
 OVERVIEW = "o"
 API = "a"
@@ -368,6 +369,8 @@ class _Composer:
 
     def compose(self, root, elements, revision, face, scope):
         """Draw the installed module of each bay of ``revision`` on ``face`` into ``root``."""
+        # {module bay name: bay keys}; with {module}, two keys can name one module bay.
+        mapped = {}
         for key, item in sorted(revision.manifest["bays"].items()):
             # A bay in title or desc is not drawn.
             if item["face"] != face or key not in elements:
@@ -375,14 +378,20 @@ class _Composer:
             name = item["module_bay"]
             if scope.module is not None:
                 name = resolve_name(ModuleBay, name, scope.module)
-            owner = None if scope.module is None else scope.module.pk
+            mapped.setdefault(name, []).append(key)
+        owner = None if scope.module is None else scope.module.pk
+        for name, (key, *others) in mapped.items():
             module = self.installed.get((owner, name))
             # An empty bay draws nothing more: the parent artwork shows the slot.
             if module is not None:
-                self.place(elements[key], key, item["rotate"], module, scope)
+                rotate = revision.manifest["bays"][key]["rotate"]
+                self.place(elements[key], key, rotate, module, scope, others)
 
-    def place(self, rect, key, rotate, module, scope):
-        """Draw ``module`` over the bay ``rect`` of ``scope``, and its own bays inside it."""
+    def place(self, rect, key, rotate, module, scope, others=()):
+        """Draw ``module`` over the bay ``rect`` of ``scope``, and its own bays inside it.
+
+        ``others`` are the later bay keys that name the same module bay; they draw nothing.
+        """
         revision = self.revisions.get(module.module_type_id)
         inner = _Scope(
             module,
@@ -404,6 +413,13 @@ class _Composer:
             connectors=connectors,
         )
         label = part_label(module)
+        duplicate = ()
+        if others:
+            message = (
+                f"{label}: the bays {key} and {', '.join(others)} map to the module"
+                f" bay {module.module_bay.name}, so the module shows only in {key}."
+            )
+            duplicate = (ArtworkWarning(DUPLICATE_BAY, message),)
         bay = Rect(*(float(rect.get(name, "0")) for name in _BAY_ATTRIBUTES))
         if not all(map(math.isfinite, vars(bay).values())):
             message = (
@@ -416,7 +432,7 @@ class _Composer:
                     bay=None,
                     prefix="",
                     ids=frozenset(),
-                    warnings=(ArtworkWarning(NOT_FINITE, message),),
+                    warnings=(*duplicate, ArtworkWarning(NOT_FINITE, message)),
                 )
             )
             return
@@ -446,7 +462,7 @@ class _Composer:
                     bay=absolute,
                     prefix="",
                     ids=frozenset(),
-                    warnings=warnings,
+                    warnings=(*duplicate, *warnings),
                 )
             )
             self.outline_part(group, bay, module)
@@ -470,7 +486,7 @@ class _Composer:
                 bay=absolute,
                 prefix=prefix,
                 ids=frozenset(elements),
-                warnings=warnings,
+                warnings=(*duplicate, *warnings),
             )
         )
         self.compose(
