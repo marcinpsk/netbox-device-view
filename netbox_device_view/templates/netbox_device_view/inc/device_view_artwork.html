@@ -23,7 +23,8 @@
 						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="in" aria-label="{% trans 'Zoom in' %}"><i class="mdi mdi-plus" aria-hidden="true"></i></button>
 					</div>
 				</div>
-				<div class="dv-art-viewport" data-zoom="1">{{ face.svg }}</div>
+				{# A scroll area takes keyboard focus, so a keyboard can scroll a zoomed face without a link in it. #}
+				<div class="dv-art-viewport" data-zoom="1" tabindex="0" role="group" aria-label="{% blocktrans with face=face.label %}Artwork of the {{ face }} face{% endblocktrans %}">{{ face.svg }}</div>
 			</div>
 		</div>
 		{% endfor %}
