@@ -103,7 +103,7 @@ LEGEND = (
 
 @dataclass(frozen=True)
 class Binding:
-    # The component model and name that the manifest binds.
+    # The component model and name that the binding list gives, with {module} resolved for a module.
     model: type
     name: str
     status: str
@@ -576,11 +576,15 @@ def _connector(key, item, resolved, states, module=None) -> Connector:
     for binding in resolved:
         model = BINDING_MODELS[binding["component"]]
         found = find(states, model, binding["name"], module)
+        # The page and the API name what NetBox calls the component of this module.
+        name = binding["name"]
+        if module is not None:
+            name = resolve_name(model, name, module) or name
         # A component name is unique per type on one device, so one match at most.
         bindings.append(
-            Binding(model, binding["name"], FOUND, found[0])
+            Binding(model, name, FOUND, found[0])
             if found
-            else Binding(model, binding["name"], MISSING, None)
+            else Binding(model, name, MISSING, None)
         )
     return Connector(key, item["face"], item.get("label"), tuple(bindings))
 

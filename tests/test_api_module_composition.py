@@ -118,6 +118,16 @@ class ModuleEntryTests(ModuleApiTestCase):
         )
 
 
+class MissingBindingTests(ModuleApiTestCase):
+    def test_a_missing_binding_of_a_module_gives_the_name_that_netbox_resolves(self):
+        self.inventory.interface(self.inventory.nm2, "TenGigabitEthernet1/2/1").delete()
+        [p1] = self.modules()[self.inventory.nm2.pk]["connectors"]
+        self.assertEqual(
+            [(b["status"], b["name"]) for b in p1["bindings"]],
+            [("missing", "TenGigabitEthernet1/2/1")],
+        )
+
+
 class FaceAgreementTests(ModuleApiTestCase):
     def test_each_element_id_is_in_the_plain_face(self):
         artwork = self.artwork()
