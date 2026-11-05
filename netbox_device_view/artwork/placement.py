@@ -1,4 +1,4 @@
-"""Place a child face in a bay: at true scale, rotated by a multiple of 90 degrees."""
+"""Place a child face in a bay: at true scale, rotated by a multiple of 90 degrees, or scaled to fit a schematic slot."""
 
 import math
 from dataclasses import dataclass
@@ -65,3 +65,22 @@ def transform_rect(matrix, rect: Rect) -> Rect:
     ]
     xs, ys = [x for x, _ in points], [y for _, y in points]
     return Rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+def fit(view_box, cell: Rect) -> Placement:
+    """Scale the child viewBox uniformly to fit ``cell``, and centre it there."""
+    min_x, min_y, width, height = view_box
+    scale = min(cell.width / width, cell.height / height)
+    matrix = (
+        scale,
+        0,
+        0,
+        scale,
+        cell.x + (cell.width - width * scale) / 2 - min_x * scale,
+        cell.y + (cell.height - height * scale) / 2 - min_y * scale,
+    )
+    return Placement(
+        matrix=matrix if all(map(math.isfinite, matrix)) else None,
+        size=(width, height),
+        size_mismatch=False,
+    )
