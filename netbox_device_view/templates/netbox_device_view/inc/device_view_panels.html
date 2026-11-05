@@ -1,28 +1,30 @@
-{# The panels of a device view. utils.device_view_context() gives the context and the state of every port. #}
-{% if artwork_parts %}
+{# The panels of a device view, one per member in rack order. utils.device_view_context() gives the context and the state of every port. #}
+{% load i18n %}
+{% for panel in device_panels %}
+{% if panel.part %}
 {# Outside spaceless: it would remove the spaces between the tspan elements of the artwork. #}
-{% include 'netbox_device_view/inc/device_view_artwork.html' %}
+{% include 'netbox_device_view/inc/device_view_artwork.html' with part=panel.part %}
 {% else %}
-<div class="dv-layout" data-dv-details-scope>
-{% if not layout_error %}<div class="dv-layout-toolbar">{% include 'netbox_device_view/inc/details_toggle.html' %}</div>{% endif %}
+<div class="dv-layout{% if chassis and panel.current %} active-device{% endif %}" data-dv-details-scope>
+{% if chassis %}{% include 'netbox_device_view/inc/member_label.html' %}{% endif %}
+{% if not panel.layout_error %}<div class="dv-layout-toolbar">{% include 'netbox_device_view/inc/details_toggle.html' %}</div>{% endif %}
 {% spaceless %}
-{% if layout_error %}
-{% include 'netbox_device_view/inc/layout_error.html' %}
-{% elif use_svg %}
-{% for panel_pos, svg_markup, panel_details in svg_panels %}
-<p class="text-muted small mb-1">Device {{ panel_pos }}</p>
-<div class="dv-svg-wrapper{% if panel_pos == active_panel %} active-device{% endif %}"
-	id="dv-svg-wrapper-{{ panel_pos }}"
-	data-device="{{ panel_pos }}">
-	{% autoescape off %}{{ svg_markup }}{% endautoescape %}
+{% if panel.layout_error %}
+{% include 'netbox_device_view/inc/layout_error.html' with layout_error=panel.layout_error %}
+{% elif panel.use_svg %}
+{% if panel.svg %}
+<div class="dv-svg-wrapper"
+	id="dv-svg-wrapper-{{ panel.key }}"
+	data-device="{{ panel.key }}">
+	{% autoescape off %}{{ panel.svg }}{% endautoescape %}
 </div>
-{% for details in panel_details %}{% include 'netbox_device_view/inc/connector_details.html' %}{% endfor %}
-{% endfor %}
+{% for details in panel.details %}{% include 'netbox_device_view/inc/connector_details.html' %}{% endfor %}
+{% endif %}
 {% else %}
-{% for switch, cells in ports_chassis.items %} Device
-{{switch}}
+{% for switch, cells in panel.grids.items %}{% if not chassis %} Device
+{{switch}}{% endif %}
 <div
-	class="deviceview area d{{switch}}{% if switch == active_panel %} active-device{% endif %}{% for sw, modules in modules.items %}{% if sw == switch %}{% for module in modules %} module{{module.module_type.model}}{% endfor %}{% endif %}{% endfor %}"
+	class="deviceview area d{{switch}}{% for module in panel.modules %} module{{module.module_type.model}}{% endfor %}"
 >
 	{% for cell in cells %}
 	<a
@@ -44,6 +46,13 @@
 {% endif %}
 {% endspaceless %}
 </div>
+{% endif %}
+{% endfor %}
+{% if uses_artwork %}
+{# Each mark has a pattern, so no fact depends on colour alone; each connector title names every fact. #}
+<ul class="dv-art-legend list-unstyled small text-muted mb-0" aria-label="{% trans 'Connector marks' %}">
+	{% for label, swatch in artwork_legend %}<li>{{ swatch }} {{ label }}</li>{% endfor %}
+</ul>
 {% endif %}
 
 {% include 'netbox_device_view/inc/device_view_details.html' %}

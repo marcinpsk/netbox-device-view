@@ -1,0 +1,3 @@
+{# The label of a virtual chassis member: ``panel`` is a utils.MemberPanel. #}
+{% load i18n %}
+<p class="dv-member-label text-muted small mb-1"><a href="{% url 'dcim:device_deviceview' pk=panel.device.pk %}"{% if panel.current %} aria-current="page"{% endif %}>{{ panel.device }}</a>{% if panel.device.vc_position is not None %} · {% blocktrans with position=panel.device.vc_position %}position {{ position }}{% endblocktrans %}{% endif %}</p>
