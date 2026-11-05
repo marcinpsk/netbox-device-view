@@ -4,7 +4,7 @@ Each face is parsed from its verified blob and serialized again, so no stored
 bytes reach the page as they are. Every id gets the prefix of its occurrence,
 ``dv-<view>-d<device pk>[-m<module pk>]...-<face>-``, where the module part
 lists each module on the placement path, and the references are rewritten on
-the tree.
+the tree. A focus view draws one module again in its own coordinates.
 """
 
 import functools
@@ -80,9 +80,10 @@ _PLACEMENT_NOT_FINITE = (
 )
 # Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
 MAX_MODULE_DEPTH = 8
-# The view part of an id: "o" for the overview of a device, "a" for the artwork API.
+# The view part of an id: "o" for the overview of a device, "a" for the artwork API, "f<n>" for the n-th focus view.
 OVERVIEW = "o"
 API = "a"
+FOCUS = "f"
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
@@ -242,9 +243,41 @@ class RenderedFace:
     def label(self):
         return capfirst(self.name)
 
+    @property
+    def view(self) -> str:
+        """Return the view part of the ids of the face."""
+        return self.prefix.split("-")[1]
+
     def element_id(self, key) -> str | None:
         """Return the id of the element ``key`` in the face, or None when the face does not draw it."""
         return self.prefix + key if key in self.ids else None
+
+
+@dataclass(frozen=True)
+class Focus:
+    """A module drawn with artwork, in a view of its own: its face in its own coordinates."""
+
+    module: PlacedModule
+    ident: str
+    # The id of the overview of the device.
+    overview: str
+    face: RenderedFace
+    # The focus views of the modules on the placement path above the module, outermost first.
+    parents: tuple["Focus", ...]
+
+    @property
+    def parent_ident(self) -> str:
+        """Return the id of the view that Escape goes back to."""
+        return self.parents[-1].ident if self.parents else self.overview
+
+
+@dataclass(frozen=True)
+class AssemblyNode:
+    """A placed module in the assembly navigation, with its focus view or None for an outline."""
+
+    module: PlacedModule
+    focus: Focus | None
+    children: tuple["AssemblyNode", ...]
 
 
 @dataclass(frozen=True)
@@ -254,14 +287,37 @@ class Part:
     device: object
     representation: str
     revision: DefinitionRevision
+    # The id of the overview of the device.
+    ident: str
     faces: tuple[RenderedFace, ...]
     connectors: tuple[Connector, ...]
     # Each installed module that a face shows, parents before their children.
     modules: tuple[PlacedModule, ...] = ()
+    # The focus view of each module that a face draws with artwork; none for a plain face.
+    focus_views: tuple[Focus, ...] = ()
 
     @property
     def damaged(self):
         return self.representation == DAMAGED
+
+    @property
+    def assembly(self) -> tuple[AssemblyNode, ...]:
+        """Return the tree of the placed modules below the device."""
+        views = {focus.module.module.pk: focus for focus in self.focus_views}
+        children = {}
+        for placed in self.modules:
+            parent = None if placed.parent is None else placed.parent.pk
+            children.setdefault(parent, []).append(placed)
+
+        def nodes(parent):
+            return tuple(
+                AssemblyNode(
+                    placed, views.get(placed.module.pk), nodes(placed.module.pk)
+                )
+                for placed in children.get(parent, ())
+            )
+
+        return nodes(None)
 
 
 def has_active_artwork(device_type_id) -> bool:
@@ -288,16 +344,19 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     """
     composer = _Composer(device, user, plain)
     connectors = composer.connectors(revision, device)
+    part_id = f"dv-{view}-d{device.pk}"
     data = _read_faces(revision)
     if data is None:
-        return Part(device, DAMAGED, revision, (), connectors)
+        return Part(device, DAMAGED, revision, part_id, (), connectors)
     faces = tuple(
-        composer.device_face(
-            f"dv-{view}-d{device.pk}", face, data[face], revision, connectors
-        )
+        composer.root_face(part_id, face, data[face], revision, connectors)
         for face in revision.face_names
     )
-    return Part(device, ARTWORK, revision, faces, connectors, tuple(composer.modules))
+    modules = tuple(composer.modules)
+    focus_views = () if plain else composer.focus_views(device, part_id, modules)
+    return Part(
+        device, ARTWORK, revision, part_id, faces, connectors, modules, focus_views
+    )
 
 
 def _read_faces(revision) -> dict[str, bytes] | None:
@@ -372,7 +431,38 @@ class _Composer:
             for key, item in sorted(revision.manifest["connectors"].items())
         )
 
-    def device_face(self, part_id, face, data, revision, connectors) -> RenderedFace:
+    def focus_views(self, device, part_id, modules) -> tuple[Focus, ...]:
+        """Return the focus view of each module of ``modules`` that has artwork, in order."""
+        views = {}
+        for placed in modules:
+            if placed.representation != ARTWORK:
+                continue
+            parent = None if placed.parent is None else views[placed.parent.pk]
+            parents = () if parent is None else (*parent.parents, parent)
+            path = [*(p.module.module for p in parents), placed.module]
+            ident = f"dv-{FOCUS}{len(views) + 1}-d{device.pk}" + "".join(
+                f"-m{module.pk}" for module in path
+            )
+            [face] = placed.revision.face_names
+            first = len(self.modules)
+            rendered = self.root_face(
+                ident,
+                face,
+                self.face_data(placed.revision)[face],
+                placed.revision,
+                placed.connectors,
+                placed.module,
+                len(path),
+            )
+            # The overview already lists the modules that the focus view draws again.
+            del self.modules[first:]
+            views[placed.module.pk] = Focus(placed, ident, part_id, rendered, parents)
+        return tuple(views.values())
+
+    def root_face(
+        self, part_id, face, data, revision, connectors, module=None, depth=0
+    ) -> RenderedFace:
+        """Draw ``face`` of the device, or of ``module`` at ``depth`` in its own coordinates, with the modules in its bays."""
         prefix = f"{part_id}-{face}-"
         root, elements = _parse_face(data, prefix)
         for name in _VIEWPORT_ATTRIBUTES:
@@ -382,7 +472,11 @@ class _Composer:
         self.outline_width = max(view_box[2:]) * _OUTLINE_WIDTH
         first = len(self.modules)
         self.compose(
-            root, elements, revision, face, _Scope(None, part_id, face, IDENTITY, 0, 0)
+            root,
+            elements,
+            revision,
+            face,
+            _Scope(module, part_id, face, IDENTITY, 0, depth),
         )
         placed = self.modules[first:]
         connectors = [c for c in connectors if c.face == face]
@@ -392,18 +486,19 @@ class _Composer:
             _mark_connectors(
                 root, prefix, connectors, elements, view_box, self.outline_width
             )
+            owner = None if module is None else part_label(module)
             details = (
-                *(c.details(prefix) for c in connectors if c.key in elements),
+                *(c.details(prefix, owner) for c in connectors if c.key in elements),
                 *(
-                    c.details(module.prefix, module.label)
-                    for module in placed
-                    for c in module.connectors
-                    if c.key in module.ids
+                    c.details(child.prefix, child.label)
+                    for child in placed
+                    for c in child.connectors
+                    if c.key in child.ids
                 ),
             )
         # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
         svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
-        warnings = tuple(w for module in placed for w in module.warnings)
+        warnings = tuple(w for child in placed for w in child.warnings)
         return RenderedFace(face, prefix, svg, frozenset(elements), details, warnings)
 
     def compose(self, root, elements, revision, face, scope):

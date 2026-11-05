@@ -103,12 +103,14 @@ FILES = {
 
 
 def faces(content):
-    """Return the parsed artwork faces of a page, in page order."""
+    """Return the parsed artwork faces of the overview of a page, in page order."""
     # A face holds the nested svg of each module, so read the whole viewport.
     return [
         etree.fromstring(markup)
         for markup in re.findall(
-            r'<div class="dv-art-viewport"[^>]*>(.*?)</div>', content, re.DOTALL
+            r'<div class="dv-art-viewport" data-dv-view="o"[^>]*>(.*?)</div>',
+            content,
+            re.DOTALL,
         )
     ]
 
