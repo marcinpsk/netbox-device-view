@@ -1,0 +1,6 @@
+{# The faces of ``part`` in physical order, one under another. #}
+<div class="row g-2">
+	{% for face in part.faces %}
+	<div class="col-12">{% include 'netbox_device_view/inc/artwork_face.html' with focus=None %}</div>
+	{% endfor %}
+</div>

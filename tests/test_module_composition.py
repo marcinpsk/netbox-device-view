@@ -461,7 +461,8 @@ class QueryTests(CompositionTestCase):
         )
         with CaptureQueriesContext(connection) as after:
             content = self.tab()
-        self.assertEqual(content.count('class="dv-art-module-art"'), 5)
+        [front] = faces(content)
+        self.assertEqual(len(front.findall(".//*[@class='dv-art-module-art']")), 5)
         self.assertEqual(len(after), len(before))
 
 

@@ -226,6 +226,7 @@ The artwork view shows:
 - The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
 - A link on each connector that has one binding, when the binding finds a component. The binding uses the component type and the exact name. A connector of the device finds only components of the device itself, not of its modules. A connector of an installed module finds only components of that module. A click on the connector opens the component.
 - The installed modules in their bays, with a [warning list](#module-bays) below a face when a placement has a problem.
+- The [assembly navigation](#assembly-navigation) beside the faces, when a face shows installed modules.
 - The [details](#connector-details) of each connector.
 - Marks for the connectivity facts of each connector, and a legend below the faces. Each fact has its own mark, so a disabled interface with a cable shows both. A mark changes only the outline, and each mark has its own pattern, so no fact depends on colour alone.
 - A tooltip on each connector that names every fact: enabled or disabled, the cable status or no cable, marked connected, path complete or incomplete, and the peers that you can view. When the connector has its own title, the tooltip shows that title first.
@@ -276,6 +277,15 @@ A list below the face shows these warnings:
 - Two bays of a module definition name one module bay after `{module}` resolves, for example `Slot {module}` and `Slot 1` in a module at position 1. The module shows only in the first bay key, in sort order. The import cannot find this, because the names differ before NetBox resolves them.
 
 The [artwork API](artwork-api.md#module) gives each placed module and its warnings.
+
+### Assembly navigation
+
+When a face shows installed modules, the assembly navigation is beside the faces. On a narrow screen, it is above them. It lists the device and each module that a face shows, under the module that has its bay.
+
+- Click a module to focus it. The focus view shows the module face in its own coordinates: not turned, and at the width of the panel. The modules in its bays show in it. It has its own zoom, details and warnings.
+- The breadcrumb above the focus view names the device and each module above the focused module. Click an item to go back to it, or press **Escape** to go back one level. When the details are open, **Escape** closes only the details. The view that you go back to keeps its zoom and scroll, and the keyboard focus goes back to where it was in that view.
+- A click on a connector or on the body of a module in a focus view opens its record, as in the overview.
+- A module that shows as an outline has no focus view. Its item opens the module. The icon beside a module with artwork also opens the module.
 
 ### Connector details
 
