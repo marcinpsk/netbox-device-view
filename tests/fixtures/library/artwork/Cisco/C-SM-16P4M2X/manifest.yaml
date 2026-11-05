@@ -1,0 +1,144 @@
+schema: 1
+key: cisco/c-sm-16p4m2x
+kind: module
+title: Cisco C-SM-16P4M2X EtherSwitch Service Module
+hardware:
+  manufacturer: Cisco
+  sku: C-SM-16P4M2X
+  references:
+    - title: Installing the Cisco C-SM-16P4M2X or C-SM-40P8M2X EtherSwitch Service Module
+      edition: web edition, updated 2019-08-05
+      figure: "2"
+      url: https://www.cisco.com/c/en/us/td/docs/routers/cloud_edge/c8300/Interface_Module_HIG/CSMX16P4M2X-CSMX40P8M2X-book1.html
+    - title: Cisco Catalyst 8000 SM-Based Switching Modules Data Sheet
+      edition: web edition, updated 2024-06-17
+      figure: "table 1"
+      url: https://www.cisco.com/c/en/us/products/collateral/routers/catalyst-8300-series-edge-platforms/catalyst-8000-sm-switch-module-ds.html
+license: MIT
+authors: [Marcin Zieba]
+faces:
+  installed: {file: installed.svg}
+connectors:
+  con-gi0:
+    face: installed
+    type: rj45
+    label: "0"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/0"}
+  con-gi1:
+    face: installed
+    type: rj45
+    label: "1"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/1"}
+  con-gi2:
+    face: installed
+    type: rj45
+    label: "2"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/2"}
+  con-gi3:
+    face: installed
+    type: rj45
+    label: "3"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/3"}
+  con-gi4:
+    face: installed
+    type: rj45
+    label: "4"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/4"}
+  con-gi5:
+    face: installed
+    type: rj45
+    label: "5"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/5"}
+  con-gi6:
+    face: installed
+    type: rj45
+    label: "6"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/6"}
+  con-gi7:
+    face: installed
+    type: rj45
+    label: "7"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/7"}
+  con-gi8:
+    face: installed
+    type: rj45
+    label: "8"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/8"}
+  con-gi9:
+    face: installed
+    type: rj45
+    label: "9"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/9"}
+  con-gi10:
+    face: installed
+    type: rj45
+    label: "10"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/10"}
+  con-gi11:
+    face: installed
+    type: rj45
+    label: "11"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/11"}
+  con-gi12:
+    face: installed
+    type: rj45
+    label: "12"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/12"}
+  con-gi13:
+    face: installed
+    type: rj45
+    label: "13"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/13"}
+  con-gi14:
+    face: installed
+    type: rj45
+    label: "14"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/14"}
+  con-gi15:
+    face: installed
+    type: rj45
+    label: "15"
+    bindings:
+      - {component: interface, name: "GigabitEthernet{module}/0/15"}
+  con-mgig16:
+    face: installed
+    type: rj45
+    label: "16"
+    bindings:
+      - {component: interface, name: "TwoGigabitEthernet{module}/0/16"}
+  con-mgig17:
+    face: installed
+    type: rj45
+    label: "17"
+    bindings:
+      - {component: interface, name: "TwoGigabitEthernet{module}/0/17"}
+  con-mgig18:
+    face: installed
+    type: rj45
+    label: "18"
+    bindings:
+      - {component: interface, name: "TwoGigabitEthernet{module}/0/18"}
+  con-mgig19:
+    face: installed
+    type: rj45
+    label: "19"
+    bindings:
+      - {component: interface, name: "TwoGigabitEthernet{module}/0/19"}
+bays:
+  bay-te20: {face: installed, module_bay: "Transceiver 1/0/20", rotate: 180}
+  bay-te21: {face: installed, module_bay: "Transceiver 1/0/21"}

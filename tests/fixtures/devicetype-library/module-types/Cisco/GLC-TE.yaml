@@ -1,0 +1,13 @@
+---
+manufacturer: Cisco
+model: GLC-TE
+part_number: GLC-TE
+description: Cisco 1000BASE-T SFP transceiver, enhanced
+comments: >-
+  1000BASE-T copper SFP, RJ-45, up to 100m on Cat5. Lower power draw and a
+  wider temperature range than the GLC-T it replaces.
+module_bay_types:
+  - SFP
+interfaces:
+  - name: '{module}'
+    type: 1000base-t
