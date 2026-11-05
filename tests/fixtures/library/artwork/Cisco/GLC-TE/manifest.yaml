@@ -1,0 +1,24 @@
+schema: 1
+key: cisco/glc-te
+kind: module
+title: Cisco GLC-TE 1000BASE-T SFP
+hardware:
+  manufacturer: Cisco
+  sku: GLC-TE
+  references:
+    - title: Cisco SFP Modules for Gigabit Ethernet Applications Data Sheet
+      edition: web edition, updated 2026-10-09
+      figure: "2"
+      url: https://www.cisco.com/c/en/us/products/collateral/interfaces-modules/gigabit-ethernet-gbic-sfp-modules/datasheet-c78-366584.html
+license: MIT
+authors: [Marcin Zieba]
+faces:
+  installed: {file: installed.svg}
+connectors:
+  con-rj45:
+    face: installed
+    type: rj45
+    label: "RJ-45"
+    bindings:
+      - {component: interface, name: "{module}"}
+bays: {}
