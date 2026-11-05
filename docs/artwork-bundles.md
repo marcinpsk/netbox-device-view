@@ -219,7 +219,7 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 An association links a device type to one revision of a device definition, or a module type to one revision of a module definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of a device type then show the artwork instead of the layout. Each installed module of a module type shows its artwork in the bay of its parent: see [Module bays](#module-bays).
 
-In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. For a device definition, select the **Device type**. For a module definition, select the **Module type**. A revision activates only for a type of its kind. Click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type, and you can filter it by device type or module type. Delete an association to show the layout of the type again, or the outline of each module of the type. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
+In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. For a device definition, select the **Device type**. For a module definition, select the **Module type**. A revision activates only for a type of its kind. Click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type, and you can filter it by device type or module type. Delete an association to show the layout of the type again, or the schematic of each module of the type. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
 
 The artwork view shows:
 
@@ -264,16 +264,17 @@ The module draws as its own file does: it does not take the presentation attribu
 Each installed module uses the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
 
 - A click on the body of a module opens the module. A click on one of its connectors opens the component, or the details, as for a connector of the device. The details name the module.
-- A module type without active artwork shows as an outline of the bay with the model of the type. A click on it opens the module. The outline has no bays, so the modules that are installed in that module do not show.
-- An empty bay shows only the artwork of the parent.
-- A module or a module bay that you cannot view does not show, so its bay looks empty.
+- A module type without active artwork shows as a schematic. The plugin generates it at the size of the bay, and does not turn it, so its labels stay readable. The schematic shows the model of the type, a box for each component of the module that you can view, by type and in NetBox name order, and a slot for each module bay of the module. Each component box has the links, marks and details of a connector. A click on the rest of the schematic opens the module.
+- A slot of a schematic shows its installed module: the module artwork scaled to fit the slot, or its own schematic.
+- A bay or a slot without a recorded module shows **not recorded**: NetBox has no module in it. The plugin does not know if the slot is empty. A cable on a port never adds a module to the view.
+- A module that you cannot view, or a module bay of a device definition that you cannot view, shows as **not recorded** too. A module bay of a schematic that you cannot view has no slot.
 
 A list below the face shows these warnings:
 
 - The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. Correct the bay rect or the `viewBox`.
-- A value of the bay rect, or of the placement that the plugin computes from it, is not a finite number. The module shows as an outline when the bay rect is finite. Otherwise it does not show.
-- A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. Import the revision again.
-- A module is more than 8 modules deep: for example the ninth module in a chain of modules in bays of modules. It shows as an outline, and the modules in it do not show. The limit keeps the page below the nesting depth that browsers parse.
+- A value of the bay rect, or of the placement that the plugin computes from it, is not a finite number. The module shows as a schematic when the bay rect is finite. Otherwise it does not show.
+- A stored file of the active revision of the module type is missing or does not match its digest. The module shows as a schematic. Import the revision again.
+- A module is more than 8 modules deep: for example the ninth module in a chain of modules in bays of modules. It shows as a schematic without its slots, so the modules in it do not show. The limit keeps the page below the nesting depth that browsers parse.
 - Two bays of a module definition name one module bay after `{module}` resolves, for example `Slot {module}` and `Slot 1` in a module at position 1. The module shows only in the first bay key, in sort order. The import cannot find this, because the names differ before NetBox resolves them.
 
 The [artwork API](artwork-api.md#module) gives each placed module and its warnings.
@@ -282,10 +283,10 @@ The [artwork API](artwork-api.md#module) gives each placed module and its warnin
 
 When a face shows installed modules, the assembly navigation is beside the faces. On a narrow screen, it is above them. It lists the device and each module that a face shows, under the module that has its bay.
 
-- Click a module to focus it. The focus view shows the module face in its own coordinates: not turned, and at the width of the panel. The modules in its bays show in it. It has its own zoom, details and warnings.
+- Click a module to focus it. The focus view shows the module face, or its schematic, in its own coordinates: not turned, and at the width of the panel. The modules in its bays show in it. It has its own zoom, details and warnings.
 - The breadcrumb above the focus view names the device and each module above the focused module. Click an item to go back to it, or press **Escape** to go back one level. When the details are open, **Escape** closes only the details. The view that you go back to keeps its zoom and scroll, and the keyboard focus goes back to where it was in that view.
 - A click on a connector or on the body of a module in a focus view opens its record, as in the overview.
-- A module that shows as an outline has no focus view. Its item opens the module. The icon beside a module with artwork also opens the module.
+- A module whose bay or placement is not a finite number has no focus view: its item shows **no focus view** and opens the module. The icon beside each other module also opens the module.
 
 ### Connector details
 

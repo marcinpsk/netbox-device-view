@@ -4,7 +4,10 @@ Each face is parsed from its verified blob and serialized again, so no stored
 bytes reach the page as they are. Every id gets the prefix of its occurrence,
 ``dv-<view>-d<device pk>[-m<module pk>]...-<face>-``, where the module part
 lists each module on the placement path, and the references are rewritten on
-the tree. A focus view draws one module again in its own coordinates.
+the tree. A module without drawable artwork shows as a generated schematic of
+its components and module bays, and a bay without a module that the user can
+view shows that its inventory is not recorded. A focus view draws one module
+again in its own coordinates.
 """
 
 import functools
@@ -15,10 +18,11 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 
 import tinycss2
-from dcim.models import Module, ModuleBay
+from dcim.models import Interface, Module, ModuleBay
 from django.utils.safestring import SafeString, mark_safe
 from django.utils.text import capfirst
 from lxml import etree
+from utilities.ordering import naturalize, naturalize_interface
 
 from ..components import (
     BINDABLE_MODELS,
@@ -43,13 +47,15 @@ from ..details import (
 from ..models import TYPE_SCOPES, Association, DefinitionRevision
 from .manifest import MODULE_KIND
 from .overrides import connector_bindings, part_overrides
-from .placement import Rect, place, transform_rect
+from .placement import Rect, fit, place, transform_rect
+from .schematic import layout
 from .storage import DamagedBlob, read_blob
 from .svg import (
     BAY_ATTRIBUTES,
     IDENTITY,
     SVG_NS,
     XLINK_NS,
+    invert,
     multiply,
     parse_view_box,
     safe_parser,
@@ -60,8 +66,11 @@ logger = logging.getLogger(__name__)
 
 ARTWORK = "artwork"
 DAMAGED = "damaged"
-# An installed module without drawable artwork: an outline of its bay with the model of its type.
-OUTLINE = "outline"
+# An installed module without drawable artwork: a schematic of its components; also the name of its face.
+SCHEMATIC = "schematic"
+# The state of a drawn bay.
+INSTALLED = "installed"
+NOT_RECORDED = "not_recorded"
 
 
 class WarningCode:
@@ -76,8 +85,8 @@ class WarningCode:
 
 # A finite bay can still overflow: x + width, or the transforms of the parents.
 _PLACEMENT_NOT_FINITE = (
-    "the placement in bay {key} is not a finite number, so the module shows as an"
-    " outline."
+    "the placement in bay {key} is not a finite number, so the module shows as a"
+    " schematic."
 )
 # Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
 MAX_MODULE_DEPTH = 8
@@ -205,12 +214,13 @@ class ArtworkWarning:
 
 @dataclass(frozen=True)
 class PlacedModule:
-    """One installed module in a bay of its parent: drawn with its artwork, or as an outline."""
+    """One installed module in a bay of its parent: drawn with its artwork, or as a schematic."""
 
     module: Module
     # The installed module that has the bay; None for a bay of the device.
     parent: Module | None
-    bay_key: str
+    # The bay key in the manifest of the parent; None for a slot of a schematic.
+    bay_key: str | None
     # The face of the device that shows the module.
     face: str
     representation: str
@@ -223,8 +233,9 @@ class PlacedModule:
     # The id of the group that draws the module, or None; and the prefix of the ids of its face.
     element_id: str | None
     prefix: str
+    # The connectors of its artwork, or of its schematic: one for each component.
     connectors: tuple[Connector, ...]
-    # The ids of the stored module face that the group draws, without the prefix.
+    # The ids of the module face or schematic that the group draws, without the prefix.
     ids: frozenset[str]
     warnings: tuple[ArtworkWarning, ...]
 
@@ -234,6 +245,27 @@ class PlacedModule:
 
     def connector_id(self, key) -> str | None:
         return self.prefix + key if key in self.ids else None
+
+
+@dataclass(frozen=True)
+class DrawnBay:
+    """A bay that a face draws: with its installed module, or with inventory that is not recorded."""
+
+    # The installed module that has the bay; None for a bay of the device.
+    parent: Module | None
+    # The bay key in the manifest of the parent; None for a slot of a schematic.
+    key: str | None
+    # None when NetBox has no module bay of that name that the user can view.
+    module_bay: ModuleBay | None
+    face: str
+    # None when no module is recorded, or the user cannot view it.
+    module: Module | None
+    # The id of the group that draws the module or the mark, or None when the bay is not finite.
+    element_id: str | None
+
+    @property
+    def state(self) -> str:
+        return NOT_RECORDED if self.module is None else INSTALLED
 
 
 def part_label(module) -> str:
@@ -270,7 +302,7 @@ class RenderedFace:
 
 @dataclass(frozen=True)
 class Focus:
-    """A module drawn with artwork, in a view of its own: its face in its own coordinates."""
+    """A drawn module in a view of its own: its face or schematic in its own coordinates."""
 
     module: PlacedModule
     ident: str
@@ -288,7 +320,7 @@ class Focus:
 
 @dataclass(frozen=True)
 class AssemblyNode:
-    """A placed module in the assembly navigation, with its focus view or None for an outline."""
+    """A placed module in the assembly navigation, with its focus view or None when it is not drawn."""
 
     module: PlacedModule
     focus: Focus | None
@@ -308,7 +340,9 @@ class Part:
     connectors: tuple[Connector, ...]
     # Each installed module that a face shows, parents before their children.
     modules: tuple[PlacedModule, ...] = ()
-    # The focus view of each module that a face draws with artwork; none for a plain face.
+    # Each bay that a face or a schematic draws, in drawing order.
+    bays: tuple[DrawnBay, ...] = ()
+    # The focus view of each module that a face draws; none for a plain face.
     focus_views: tuple[Focus, ...] = ()
 
     @property
@@ -367,10 +401,18 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
         composer.root_face(part_id, face, data[face], revision, connectors)
         for face in revision.face_names
     )
-    modules = tuple(composer.modules)
+    modules, bays = tuple(composer.modules), tuple(composer.bays)
     focus_views = () if plain else composer.focus_views(device, part_id, modules)
     return Part(
-        device, ARTWORK, revision, part_id, faces, connectors, modules, focus_views
+        device,
+        ARTWORK,
+        revision,
+        part_id,
+        faces,
+        connectors,
+        modules,
+        bays,
+        focus_views,
     )
 
 
@@ -401,6 +443,8 @@ class _Scope:
     rotate: int
     # The number of modules on the placement path: 0 for the device.
     depth: int
+    # The outline width of the connector marks, in the face coordinates of the part.
+    outline_width: float
 
 
 class _Composer:
@@ -414,11 +458,18 @@ class _Composer:
             .filter(device=device)
             .select_related("module_bay", "module_type__manufacturer")
         )
-        visible_bays = set(
-            ModuleBay.objects.restrict(user, "view")
-            .filter(device=device)
-            .values_list("pk", flat=True)
+        bays = sorted(
+            ModuleBay.objects.restrict(user, "view").filter(device=device),
+            key=lambda bay: (naturalize(bay.name, max_length=100), bay.pk),
         )
+        visible_bays = {bay.pk for bay in bays}
+        # {(module pk of the bay or None, bay name): module bay}
+        self.bay_named = {(bay.module_id, bay.name): bay for bay in bays}
+        # {module pk: its module bays}, the slots of its schematic.
+        self.slots = {}
+        for bay in bays:
+            if bay.module_id is not None:
+                self.slots.setdefault(bay.module_id, []).append(bay)
         by_pk = {module.pk: module for module in modules}
         # {(module pk of the bay or None, bay name): installed module}
         self.installed = {}
@@ -436,6 +487,7 @@ class _Composer:
         self.overrides = part_overrides([device, *modules])
         self.faces = {}
         self.modules = []
+        self.bays = []
 
     def connectors(self, revision, part) -> tuple[Connector, ...]:
         """Return the connectors of ``revision`` for a device or an installed module."""
@@ -447,10 +499,11 @@ class _Composer:
         )
 
     def focus_views(self, device, part_id, modules) -> tuple[Focus, ...]:
-        """Return the focus view of each module of ``modules`` that has artwork, in order."""
+        """Return the focus view of each drawn module of ``modules``, in order."""
         views = {}
         for placed in modules:
-            if placed.representation != ARTWORK:
+            # A module that is not drawn, or whose placement is not finite, has no view.
+            if placed.element_id is None or placed.bay is None:
                 continue
             parent = None if placed.parent is None else views[placed.parent.pk]
             parents = () if parent is None else (*parent.parents, parent)
@@ -458,19 +511,23 @@ class _Composer:
             ident = f"dv-{FOCUS}{len(views) + 1}-d{device.pk}" + "".join(
                 f"-m{module.pk}" for module in path
             )
-            [face] = placed.revision.face_names
-            first = len(self.modules)
-            rendered = self.root_face(
-                ident,
-                face,
-                self.face_data(placed.revision)[face],
-                placed.revision,
-                placed.connectors,
-                placed.module,
-                len(path),
-            )
-            # The overview already lists the modules that the focus view draws again.
+            first, bays = len(self.modules), len(self.bays)
+            if placed.representation == ARTWORK:
+                [face] = placed.revision.face_names
+                rendered = self.root_face(
+                    ident,
+                    face,
+                    self.face_data(placed.revision)[face],
+                    placed.revision,
+                    placed.connectors,
+                    placed.module,
+                    len(path),
+                )
+            else:
+                rendered = self.schematic_face(ident, placed, len(path))
+            # The overview already lists the modules and bays that the focus view draws again.
             del self.modules[first:]
+            del self.bays[bays:]
             views[placed.module.pk] = Focus(placed, ident, part_id, rendered, parents)
         return tuple(views.values())
 
@@ -483,27 +540,48 @@ class _Composer:
         for name in _VIEWPORT_ATTRIBUTES:
             root.attrib.pop(name, None)
         view_box = parse_view_box(root.get("viewBox").strip())
-        # Module faces keep the outline width of the device face: placement does not scale.
-        self.outline_width = max(view_box[2:]) * _OUTLINE_WIDTH
+        width = max(view_box[2:]) * _OUTLINE_WIDTH
         first = len(self.modules)
         self.compose(
             root,
             elements,
             revision,
             face,
-            _Scope(module, part_id, face, IDENTITY, 0, depth),
+            _Scope(module, part_id, face, IDENTITY, 0, depth, width),
         )
+        connectors = [c for c in connectors if c.face == face and c.key in elements]
+        if not self.plain:
+            _mark_connectors(root, prefix, connectors, elements, view_box, width)
+        owner = None if module is None else part_label(module)
+        own = tuple(c.details(prefix, owner) for c in connectors)
+        return self.finish(root, face, prefix, frozenset(elements), own, first)
+
+    def schematic_face(self, part_id, placed, depth) -> RenderedFace:
+        """Draw the schematic of ``placed`` in its own coordinates, at the size of its bay."""
+        bay = placed.bay
+        root = etree.Element(
+            f"{{{SVG_NS}}}svg",
+            viewBox=f"0 0 {_number(bay.width)} {_number(bay.height)}",
+            nsmap={None: SVG_NS},
+        )
+        first = len(self.modules)
+        width = max(bay.width, bay.height) * _OUTLINE_WIDTH
+        scope = _Scope(placed.module, part_id, SCHEMATIC, IDENTITY, 0, depth, width)
+        drawn = self.schematic(
+            root, Rect(0, 0, bay.width, bay.height), placed.module, scope, scope
+        )
+        prefix, ids, connectors = drawn
+        own = tuple(c.details(prefix, placed.label) for c in connectors)
+        return self.finish(root, SCHEMATIC, prefix, ids, own, first)
+
+    def finish(self, root, face, prefix, ids, own, first) -> RenderedFace:
+        """Serialize a root face with the details of its own connectors and of the modules placed after ``first``."""
         placed = self.modules[first:]
-        connectors = [c for c in connectors if c.face == face]
         details = ()
         if not self.plain:
             root.set("class", "dv-art-face")
-            _mark_connectors(
-                root, prefix, connectors, elements, view_box, self.outline_width
-            )
-            owner = None if module is None else part_label(module)
             details = (
-                *(c.details(prefix, owner) for c in connectors if c.key in elements),
+                *own,
                 *(
                     c.details(child.prefix, child.label)
                     for child in placed
@@ -514,10 +592,10 @@ class _Composer:
         # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
         svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
         warnings = tuple(w for child in placed for w in child.warnings)
-        return RenderedFace(face, prefix, svg, frozenset(elements), details, warnings)
+        return RenderedFace(face, prefix, svg, ids, details, warnings)
 
     def compose(self, root, elements, revision, face, scope):
-        """Draw the installed module of each bay of ``revision`` on ``face`` into ``root``."""
+        """Draw the installed module, or the mark of no recorded module, in each bay of ``revision`` on ``face``."""
         # {module bay name: bay keys}; with {module}, two keys can name one module bay.
         mapped = {}
         for key, item in sorted(revision.manifest["bays"].items()):
@@ -531,15 +609,35 @@ class _Composer:
         owner = None if scope.module is None else scope.module.pk
         for name, (key, *others) in mapped.items():
             module = self.installed.get((owner, name))
-            # An empty bay draws nothing more: the parent artwork shows the slot.
-            if module is not None:
+            rect = elements[key]
+            if module is None:
+                bay = _bay_rect(rect)
+                element_id = None
+                if _finite(*vars(bay).values()):
+                    element_id = f"{scope.part_id}-{face}--not-recorded-{key}"
+                    group = etree.Element(_G, id=element_id, **INHERITED_INITIAL)
+                    _after_top(rect, group)
+                    target, bay, _ = _upright(group, bay, scope.matrix)
+                    self.not_recorded(target, bay, _own_width(bay, scope.outline_width))
+                self.bays.append(
+                    DrawnBay(
+                        scope.module,
+                        key,
+                        self.bay_named.get((owner, name)),
+                        scope.face,
+                        None,
+                        element_id,
+                    )
+                )
+            else:
                 rotate = revision.manifest["bays"][key]["rotate"]
                 self.place(elements[key], key, rotate, module, scope, others)
 
-    def place(self, rect, key, rotate, module, scope, others=()):
+    def place(self, rect, key, rotate, module, scope, others=(), slot=False):
         """Draw ``module`` over the bay ``rect`` of ``scope``, and its own bays inside it.
 
-        ``others`` are the later bay keys that name the same module bay; they draw nothing.
+        ``others`` are the later bay keys that name the same module bay; they
+        draw nothing. In a ``slot`` of a schematic, artwork is scaled to fit.
         """
         revision = self.revisions.get(module.module_type_id)
         inner = _Scope(
@@ -549,8 +647,12 @@ class _Composer:
             scope.matrix,
             (scope.rotate + rotate) % 360,
             scope.depth + 1,
+            # Placement at true scale keeps the units; a slot scales them in artwork().
+            scope.outline_width,
         )
         label = part_label(module)
+        # A slot of a schematic has no bay key; its module bay names it.
+        where = key if key is not None else module.module_bay.name
         warnings = []
 
         def warn(code, text):
@@ -562,39 +664,55 @@ class _Composer:
                 f"the bays {key} and {', '.join(others)} map to the module bay"
                 f" {module.module_bay.name}, so the module shows only in {key}.",
             )
-        connectors = () if revision is None else self.connectors(revision, module)
+        artwork_connectors = (
+            () if revision is None else self.connectors(revision, module)
+        )
         # The children come after their parent, so the parent takes this index.
-        index = len(self.modules)
-        bay = Rect(*(float(rect.get(name, "0")) for name in BAY_ATTRIBUTES))
-        absolute, drawn, element_id = None, None, None
+        index, bay_index = len(self.modules), len(self.bays)
+        bay = _bay_rect(rect)
+        absolute, element_id = None, None
+        representation, prefix, ids = SCHEMATIC, "", frozenset()
+        connectors = artwork_connectors
         if not _finite(*vars(bay).values()):
             warn(
                 WarningCode.NOT_FINITE,
-                f"the bay {key} has a position or size that is not a finite number,"
+                f"the bay {where} has a position or size that is not a finite number,"
                 " so the module is not drawn.",
             )
         else:
-            group = self.module_group(rect, inner.part_id, bay)
+            group = self.module_group(rect, inner.part_id, bay, slot)
             element_id = inner.part_id
             absolute = transform_rect(scope.matrix, bay)
             if not _finite(*vars(absolute).values()):
-                warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+                warn(
+                    WarningCode.NOT_FINITE,
+                    _PLACEMENT_NOT_FINITE.format(key=where),
+                )
                 absolute = None
             elif inner.depth > MAX_MODULE_DEPTH:
                 warn(
                     WarningCode.TOO_DEEP,
                     f"the module is more than {MAX_MODULE_DEPTH} modules deep, so it"
-                    " shows as an outline.",
+                    " shows as a schematic, and the modules in it do not show.",
                 )
             elif revision is not None:
                 drawn = self.artwork(
-                    group, bay, rotate, revision, connectors, inner, key, warn
+                    group,
+                    bay,
+                    rotate,
+                    revision,
+                    artwork_connectors,
+                    inner,
+                    key,
+                    warn,
+                    slot,
                 )
-            if drawn is None:
-                self.outline(group, bay, module)
-            if not self.plain:
-                self.focus_ring(group, bay)
-        prefix, ids = drawn or ("", frozenset())
+                if drawn is not None:
+                    representation, (prefix, ids) = ARTWORK, drawn
+            if representation == SCHEMATIC:
+                prefix, ids, connectors = self.schematic(
+                    group, bay, module, scope, inner
+                )
         self.modules.insert(
             index,
             PlacedModule(
@@ -602,10 +720,11 @@ class _Composer:
                 parent=scope.module,
                 bay_key=key,
                 face=scope.face,
-                representation=OUTLINE if drawn is None else ARTWORK,
+                representation=representation,
                 revision=revision,
                 bay=absolute,
-                rotate=inner.rotate,
+                # A schematic is not turned, so its labels stay readable.
+                rotate=inner.rotate if representation == ARTWORK else 0,
                 element_id=element_id,
                 prefix=prefix,
                 connectors=connectors,
@@ -613,9 +732,19 @@ class _Composer:
                 warnings=tuple(warnings),
             ),
         )
+        self.bays.insert(
+            bay_index,
+            DrawnBay(
+                scope.module, key, module.module_bay, scope.face, module, element_id
+            ),
+        )
 
-    def module_group(self, rect, part_id, bay):
-        """Return the group of a module, clipped to its bay, after the top-level element of the parent face that holds the bay."""
+    def module_group(self, rect, part_id, bay, slot=False):
+        """Return the group of a module, clipped to its bay.
+
+        The group follows the top-level element of the parent face that holds
+        the bay, or the slot itself in a schematic.
+        """
         clip = f"{part_id}--clip"
         group = etree.Element(
             _G, {"id": part_id, "clip-path": f"url(#{clip})", **INHERITED_INITIAL}
@@ -625,14 +754,15 @@ class _Composer:
             _RECT,
             _rect_attributes(bay),
         )
-        # Outside the groups of the bay, so their opacity, clip and display do not reach the module.
-        top = rect
-        while top.getparent().getparent() is not None:
-            top = top.getparent()
-        top.addnext(group)
+        if slot:
+            rect.addnext(group)
+        else:
+            _after_top(rect, group)
         return group
 
-    def artwork(self, group, bay, rotate, revision, connectors, scope, key, warn):
+    def artwork(
+        self, group, bay, rotate, revision, connectors, scope, key, warn, slot=False
+    ):
         """Draw the artwork of the module of ``scope`` into ``group``; return (prefix, ids), or None when it cannot."""
         data = self.face_data(revision)
         if data is None:
@@ -646,14 +776,17 @@ class _Composer:
         prefix = f"{scope.part_id}-{face}-"
         child, elements = _parse_face(data[face], prefix)
         view_box = parse_view_box(child.get("viewBox").strip())
-        placement = place(view_box, bay, rotate)
+        placement = fit(view_box, bay) if slot else place(view_box, bay, rotate)
         nested = (
             None
             if placement.matrix is None
             else multiply(scope.matrix, placement.matrix)
         )
         if nested is None or not _finite(*nested):
-            warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+            warn(
+                WarningCode.NOT_FINITE,
+                _PLACEMENT_NOT_FINITE.format(key=key or scope.module.module_bay.name),
+            )
             return None
         if placement.size_mismatch:
             warn(
@@ -662,12 +795,20 @@ class _Composer:
                 f" {_number(placement.size[1])} mm, but the bay {key} is"
                 f" {_number(bay.width)} × {_number(bay.height)} mm.",
             )
-        self.compose(child, elements, revision, face, replace(scope, matrix=nested))
+        # A slot scales the module face, so the width in its units scales the other way.
+        width = (
+            scope.outline_width / placement.matrix[0] if slot else scope.outline_width
+        )
+        self.compose(
+            child,
+            elements,
+            revision,
+            face,
+            replace(scope, matrix=nested, outline_width=width),
+        )
         if not self.plain:
             drawn = [c for c in connectors if c.face == face]
-            _mark_connectors(
-                child, prefix, drawn, elements, view_box, self.outline_width
-            )
+            _mark_connectors(child, prefix, drawn, elements, view_box, width)
             body = self.body(group, scope.module, "dv-art-module-body")
             etree.SubElement(body, _RECT, {**_rect_attributes(bay), "fill": "none"})
         # The module root stays a viewport, so its percentage lengths keep their meaning.
@@ -686,8 +827,116 @@ class _Composer:
         )
         if not self.plain:
             art.set("class", "dv-art-module-art")
+            self.focus_ring(group, bay, scope.outline_width)
         art.append(child)
         return prefix, frozenset(elements)
+
+    def schematic(self, group, bay, module, scope, inner):
+        """Draw a schematic of ``module`` in ``bay`` of ``scope``; return (prefix, ids, connectors).
+
+        It shows the components of the module that the user can view, by type
+        in NetBox order, and a slot for each module bay. It is not turned.
+        """
+        prefix = f"{inner.part_id}-{SCHEMATIC}-"
+        target, rect, matrix = _upright(group, bay, scope.matrix)
+        states = sorted(
+            (s for s in self.states if s.component.module_id == module.pk),
+            key=lambda s: (
+                BINDABLE_MODELS.index(type(s.component)),
+                _natural(s.component),
+            ),
+        )
+        connectors = tuple(
+            Connector(
+                f"{type(s.component)._meta.model_name}-{s.component.pk}",
+                SCHEMATIC,
+                s.component.name,
+                (Binding(type(s.component), s.component.name, FOUND, s),),
+            )
+            for s in states
+        )
+        # A finite bay can have an edge that overflows; the schematic then has only its frame.
+        drawable = _finite(rect.x + rect.width, rect.y + rect.height)
+        # Past the depth limit, the modules in it do not show.
+        slots = (
+            self.slots.get(module.pk, [])
+            if drawable and inner.depth <= MAX_MODULE_DEPTH
+            else []
+        )
+        title, cells = layout(rect, len(connectors) + len(slots) if drawable else 0)
+        width = _own_width(rect, scope.outline_width)
+        body = self.body(target, module, "dv-art-module-body dv-art-schematic")
+        self.box(body, rect, _SCHEMATIC_FRAME, width)
+        _label(body, title, module.module_type.model)
+        parts = etree.Element(_G)
+        elements = {}
+        for connector, cell in zip(connectors, cells, strict=False):
+            element = etree.SubElement(parts, _G, id=prefix + connector.key)
+            if not self.plain:
+                element.set("class", "dv-art-schematic-part")
+            self.box(element, cell, _SCHEMATIC_PART, width)
+            _label(element, cell, connector.label)
+            elements[connector.key] = element
+        # Drawn upright, the slots are not turned; drawn in the bay, they turn with the parents.
+        upright = replace(
+            inner,
+            matrix=matrix,
+            rotate=0 if matrix[:4] == (1, 0, 0, 1) else scope.rotate,
+            outline_width=width,
+        )
+        for slot, cell in zip(slots, cells[len(connectors) :], strict=True):
+            element = etree.SubElement(parts, _G, id=f"{prefix}slot-{slot.pk}")
+            if not self.plain:
+                element.set("class", "dv-art-slot")
+            frame = self.box(element, cell, _SCHEMATIC_SLOT, width, dashed=True)
+            name, area = _slot_areas(cell)
+            _label(element, name, slot.name)
+            child = self.installed.get((module.pk, slot.name))
+            if child is None:
+                self.not_recorded(element, area, width, frame=False)
+                self.bays.append(
+                    DrawnBay(module, None, slot, scope.face, None, element.get("id"))
+                )
+                continue
+            # The child draws in the area under the slot name, after the slot frame.
+            room = etree.Element(_RECT, _rect_attributes(area))
+            frame.addnext(room)
+            self.place(room, None, 0, child, upright, slot=True)
+            element.remove(room)
+        if not self.plain:
+            _mark_connectors(
+                parts,
+                prefix,
+                connectors,
+                elements,
+                (rect.x, rect.y, rect.width, rect.height),
+                width,
+            )
+        target.append(parts)
+        if not self.plain:
+            self.focus_ring(target, rect, width)
+        return prefix, frozenset(elements), connectors
+
+    def not_recorded(self, target, rect, width, frame=True):
+        """Draw the mark of a bay without a recorded module that the user can view."""
+        if not self.plain:
+            target.set(
+                "class",
+                " ".join(filter(None, (target.get("class"), "dv-art-not-recorded"))),
+            )
+        if frame:
+            self.box(target, rect, _SCHEMATIC_SLOT, width, dashed=True)
+        _label(target, rect, NOT_RECORDED_TEXT)
+
+    @staticmethod
+    def box(parent, rect, style, width, dashed=False):
+        """Add a rect with ``style`` and the stroke ``width`` to ``parent``."""
+        attributes = {**_rect_attributes(rect), **style, "stroke-width": _number(width)}
+        if dashed:
+            attributes["stroke-dasharray"] = (
+                f"{_number(3 * width)} {_number(2 * width)}"
+            )
+        return etree.SubElement(parent, _RECT, attributes)
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
@@ -704,12 +953,15 @@ class _Composer:
         etree.SubElement(body, _TITLE).text = _xml_text(f"Module {part_label(module)}")
         return body
 
-    def focus_ring(self, group, bay):
-        """Draw the focus ring of the module body last in its group and inside its bay, so no artwork or clip hides it."""
-        # A narrow bay gets a thinner ring, so the ring rect keeps an area.
-        width = min(self.outline_width, bay.width / 3, bay.height / 3)
+    def focus_ring(self, group, rect, width):
+        """Draw the focus ring of a body last in ``group`` and inside ``rect``, so no artwork, part or clip hides it."""
+        # A narrow body gets a thinner ring, so the ring rect keeps an area.
+        width = min(width, rect.width / 3, rect.height / 3)
         inside = Rect(
-            bay.x + width / 2, bay.y + width / 2, bay.width - width, bay.height - width
+            rect.x + width / 2,
+            rect.y + width / 2,
+            rect.width - width,
+            rect.height - width,
         )
         etree.SubElement(
             group,
@@ -725,41 +977,90 @@ class _Composer:
             },
         )
 
-    def outline(self, group, bay, module):
-        """Draw the module as an outline of its bay with the name of its type."""
-        body = self.body(group, module, "dv-art-module-body dv-art-outline")
-        # The plain face of the API has no page CSS, so it needs these colours; the page CSS sets theme colours.
-        etree.SubElement(
-            body,
-            _RECT,
-            {
-                **_rect_attributes(bay),
-                "fill": "#f8f9fa",
-                "stroke": "#6c757d",
-                "stroke-width": _number(self.outline_width),
-            },
-        )
-        name = module.module_type.model
-        # The label is not turned with the bay, so it stays readable.
-        size = min(bay.height * 0.4, bay.width * 0.9 / (0.6 * max(len(name), 1)))
-        x, y = bay.x + bay.width / 2, bay.y + bay.height / 2
-        # A finite bay can have a centre that overflows; the outline then has no label.
-        if not _finite(x, y, size):
-            return
-        text = etree.SubElement(
-            body,
-            f"{{{SVG_NS}}}text",
-            {
-                "x": _number(x),
-                "y": _number(y),
-                "font-size": _number(size),
-                "font-family": "sans-serif",
-                "text-anchor": "middle",
-                "dominant-baseline": "central",
-                "fill": "#212529",
-            },
-        )
-        text.text = _xml_text(name)
+
+# The plain faces of the API have no page CSS, so the schematic has its own colours; the page CSS sets theme colours.
+_SCHEMATIC_FRAME = {"fill": "#f8f9fa", "stroke": "#6c757d"}
+_SCHEMATIC_PART = {"fill": "#dee2e6", "stroke": "#495057"}
+_SCHEMATIC_SLOT = {"fill": "none", "stroke": "#6c757d"}
+NOT_RECORDED_TEXT = "not recorded"
+
+
+def _after_top(rect, element):
+    """Put ``element`` after the top-level element of the face that holds ``rect``.
+
+    The groups of the bay then do not give it their opacity, clip or display.
+    """
+    top = rect
+    while top.getparent().getparent() is not None:
+        top = top.getparent()
+    top.addnext(element)
+
+
+def _upright(group, rect, matrix):
+    """Return a group in ``group`` that draws in device face coordinates, ``rect`` there, and the matrix of those coordinates.
+
+    A schematic or a mark drawn there is not turned with the parents of its bay.
+    When the coordinates are not finite, it draws in the coordinates of the bay.
+    """
+    # A parent that is not turned keeps the labels readable.
+    if matrix[:4] == (1, 0, 0, 1):
+        return group, rect, matrix
+    inverse = invert(matrix)
+    absolute = transform_rect(matrix, rect)
+    if inverse is None or not _finite(*inverse, *vars(absolute).values()):
+        return group, rect, matrix
+    upright = etree.SubElement(
+        group, _G, transform=f"matrix({' '.join(map(_number, inverse))})"
+    )
+    return upright, absolute, IDENTITY
+
+
+def _bay_rect(element) -> Rect:
+    return Rect(*(float(element.get(name, "0")) for name in BAY_ATTRIBUTES))
+
+
+def _own_width(rect: Rect, outline_width) -> float:
+    """Return the outline width of a schematic or a mark in ``rect``: as for a face of that size, so its marks fit its cells."""
+    return min(outline_width, max(rect.width, rect.height) * _OUTLINE_WIDTH)
+
+
+def _natural(component) -> str:
+    """Return the sort key that NetBox gives the name of ``component``."""
+    if isinstance(component, Interface):
+        return naturalize_interface(component.name, max_length=100)
+    return naturalize(component.name, max_length=100)
+
+
+def _slot_areas(cell: Rect) -> tuple[Rect, Rect]:
+    """Return the strip of the slot name at the top of ``cell``, and the area of the child under it."""
+    strip = cell.height * 0.25
+    return (
+        Rect(cell.x, cell.y, cell.width, strip),
+        Rect(cell.x, cell.y + strip, cell.width, cell.height - strip),
+    )
+
+
+def _label(parent, rect: Rect, name: str):
+    """Write ``name`` in the centre of ``rect``, at the largest size that fits; nothing when that is not finite."""
+    size = min(rect.height * 0.6, rect.width * 0.9 / (0.6 * max(len(name), 1)))
+    x, y = rect.x + rect.width / 2, rect.y + rect.height / 2
+    # A finite rect can have a centre that overflows.
+    if not _finite(x, y, size) or size <= 0:
+        return
+    text = etree.SubElement(
+        parent,
+        f"{{{SVG_NS}}}text",
+        {
+            "x": _number(x),
+            "y": _number(y),
+            "font-size": _number(size),
+            "font-family": "sans-serif",
+            "text-anchor": "middle",
+            "dominant-baseline": "central",
+            "fill": "#212529",
+        },
+    )
+    text.text = _xml_text(name)
 
 
 def _finite(*values) -> bool:
