@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 LAYOUT = "layout"
 UNAVAILABLE = "unavailable"
-# Reserved for a generic schematic (#47); no member gets it yet.
+# Reserved for a member drawn as a generic schematic (#48); no member gets it yet.
 SCHEMATIC = "schematic"
 DAMAGED_ARTWORK = "damaged_artwork"
 ARTWORK_ERROR = "artwork_error"
@@ -123,6 +123,7 @@ def _artwork(part) -> dict:
             for connector in part.connectors
         ],
         "modules": [_module(placed) for placed in part.modules],
+        "bays": [_bay(drawn) for drawn in part.bays],
     }
 
 
@@ -157,6 +158,19 @@ def _module(placed) -> dict:
             {"code": warning.code, "message": warning.message}
             for warning in placed.warnings
         ],
+    }
+
+
+def _bay(drawn) -> dict:
+    """Return one drawn bay: installed, or not recorded when no module that the user can view is in it."""
+    return {
+        "parent_module_id": None if drawn.parent is None else drawn.parent.pk,
+        "bay_key": drawn.key,
+        "module_bay_id": None if drawn.module_bay is None else drawn.module_bay.pk,
+        "face": drawn.face,
+        "state": drawn.state,
+        "module_id": None if drawn.module is None else drawn.module.pk,
+        "element_id": drawn.element_id,
     }
 
 
