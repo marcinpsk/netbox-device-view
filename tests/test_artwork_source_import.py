@@ -11,8 +11,9 @@ from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
 from django.conf import settings
 from django.db.models import ProtectedError
-from django.test import override_settings
+from django.test import RequestFactory, override_settings
 from django.urls import reverse
+from django.utils.http import urlencode
 from users.models import User
 
 from netbox_device_view.artwork import capture
@@ -25,6 +26,7 @@ from netbox_device_view.models import (
     SourceSyncRun,
     VisualDefinition,
 )
+from netbox_device_view.views import ArtworkSourceImportView
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .test_artwork_import import DEVICE_DIR, ArtworkTestCase, expected_digest
@@ -307,6 +309,23 @@ class SourceImportTests(SourceTestCase):
         )
         self.assertNotContains(page, "mdi-sync")
         self.assertEqual(self.client.post(page.context["sync_url"]).status_code, 403)
+
+    def test_the_sync_return_url_does_not_use_the_request_path(self):
+        self.grant(DataSource, "sync")
+        # The resolver does not route a path such as "//host/", so call the view directly.
+        request = RequestFactory().get(
+            reverse(SOURCE_IMPORT_URL),
+            {"data_source": self.source.pk},
+            PATH_INFO="//evil.example/",
+        )
+        request.user = self.user
+        response = ArtworkSourceImportView.as_view()(request)
+
+        sync_url = reverse("core:datasource_sync", kwargs={"pk": self.source.pk})
+        back = f"{reverse(SOURCE_IMPORT_URL)}?data_source={self.source.pk}&prefix="
+        self.assertContains(
+            response, f'action="{sync_url}?{urlencode({"return_url": back})}"'
+        )
 
     def test_the_revision_page_shows_source_provenance_without_a_commit(self):
         self.sync()
