@@ -1,7 +1,7 @@
 {# The active artwork of each device: utils.artwork_parts() gives the parts, artwork.render the faces. #}
 {% load i18n %}
 {% for part in artwork_parts %}
-<section class="dv-art-part{% if artwork_parts|length > 1 and part.device.pk == current_device %} active-device{% endif %}" aria-label="{{ part.device }}">
+<section class="dv-art-part{% if artwork_parts|length > 1 and part.device.pk == current_device %} active-device{% endif %}" aria-label="{{ part.device }}" data-dv-assembly>
 	{% if artwork_parts|length > 1 %}<p class="text-muted small mb-1">{{ part.device }}</p>{% endif %}
 	{% if part.damaged %}
 	<div class="alert alert-warning mb-0" role="alert">
@@ -10,34 +10,39 @@
 			A stored file of the active {{ key }} revision is missing or does not match its digest, so the artwork is not shown. Import the revision again to repair the file.
 		{% endblocktrans %}
 	</div>
-	{% else %}
-	<div class="row g-2">
-		{% for face in part.faces %}
-		<div class="col-12">
-			<div class="dv-art-panel" data-dv-details-scope>
-				<div class="dv-art-toolbar">
-					<span class="dv-art-face-name">{{ face.label }}</span>
-					<div class="d-flex gap-1">
-					{% include 'netbox_device_view/inc/details_toggle.html' %}
-					<div class="btn-group btn-group-sm" role="group" aria-label="{% blocktrans with face=face.label %}Zoom the {{ face }} face{% endblocktrans %}">
-						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="out" aria-label="{% trans 'Zoom out' %}"><i class="mdi mdi-minus" aria-hidden="true"></i></button>
-						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="reset" aria-label="{% trans 'Fit to panel' %}"><i class="mdi mdi-fit-to-page-outline" aria-hidden="true"></i></button>
-						<button type="button" class="btn btn-outline-secondary" data-dv-zoom="in" aria-label="{% trans 'Zoom in' %}"><i class="mdi mdi-plus" aria-hidden="true"></i></button>
-					</div>
-					</div>
-				</div>
-				{# A scroll area takes keyboard focus, so a keyboard can scroll a zoomed face without a link in it. #}
-				<div class="dv-art-viewport" data-zoom="1" tabindex="0" role="group" aria-label="{% blocktrans with face=face.label %}Artwork of the {{ face }} face{% endblocktrans %}">{{ face.svg }}</div>
-				{% if face.warnings %}
-				<ul class="dv-art-warnings list-unstyled small mb-0" aria-label="{% blocktrans with face=face.label %}Warnings of the {{ face }} face{% endblocktrans %}">
-					{% for warning in face.warnings %}<li><i class="mdi mdi-alert-outline" aria-hidden="true"></i> {{ warning.message }}</li>{% endfor %}
-				</ul>
-				{% endif %}
-				{% for details in face.details %}{% include 'netbox_device_view/inc/connector_details.html' %}{% endfor %}
+	{% elif part.modules %}
+	{# device_view_artwork.js shows one view at a time: the overview, or the focus view of a module. #}
+	<div class="dv-art-assembly">
+		<nav class="dv-art-nav" aria-label="{% blocktrans with device=part.device %}Assembly of {{ device }}{% endblocktrans %}">
+			<ul>
+				<li>
+					<button type="button" class="dv-art-nav-item" data-dv-focus="{{ part.ident }}" aria-controls="{{ part.ident }}" aria-current="true">{{ part.device }}</button>
+					{% include 'netbox_device_view/inc/assembly_nodes.html' with nodes=part.assembly %}
+				</li>
+			</ul>
+		</nav>
+		<div class="dv-art-views">
+			<div class="dv-art-view" id="{{ part.ident }}">
+				{% include 'netbox_device_view/inc/artwork_faces.html' %}
 			</div>
+			{% for focus in part.focus_views %}
+			<div class="dv-art-view dv-art-focus" id="{{ focus.ident }}" data-dv-parent="{{ focus.parent_ident }}" hidden>
+				<nav aria-label="{% trans 'Focus path' %}">
+					<ol class="breadcrumb dv-art-breadcrumb">
+						<li class="breadcrumb-item"><button type="button" class="dv-art-crumb" data-dv-focus="{{ part.ident }}"{% if not focus.parents %} aria-keyshortcuts="Escape"{% endif %}>{{ part.device }}</button></li>
+						{% for parent in focus.parents %}
+						<li class="breadcrumb-item"><button type="button" class="dv-art-crumb" data-dv-focus="{{ parent.ident }}"{% if forloop.last %} aria-keyshortcuts="Escape"{% endif %}>{{ parent.module.label }}</button></li>
+						{% endfor %}
+						<li class="breadcrumb-item active" aria-current="page">{{ focus.module.label }}</li>
+					</ol>
+				</nav>
+				{% include 'netbox_device_view/inc/artwork_face.html' with face=focus.face %}
+			</div>
+			{% endfor %}
 		</div>
-		{% endfor %}
 	</div>
+	{% else %}
+	{% include 'netbox_device_view/inc/artwork_faces.html' %}
 	{% endif %}
 </section>
 {% endfor %}
