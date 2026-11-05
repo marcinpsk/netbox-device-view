@@ -999,7 +999,7 @@ class VirtualChassisArtworkTests(ArtworkTestCase):
         )
         self.assertEqual(content.count('class="dv-art-part active-device"'), 1)
 
-    def test_a_member_without_artwork_keeps_the_layout_view(self):
+    def test_a_member_without_artwork_shows_its_layout_beside_the_artwork(self):
         other = DeviceType.objects.create(
             manufacturer=self.manufacturer, model="SW-48", slug="sw-48"
         )
@@ -1009,8 +1009,12 @@ class VirtualChassisArtworkTests(ArtworkTestCase):
         grant(self.user, DeviceView, "view")
         self.activate()
         content = self.tab()
-        self.assertEqual(faces(content), [])
-        self.assertIn('class="deviceview area', content)
+        self.assertEqual(
+            [ids(face)[0].split("-")[2] for face in faces(content)],
+            [f"d{self.device.pk}"] * 2,
+        )
+        self.assertIn('class="deviceview area d2"', content)
+        self.assertNotIn('class="deviceview area d1"', content)
 
 
 class DevicePagePanelTests(ArtworkTestCase):

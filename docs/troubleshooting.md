@@ -24,7 +24,7 @@ Add a `variants:` block to your YAML layout (or a `.deviceview.module{ModelName}
 
 ## Virtual chassis ports missing
 
-Ensure each VC member's device type has a DeviceView configured. The CSS scoping (`.d{vc_position}`) is applied automatically — no manual scoping is needed.
+A member whose device type has no active artwork and no DeviceView that you can view shows as a generated schematic. Configure a DeviceView or activate artwork for its device type to show its layout or artwork. The plugin applies the CSS scoping (`.d{vc_position}`) automatically, so you do not need to scope the CSS yourself.
 
 ---
 
@@ -34,7 +34,8 @@ SVG mode requires:
 
 1. The DeviceView has **Render Mode → SVG** set
 2. The DeviceView has a non-empty **YAML Layout** field
-3. The device is **not** part of a Virtual Chassis
+
+For a virtual chassis, the DeviceView of the device type of each member selects the mode of that member.
 
 If any of these conditions are not met, the plugin silently falls back to CSS rendering.
 
@@ -42,7 +43,7 @@ If any of these conditions are not met, the plugin silently falls back to CSS re
 
 ## "The device view cannot be shown because its YAML layout does not parse"
 
-The stored **YAML Layout** of the device type has an error. The message shows the error and its location in the layout. For a virtual chassis, the layout can belong to the device type of a different member.
+The stored **YAML Layout** of the device type has an error. The message shows the error and its location in the layout. For a virtual chassis, the message shows under the label of the member whose device type has the layout. The other members still show.
 
 Edit the DeviceView and correct the layout. When you save a DeviceView, the plugin checks its YAML layout. The form, the bulk import and the REST API reject a layout that does not parse, so only a layout that was saved before this check can show this message.
 

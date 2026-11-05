@@ -7,6 +7,9 @@ from dcim.models import (
     DeviceType,
     Interface,
     Manufacturer,
+    Module,
+    ModuleBay,
+    ModuleType,
     RearPort,
     Site,
 )
@@ -85,6 +88,21 @@ class DeviceViewTabTests(TestCase):
         response = self._tab(RenderMode.CSS)
         self.assertContains(response, 'class="deviceview area dsw1', count=1)
         self.assertNotContains(response, 'class="dv-svg-wrapper')
+
+    def test_css_mode_gives_each_grid_the_class_of_each_installed_module(self):
+        Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
+        Module.objects.create(
+            device=self.device,
+            module_bay=ModuleBay.objects.create(device=self.device, name="Slot 1"),
+            module_type=ModuleType.objects.create(
+                manufacturer=self.device_type.manufacturer, model="NM-2X"
+            ),
+        )
+        response = self._tab(RenderMode.CSS)
+        # A ".deviceview.moduleNM-2X.area" rule of the layout applies to the grid.
+        self.assertContains(
+            response, 'class="deviceview area dsw1 moduleNM-2X"', count=1
+        )
 
     def test_svg_mode_renders_the_panel_of_the_device(self):
         Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")

@@ -91,11 +91,13 @@
     pointer-events: none;
 }
 
-.dv-art-module-body {
+.dv-art-module-body,
+.dv-art-device-body {
     cursor: pointer;
 }
 
-.dv-art-module-body rect {
+.dv-art-module-body rect,
+.dv-art-device-body rect {
     pointer-events: all;
 }
 
@@ -113,7 +115,12 @@
     stroke: var(--bs-primary, #0d6efd);
 }
 
-/* A module without artwork: a schematic of its components and slots. */
+.dv-art-device-body:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: 1px;
+}
+
+/* A device or a module without artwork: a schematic of its components and slots. */
 .dv-art-schematic rect {
     fill: var(--tblr-bg-surface-secondary);
     stroke: var(--tblr-secondary);

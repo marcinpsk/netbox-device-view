@@ -1,25 +1,25 @@
 """Compose the artwork API envelope: one entry per member of a device that the user can view.
 
-Active artwork and its placed modules come from ``artwork.render``, as on the
-Device View tab. A member without it gets the panels of the rendered-layout
-API, or a reason.
+``members.resolve_members`` selects what draws each member, as on the Device
+View tab. Active artwork, the generated schematic and their placed modules
+come from ``artwork.render``. A member with a layout gets the panels of the
+rendered-layout API, or a reason.
 """
 
 import logging
 
 from dcim.models import Device
 
-from ..artwork.manifest import DEVICE_KIND
 from ..artwork.render import (
     API,
     ARTWORK,
     DAMAGED,
-    active_revisions,
+    SCHEMATIC,
     resolve_device,
+    resolve_schematic,
 )
-from ..components import panel_members, viewable_device_view
 from ..layout.parser import LayoutParseError
-from ..models import DeviceView
+from ..members import resolve_members
 from .rendered_layout import UnavailableReason, member_panels
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 LAYOUT = "layout"
 UNAVAILABLE = "unavailable"
-# Reserved for a member drawn as a generic schematic (#48); no member gets it yet.
-SCHEMATIC = "schematic"
 DAMAGED_ARTWORK = "damaged_artwork"
 ARTWORK_ERROR = "artwork_error"
 # The ComponentState facts that a binding gives as they are.
@@ -37,60 +35,61 @@ _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_co
 
 def compose_device_artwork(device: Device, user) -> dict:
     """Return the artwork envelope of ``device`` with only the objects that ``user`` can view."""
-    members = panel_members(device, user)
-    revisions = active_revisions(
-        DEVICE_KIND, {member.device_type_id for member in members}
-    )
     return {
         "schema_version": SCHEMA_VERSION,
         "device_id": device.pk,
         "members": [
             {
-                "device_id": member.pk,
-                "label": str(member),
-                "position": member.vc_position,
-                "current": member.pk == device.pk,
-                **_representation(member, revisions.get(member.device_type_id), user),
+                "device_id": member.device.pk,
+                "label": str(member.device),
+                "position": member.device.vc_position,
+                "current": member.device.pk == device.pk,
+                **_representation(member, user),
             }
-            for member in members
+            for member in resolve_members(device, user)
         ],
     }
 
 
-def _representation(member, revision, user) -> dict:
-    if revision is not None:
+def _representation(member, user) -> dict:
+    device, device_view = member.device, member.device_view
+    if member.revision is not None:
         try:
-            part = resolve_device(member, revision, user, view=API, plain=True)
+            part = resolve_device(device, member.revision, user, view=API, plain=True)
         except Exception:
             # As for the panels: one member that fails does not fail the others.
             logger.exception(
-                "Unexpected error drawing the artwork of device %s", member.pk
+                "Unexpected error drawing the artwork of device %s", device.pk
             )
             return _unavailable_member(ARTWORK_ERROR)
         if part.representation == DAMAGED:
             return _unavailable_member(DAMAGED_ARTWORK)
-        return {
-            "representation": ARTWORK,
-            "reason": None,
-            "artwork": _artwork(part),
-            "panels": [],
-        }
-    try:
-        device_view = viewable_device_view(member.device_type, user)
-    except DeviceView.DoesNotExist:
+        return _drawn(ARTWORK, part)
+    if member.schematic:
+        return _drawn(SCHEMATIC, resolve_schematic(device, user, view=API, plain=True))
+    if device_view is None:
         return _unavailable_member(UnavailableReason.NO_LAYOUT)
     if not device_view.has_yaml_layout:
         return _unavailable_member(UnavailableReason.SVG_LAYOUT_REQUIRED)
     try:
-        panels = member_panels(member, device_view, user)
+        panels = member_panels(device, device_view, user)
     except LayoutParseError:
-        logger.warning("Invalid YAML layout for device %s", member.pk)
+        logger.warning("Invalid YAML layout for device %s", device.pk)
         return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
     except Exception:
         # As in compose_rendered_layout: one member that fails does not fail the others.
-        logger.exception("Unexpected error composing panels for device %s", member.pk)
+        logger.exception("Unexpected error composing panels for device %s", device.pk)
         return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
+
+
+def _drawn(representation, part) -> dict:
+    return {
+        "representation": representation,
+        "reason": None,
+        "artwork": _artwork(part),
+        "panels": [],
+    }
 
 
 def _unavailable_member(reason: str) -> dict:
@@ -103,6 +102,9 @@ def _unavailable_member(reason: str) -> dict:
 
 
 def _revision(revision) -> dict:
+    """Return the fields of ``revision``; a schematic has no revision, so each is null."""
+    if revision is None:
+        return {"definition_key": None, "revision_id": None, "digest": None}
     return {
         "definition_key": revision.definition.key,
         "revision_id": revision.pk,

@@ -1974,7 +1974,7 @@ class ReplacementTests(ReplacementTestBase):
         self.assertEqual(change.action, "update")
         self.assertEqual(change.prechange_data["yaml_layout"], self.OLD_YAML)
         self.assertEqual(change.postchange_data["yaml_layout"], updated.yaml_layout)
-        self.assertTrue(self.tab().context["use_svg"])
+        self.assertTrue(self.tab().context["uses_svg"])
 
     def test_css_replacement_clears_yaml_and_selects_css(self):
         self.write_file(EXAMPLE_CSS_PATH, EXAMPLE_CSS.read_bytes())
@@ -2000,7 +2000,7 @@ class ReplacementTests(ReplacementTestBase):
             device_view.grid_template_area,
             normalize_grid_template_area(EXAMPLE_CSS.read_text()),
         )
-        self.assertFalse(self.tab().context["use_svg"])
+        self.assertFalse(self.tab().context["uses_svg"])
 
     def test_yaml_replacement_of_a_css_record_keeps_css_rendering(self):
         device_view = self.existing(
