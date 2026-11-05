@@ -458,8 +458,9 @@ class ImportReceiptMixin:
         return redirect(f"{reverse(self.url_name)}?{urlencode(query)}")
 
     def receipt_results(self, request):
-        receipt = request.session.get(self.receipt_key, {})
-        if not receipt or request.GET.get("receipt") != receipt["token"]:
+        token = request.GET.get("receipt")
+        receipt = request.session.get(self.receipt_key, {}) if token else {}
+        if not receipt or token != receipt["token"]:
             return []
         visible = set(
             models.DefinitionRevision.objects.restrict(request.user, "view")
@@ -543,19 +544,20 @@ class ArtworkSourceImportView(
             and DataSource.objects.restrict(request.user, "sync")
             .filter(pk=source.pk)
             .exists(),
-            "sync_url": source and self._sync_url(request, source, form),
+            "sync_url": source and self._sync_url(source, form),
             "can_view_list": _can_view_list(request.user),
             **extra,
         }
         return render(request, self.template_name, context, status=status)
 
     @staticmethod
-    def _sync_url(request, source, form):
+    def _sync_url(source, form):
         """Return NetBox's own sync URL; it comes back to this page with the same choice."""
         here = urlencode(
             {"data_source": source.pk, "prefix": form["prefix"].value() or ""}
         )
-        back = urlencode({"return_url": f"{request.path}?{here}"})
+        page = reverse("plugins:netbox_device_view:definitionrevision_source_import")
+        back = urlencode({"return_url": f"{page}?{here}"})
         return f"{reverse('core:datasource_sync', kwargs={'pk': source.pk})}?{back}"
 
     def get(self, request):
