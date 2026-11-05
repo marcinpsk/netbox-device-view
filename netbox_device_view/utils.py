@@ -1,24 +1,20 @@
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 
 from dcim.models import (
     ConsolePortTemplate,
     ConsoleServerPortTemplate,
+    Device,
     FrontPortTemplate,
     InterfaceTemplate,
+    Module,
     RearPortTemplate,
     VirtualChassis,
 )
-from django.core.exceptions import ObjectDoesNotExist
 
-from .artwork.manifest import DEVICE_KIND
-from .artwork.render import (
-    active_revisions,
-    has_active_artwork,
-    legend,
-    resolve_device,
-)
+from .artwork.render import Part, legend, resolve_device, resolve_schematic
 from .components import (
     AMBIGUOUS,
     CONNECTED,
@@ -29,8 +25,6 @@ from .components import (
     derive_interface_key,
     derive_port_key,
     device_components,
-    panel_members,
-    viewable_device_view,
 )
 from .details import Details, key_details
 from .layout import (
@@ -42,7 +36,7 @@ from .layout import (
     parse as parse_layout,
 )
 from .layout.renderers.svg import PortCell, drawn_keys
-from .models import DeviceView
+from .members import resolve_members
 
 
 def normalize_grid_template_area(value: str) -> str:
@@ -133,22 +127,6 @@ def device_height_px(device_type):
     Each U is rendered as two rows of 20 px with 2 px of spacing per U.
     """
     return device_type.u_height * 2 * 20 + device_type.u_height * 2
-
-
-def active_panel_key(obj):
-    """Return the ports_chassis/svg_views key that corresponds to ``obj``,
-    or ``None`` for a standalone (non-virtual-chassis) device.
-
-    Mirrors the key scheme used internally by ``prepare()``/``prepare_svg()``:
-    a virtual chassis member is keyed by its ``vc_position``. Used to
-    highlight the specific device the user navigated to when viewing a
-    virtual chassis, whose device page shows every member's panel stacked
-    together. Returns ``None`` for a standalone device since there is only
-    ever one panel in that case, making a highlight redundant.
-    """
-    if obj.virtual_chassis is None:
-        return None
-    return obj.vc_position
 
 
 def _detect_variant(member_modules, device_view) -> str | None:
@@ -269,55 +247,36 @@ def page_cells(states, cable_colors, prefix, face=None):
     ]
 
 
-def _css_groups(obj, members, user):
-    """Return {grid key: states}: one grid per member, and Front and Rear grids for a device outside a virtual chassis."""
+def _css_grids(member, user, cable_colors):
+    """Return {grid key: PageCells}: one grid for a virtual chassis member, and the device, Front and Rear grids for a device outside one."""
+    states = device_components(member, user)
+    if member.virtual_chassis_id is None:
+        keys = ((member.name, None), ("Front", "front"), ("Rear", "rear"))
+    else:
+        keys = ((member.vc_position, None),)
     groups = {}
-    for member in members:
-        states = device_components(member, user)
-        if obj.virtual_chassis is None:
-            for key, face in ((obj.name, None), ("Front", "front"), ("Rear", "rear")):
-                group = [state for state in states if state.face == face]
-                if group:
-                    groups[key] = group
-        else:
-            group = [state for state in states if state.face is None]
-            if group:
-                groups[member.vc_position] = group
-    return groups
-
-
-def prepare(obj, user, cable_colors=False):
-    """Return (dv, modules, ports_chassis, device_view) for CSS rendering, with the objects that ``user`` can view.
-
-    ``ports_chassis`` maps each grid key to its PageCells. Returns
-    (None, None, None, None) if no DeviceView is configured for the device
-    type.
-    """
-    dv = {}
-    modules = {}
-    device_view = None
-    members = panel_members(obj, user)
-    try:
-        if obj.virtual_chassis is None:
-            device_view = viewable_device_view(obj.device_type, user)
-            dv[1] = get_css_for_device_view(device_view)
-            modules[1] = obj.modules.restrict(user, "view")
-        else:
-            for member in members:
-                pos = member.vc_position
-                member_css = get_css_for_device_view(
-                    viewable_device_view(member.device_type, user)
-                )
-                dv[pos] = re.sub(r"\.area\b", f".area.d{pos}", member_css)
-                modules[pos] = member.modules.restrict(user, "view")
-    except ObjectDoesNotExist:
-        return None, None, None, None
-
-    ports_chassis = {
-        key: page_cells(states, cable_colors, f"dv-c{index}")
-        for index, (key, states) in enumerate(_css_groups(obj, members, user).items())
+    for key, face in keys:
+        group = [state for state in states if state.face == face]
+        if group:
+            groups[key] = group
+    return {
+        key: page_cells(group, cable_colors, f"dv-c{member.pk}-{index}")
+        for index, (key, group) in enumerate(groups.items())
     }
-    return dv, modules, ports_chassis, device_view
+
+
+def prepare(member, device_view, user, cable_colors=False):
+    """Return (css, modules, grids) of the CSS layout of ``member``, with the objects that ``user`` can view.
+
+    The CSS of a virtual chassis member is scoped with ``.d<vc_position>``.
+    ``grids`` maps each grid key to its PageCells. Raises LayoutParseError
+    for a YAML layout that does not parse.
+    """
+    css = get_css_for_device_view(device_view)
+    if member.virtual_chassis_id is not None:
+        css = re.sub(r"\.area\b", f".area.d{member.vc_position}", css)
+    modules = list(member.modules.restrict(user, "view").select_related("module_type"))
+    return css, modules, _css_grids(member, user, cable_colors)
 
 
 def _svg_cells(states, cable_colors, prefix, drawn):
@@ -339,39 +298,19 @@ def _svg_cells(states, cable_colors, prefix, drawn):
     return port_cells, details
 
 
-def prepare_svg(obj, user, cable_colors=False):
-    """Return (svg_views, modules, device_view) for SVG rendering, with the objects that ``user`` can view.
+def prepare_svg(member, device_view, user, cable_colors=False):
+    """Return (svg, details) of the SVG layout of ``member``, with the objects that ``user`` can view.
 
-    ``svg_views`` maps each panel key (the device name, or the
-    ``vc_position`` of a virtual chassis member) to its SVG markup and the
-    details of its cells. A member without components has no panel. Returns (None, None, None) when a
-    member has no DeviceView.
+    ``svg`` is None for a member without components. Raises LayoutParseError
+    for a YAML layout that does not parse.
     """
-    svg_views = {}
-    modules = {}
-    device_view = None
-    try:
-        for member in panel_members(obj, user):
-            key = obj.name if obj.virtual_chassis is None else member.vc_position
-            device_view = viewable_device_view(member.device_type, user)
-            member_modules = list(member.modules.restrict(user, "view"))
-            modules[key] = member_modules
-            states = device_components(member, user)
-            variant = _detect_variant(member_modules, device_view)
-            drawn = (
-                drawn_keys(parse_layout(device_view.yaml_layout), variant)
-                if device_view.has_yaml_layout
-                else {}
-            )
-            cells, details = _svg_cells(states, cable_colors, f"dv-s{member.pk}", drawn)
-            svg = get_svg_for_device_view(
-                device_view, variant_name=variant, cells=cells
-            )
-            if states:
-                svg_views[key] = (svg, details)
-    except ObjectDoesNotExist:
-        return None, None, None
-    return svg_views, modules, device_view
+    # The layout renders without components too, so its parse error shows.
+    variant = _detect_variant(list(member.modules.restrict(user, "view")), device_view)
+    drawn = drawn_keys(parse_layout(device_view.yaml_layout), variant)
+    states = device_components(member, user)
+    cells, details = _svg_cells(states, cable_colors, f"dv-s{member.pk}", drawn)
+    svg = get_svg_for_device_view(device_view, variant_name=variant, cells=cells)
+    return (svg, tuple(details)) if states else (None, ())
 
 
 def panel_title(obj, user):
@@ -386,77 +325,90 @@ def panel_title(obj, user):
     return obj.name
 
 
-def artwork_parts(obj, user):
-    """Return the artwork Part of each member that ``user`` can view, or None unless every member has active artwork."""
-    members = panel_members(obj, user)
-    revisions = active_revisions(
-        DEVICE_KIND, {member.device_type_id for member in members}
+@dataclass(frozen=True)
+class MemberPanel:
+    """The device view of one member: a Part (artwork or schematic), an SVG layout, CSS grids, or the error of its layout."""
+
+    device: Device
+    current: bool
+    part: Part | None = None
+    layout_error: str | None = None
+    use_svg: bool = False
+    # An SVG layout: its markup and the details of its cells; None without components.
+    svg: str | None = None
+    details: tuple[Details, ...] = ()
+    # A CSS layout: its CSS, its height in px, {grid key: PageCells}, and the modules that name its classes.
+    css: str | None = None
+    height: Decimal | None = None
+    grids: dict[object, list[PageCell]] = field(default_factory=dict)
+    modules: tuple[Module, ...] = ()
+
+    @property
+    def key(self):
+        """Return the key of the panel: the device name, or the ``vc_position`` of a virtual chassis member."""
+        if self.device.virtual_chassis_id is None:
+            return self.device.name
+        return self.device.vc_position
+
+    @property
+    def height_selector(self):
+        """Return the CSS selector of the grids that ``height`` applies to."""
+        if self.device.virtual_chassis_id is None:
+            return ".deviceview"
+        return f".deviceview.d{self.key}"
+
+
+def _member_panel(obj, member, user, cable_colors):
+    device = member.device
+    current = device.pk == obj.pk
+    if member.revision is not None:
+        return MemberPanel(
+            device, current, part=resolve_device(device, member.revision, user)
+        )
+    if member.schematic:
+        return MemberPanel(device, current, part=resolve_schematic(device, user))
+    device_view = member.device_view
+    try:
+        if device_view.use_svg:
+            svg, details = prepare_svg(device, device_view, user, cable_colors)
+            return MemberPanel(device, current, use_svg=True, svg=svg, details=details)
+        css, modules, grids = prepare(device, device_view, user, cable_colors)
+    except LayoutParseError as exc:
+        return MemberPanel(device, current, layout_error=str(exc))
+    return MemberPanel(
+        device,
+        current,
+        css=css,
+        height=device_height_px(device.device_type),
+        grids=grids,
+        modules=tuple(modules),
     )
-    if not members or any(member.device_type_id not in revisions for member in members):
-        return None
-    return [
-        resolve_device(member, revisions[member.device_type_id], user)
-        for member in members
-    ]
 
 
 def has_device_view(obj, user):
-    """Return True when the device type of ``obj`` has active artwork or a DeviceView that ``user`` can view."""
-    return (
-        has_active_artwork(obj.device_type_id)
-        or DeviceView.objects.restrict(user, "view")
-        .filter(device_type=obj.device_type_id)
-        .exists()
-    )
+    """Return True when a member of ``obj`` that ``user`` can view has active artwork or a DeviceView that ``user`` can view."""
+    return any(member.shown for member in resolve_members(obj, user))
 
 
 def device_view_context(obj, user, cable_colors=False):
     """Return the render context for the device view of ``obj`` that ``user`` sees, or None without one.
 
-    Active artwork comes before a layout. ``layout_error`` holds the parse
-    error of a stored layout that does not parse.
+    Each member resolves alone: its active artwork, else its layout, else a
+    schematic. The ``layout_error`` of a member panel holds the parse error of
+    a stored layout that does not parse.
     """
-    parts = artwork_parts(obj, user)
-    if parts is not None:
-        return {
-            "artwork_parts": parts,
-            "artwork_legend": legend(),
-            "current_device": obj.pk,
-            "panel_title": panel_title(obj, user),
-        }
-    context = {
-        "layout_error": None,
-        "device_view": None,
-        "dv": None,
-        "svg_panels": [],
-        "use_svg": False,
-        "modules": None,
-        "ports_chassis": None,
-        "height": device_height_px(obj.device_type),
-        "active_panel": active_panel_key(obj),
+    members = resolve_members(obj, user)
+    if not any(member.shown for member in members):
+        return None
+    panels = [_member_panel(obj, member, user, cable_colors) for member in members]
+    uses_artwork = any(panel.part for panel in panels)
+    return {
+        "device_panels": panels,
+        "chassis": obj.virtual_chassis_id is not None,
         "panel_title": panel_title(obj, user),
+        "uses_artwork": uses_artwork,
+        "uses_svg": any(panel.use_svg for panel in panels),
+        "uses_css": any(panel.css is not None for panel in panels),
+        "uses_layout": not all(panel.part for panel in panels),
+        "artwork_legend": legend(),
     }
-    try:
-        use_svg = viewable_device_view(obj.device_type, user).use_svg
-    except DeviceView.DoesNotExist:
-        use_svg = False
-
-    try:
-        if use_svg:
-            svg_views, modules, device_view = prepare_svg(obj, user, cable_colors)
-            # prepare_svg() gives None when a virtual chassis member has no device view.
-            use_svg = svg_views is not None
-            context["svg_panels"] = [
-                (key, svg, details) for key, (svg, details) in (svg_views or {}).items()
-            ]
-        if not use_svg:
-            dv, modules, ports_chassis, device_view = prepare(obj, user, cable_colors)
-            if dv is None:
-                return None
-            context.update(dv=dv, ports_chassis=ports_chassis)
-    except LayoutParseError as exc:
-        context["layout_error"] = str(exc)
-        return context
-
-    context.update(device_view=device_view, use_svg=use_svg, modules=modules)
-    return context

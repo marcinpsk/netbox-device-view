@@ -1,6 +1,6 @@
 # Artwork API
 
-A read-only, versioned JSON endpoint that gives each device of a device or virtual chassis its active artwork with the modules in its bays, its layout panels, or the reason it has neither. The Device View tab uses the same resolution code, so the API and the page draw the same modules and bind the same components in the same state.
+A read-only, versioned JSON endpoint that gives each device of a device or virtual chassis its active artwork with the modules in its bays, its generated schematic, its layout panels, or the reason it has none of them. The Device View tab uses the same resolution code, so the API and the page draw the same modules and bind the same components in the same state.
 
 The [rendered-layout API](rendered-layout-api.md) does not change. It serves YAML layouts only.
 
@@ -108,20 +108,22 @@ A client must reject an unknown `schema_version`. A breaking change gives a new 
 | `label` | string | The device name, as the page shows it. |
 | `position` | int \| null | The virtual chassis position. `null` for a device that is not in a virtual chassis. |
 | `current` | bool | `true` for the requested device. |
-| `representation` | string | `"artwork"`, `"layout"`, `"schematic"` or `"unavailable"`. A client must accept `"schematic"`. This version does not return it yet. |
+| `representation` | string | `"artwork"`, `"layout"`, `"schematic"` or `"unavailable"`. |
 | `reason` | string \| null | Set only for `"unavailable"`: see [Reasons](#reasons). |
-| `artwork` | object \| null | Set only for `"artwork"`. |
+| `artwork` | object \| null | Set only for `"artwork"` and `"schematic"`. |
 | `panels` | array | Set only for `"layout"`. Otherwise empty. |
 
-Each member resolves alone. A member without artwork or a layout does not hide the others. The Device View tab shows artwork for a virtual chassis only when every visible member has it; the API gives artwork to each member that has it.
+Each member resolves alone, as on the Device View tab. A member without artwork or a layout does not hide the others.
 
 Active artwork comes before a layout. A member gets `"layout"` when its device type has no active artwork and has a YAML `DeviceView` that the user can view. Its `panels` are the [panels of the rendered-layout API](rendered-layout-api.md#panel) for that device alone: the keys are `front` and `rear`, with no member prefix.
+
+A virtual chassis member gets `"schematic"` when its device type has no active artwork and no `DeviceView` that the user can view, and another member that the user can view has one of them. Its `artwork` has one face, `schematic`, generated from the components and the module bays of the device that the user can view. The face is 444.5 mm wide and 44.45 mm high per rack unit of the device type, at least one unit. Its connectors are as for a [module schematic](#module). Each module bay of the device is a slot, so the `modules` and `bays` have `bay_key: null` and the face `schematic`. `definition_key`, `revision_id` and `digest` are `null`. A device without artwork and without a `DeviceView`, alone or with no such member, gets `"unavailable"` with `no_layout`.
 
 ### Reasons
 
 | Reason | Condition |
 |---|---|
-| `no_layout` | No active artwork, and no `DeviceView` that the user can view. |
+| `no_layout` | No active artwork, and no `DeviceView` that the user can view, and no other member that the user can view has one of them. |
 | `svg_layout_required` | No active artwork, and the `DeviceView` has no YAML layout. |
 | `invalid_layout` | No active artwork, and the YAML layout does not parse. |
 | `damaged_artwork` | A stored file of the active revision is missing or does not match its digest. Import the revision again to repair it. |
@@ -130,8 +132,8 @@ Active artwork comes before a layout. A member gets `"layout"` when its device t
 
 | Field | Type | Notes |
 |---|---|---|
-| `definition_key` | string | The key of the visual definition, for example `acme/sw-24`. |
-| `revision_id`, `digest` | int, string | The active revision. |
+| `definition_key` | string \| null | The key of the visual definition, for example `acme/sw-24`. `null` for a schematic. |
+| `revision_id`, `digest` | int, string \| null | The active revision. `null` for a schematic. |
 | `faces` | array | One entry per face in physical order: `name` (`front`, `rear`, …), `label`, and `svg`. |
 | `connectors` | array | One entry per connector of the manifest, sorted by key. |
 | `modules` | array | One entry per installed module that a face shows: see [Module](#module). |
