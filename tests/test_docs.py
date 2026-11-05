@@ -159,7 +159,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         parent=None,
         bay_key="bay-nm",
         face="front",
-        representation=render.OUTLINE,
+        representation=render.SCHEMATIC,
         revision=None,
         bay=None,
         rotate=0,
@@ -171,6 +171,8 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
     )
     assert _documented_fields(text, "Module") == set(device_artwork._module(module))
     assert _documented_fields(text, "Warning") == {"code", "message"}
+    bay = render.DrawnBay(None, "bay-nm", None, "front", None, None)
+    assert _documented_fields(text, "Bay") == set(device_artwork._bay(bay))
     section = text.split("### Warning\n", 1)[1].split("###", 1)[0]
     codes = section.split("| Code |", 1)[1]
     documented = {

@@ -107,11 +107,11 @@ class ModuleEntryTests(ModuleApiTestCase):
             {"x": 120, "y": 2, "width": 30, "height": 40, "rotate": 90},
         )
 
-    def test_a_module_without_artwork_is_an_outline_without_connectors(self):
+    def test_a_module_without_artwork_or_components_is_an_empty_schematic(self):
         fan = self.modules()[self.inventory.fan.pk]
         self.assertEqual(
             (fan["representation"], fan["artwork"], fan["connectors"]),
-            ("outline", None, []),
+            ("schematic", None, []),
         )
         self.assertEqual(
             fan["element_id"], f"dv-a-d{self.device.pk}-m{self.inventory.fan.pk}"
@@ -176,7 +176,7 @@ class ModuleWarningTests(ModuleApiTestCase):
         )
         self.assertEqual(nm2["representation"], "artwork")
 
-    def test_a_finite_bay_with_a_placement_that_is_not_finite_is_an_outline(self):
+    def test_a_finite_bay_with_a_placement_that_is_not_finite_is_a_schematic(self):
         self.store_face(
             "acme/ch-4",
             "front.svg",
@@ -193,7 +193,7 @@ class ModuleWarningTests(ModuleApiTestCase):
                 [warning["code"] for warning in nm2["warnings"]],
             ),
             (
-                "outline",
+                "schematic",
                 None,
                 f"dv-a-d{self.device.pk}-m{self.inventory.nm2.pk}",
                 ["placement_not_finite"],
