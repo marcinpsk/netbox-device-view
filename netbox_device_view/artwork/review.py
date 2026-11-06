@@ -35,7 +35,14 @@ from ..models import (
     write_transaction,
 )
 from .overrides import depending_on
-from .render import ARTWORK, Part, part_label, resolve_device, resolve_schematic
+from .render import (
+    ARTWORK,
+    DAMAGED,
+    Part,
+    part_label,
+    resolve_device,
+    resolve_schematic,
+)
 from .type_lock import lock_bulk_writes, lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
@@ -67,6 +74,7 @@ NOT_BOUND = _("The connector does not bind the component.")
 NO_CONNECTOR = _("The candidate has no connector {key}.")
 NOT_ARTWORK = _("The candidate does not draw the part with artwork.")
 NOT_DRAWN = _("The candidate does not draw the installed module.")
+DAMAGED_CANDIDATE = _("The stored artwork of the candidate is damaged.")
 
 
 class ActivationRejected(Exception):
@@ -330,8 +338,9 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     affected = _Affected.read(pairs)
     _lock(Device.objects.filter(pk__in=affected.listed_device_ids))
     _lock(Module.objects.filter(pk__in=affected.listed_module_ids))
+    # The review reads the components and the module bays of each device that it names.
     for model in (*BINDABLE_MODELS, ModuleBay):
-        _share(model, [device.pk for device in affected.devices])
+        _share(model, sorted(affected.listed_device_ids))
     review = _inspect(user, pairs)
     if (
         not review.ready
@@ -695,16 +704,16 @@ class _DeviceChange:
         )
 
     def blockers(self) -> list[Blocker]:
-        found = _drawn_connectors(self.candidate)
-        artwork = _artwork_parts(self.candidate)
-        blockers = []
-        for (owner, key), connector in _drawn_connectors(self.active).items():
+        found = _bindings(self.candidate)
+        with_bindings = _binding_parts(self.candidate)
+        blockers = self.damaged_candidates()
+        for (owner, key), connector in _bindings(self.active).items():
             if self.compares_from_empty(owner):
                 continue
             kept = found.get((owner, key))
             if kept is not None:
                 reason = NOT_BOUND
-            elif owner in artwork:
+            elif owner in with_bindings:
                 reason = NO_CONNECTOR.format(key=key)
             else:
                 reason = NOT_ARTWORK
@@ -730,12 +739,27 @@ class _DeviceChange:
         )
         return blockers
 
+    def damaged_candidates(self) -> list[Blocker]:
+        """Return a blocker for each part that the candidate state changes to a revision with damaged artwork."""
+        blockers = []
+        if self.candidate.damaged and self.candidate.revision != self.active.revision:
+            blockers.append(
+                Blocker(self.device, str(self.device), None, None, DAMAGED_CANDIDATE)
+            )
+        before = {placed.module.pk: placed.revision for placed in self.active.modules}
+        blockers.extend(
+            Blocker(self.device, placed.label, None, None, DAMAGED_CANDIDATE)
+            for placed in self.candidate.modules
+            if placed.damaged and before.get(placed.module.pk) != placed.revision
+        )
+        return blockers
+
     def unresolved(self) -> list[Unresolved]:
         return [
             Unresolved(
                 self.device, self.label(owner), key, component_label(b.model, b.name)
             )
-            for (owner, key), connector in _drawn_connectors(self.candidate).items()
+            for (owner, key), connector in _bindings(self.candidate).items()
             for b in connector.bindings
             if b.status == MISSING
         ]
@@ -755,24 +779,32 @@ class _DeviceChange:
         ]
 
 
-def _drawn_connectors(part) -> dict:
-    """Return {(module pk, or None for the device, connector key): connector} of each part that ``part`` draws with artwork.
+def _bindings(part) -> dict:
+    """Return {(module pk, or None for the device, connector key): connector} of each part of ``part`` with revision bindings.
 
-    The connectors of a schematic are not bindings of a revision.
+    A part drawn with artwork has them, and so has a part whose stored
+    artwork is damaged: its bindings come from the manifest. The components
+    of a schematic are not bindings of a revision.
     """
     found = {}
-    if part.representation == ARTWORK:
+    if part.representation in (ARTWORK, DAMAGED):
         found.update(((None, c.key), c) for c in part.connectors)
     for placed in part.modules:
         if placed.representation == ARTWORK:
             found.update(((placed.module.pk, c.key), c) for c in placed.connectors)
+        elif placed.damaged:
+            found.update(
+                ((placed.module.pk, c.key), c) for c in placed.revision_connectors
+            )
     return found
 
 
-def _artwork_parts(part) -> set:
-    """Return the module pk of each module that ``part`` draws with artwork, and None when it draws the device so."""
-    parts = {p.module.pk for p in part.modules if p.representation == ARTWORK}
-    if part.representation == ARTWORK:
+def _binding_parts(part) -> set:
+    """Return the module pk, or None for the device, of each part of ``part`` that _bindings() reads."""
+    parts = {
+        p.module.pk for p in part.modules if p.representation == ARTWORK or p.damaged
+    }
+    if part.representation in (ARTWORK, DAMAGED):
         parts.add(None)
     return parts
 

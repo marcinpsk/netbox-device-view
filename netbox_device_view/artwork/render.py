@@ -238,6 +238,8 @@ class PlacedModule:
     prefix: str
     # The connectors of its artwork, or of its schematic: one for each component.
     connectors: tuple[Connector, ...]
+    # The connectors of its revision, also when it shows as a schematic; none without a revision.
+    revision_connectors: tuple[Connector, ...]
     # The ids of the module face or schematic that the group draws, without the prefix.
     ids: frozenset[str]
     warnings: tuple[ArtworkWarning, ...]
@@ -245,6 +247,11 @@ class PlacedModule:
     @property
     def label(self):
         return part_label(self.module)
+
+    @property
+    def damaged(self) -> bool:
+        """Return True when a stored file of its revision is damaged, so it shows as a schematic."""
+        return any(w.code == WarningCode.DAMAGED_ARTWORK for w in self.warnings)
 
     def connector_id(self, key) -> str | None:
         return self.prefix + key if key in self.ids else None
@@ -757,6 +764,7 @@ class _Composer:
                 element_id=element_id,
                 prefix=prefix,
                 connectors=connectors,
+                revision_connectors=artwork_connectors,
                 ids=ids,
                 warnings=tuple(warnings),
             ),
