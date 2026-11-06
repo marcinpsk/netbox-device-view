@@ -1,20 +1,26 @@
 """Operators add, change and remove instance pins on the plugin pages."""
 
 from core.models import ObjectChange, ObjectType
-from dcim.models import Module, ModuleBay, ModuleType
+from dcim.models import Interface, Module, ModuleBay, ModuleType
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from users.models import ObjectPermission
 
 from netbox_device_view.artwork import pins
-from netbox_device_view.models import DefinitionRevision, InstancePin
+from netbox_device_view.models import (
+    Association,
+    BindingOverride,
+    DefinitionRevision,
+    InstancePin,
+)
 
-from .artwork_samples import DEVICE_FILES, MODULE_FILES
+from .artwork_samples import DEVICE_FILES, DEVICE_MANIFEST, MODULE_FILES
 from .permissions import grant
 from .test_artwork_activation import ActivationTestCase
-from .test_artwork_device_view import faces, ids
-from .test_binding_override_pages import form_errors
+from .test_artwork_device_view import faces, ids, links
+from .test_binding_override_pages import ADD_URL as OVERRIDE_ADD_URL
+from .test_binding_override_pages import form_errors, rows
 
 LIST_URL = "plugins:netbox_device_view:instancepin_list"
 ADD_URL = "plugins:netbox_device_view:instancepin_add"
@@ -424,3 +430,62 @@ class RevisionDeleteTests(PinPageTestCase):
         )
 
         self.assertFalse(DefinitionRevision.objects.filter(pk=self.other.pk).exists())
+
+
+class PinnedInstanceOverrideTests(PinPageTestCase):
+    """An instance override takes its definition from the pin of its instance, as rendering does."""
+
+    def setUp(self):
+        super().setUp()
+        grant(self.user, BindingOverride, "view", "add")
+        self.eth2 = Interface.objects.create(
+            device=self.device, name="eth2", type="1000base-t"
+        )
+        # A key that has con-eth1, but not con-r1 of the revision of the type.
+        self.other_key = self.import_files(
+            {
+                **DEVICE_FILES,
+                "manifest.yaml": DEVICE_MANIFEST.replace(
+                    "key: acme/sw-24", "key: acme/other"
+                ),
+            },
+            "ACME/OTHER",
+        )
+        InstancePin.objects.create(device=self.device, revision=self.other_key)
+
+    def add_override(self, connector_key):
+        return self.client.post(
+            reverse(OVERRIDE_ADD_URL),
+            {
+                "device": self.device.pk,
+                "connector_key": connector_key,
+                **rows(("interface", "eth2")),
+            },
+        )
+
+    def test_an_override_of_a_pinned_device_takes_the_definition_of_the_pin(self):
+        response = self.add_override("con-eth1")
+
+        self.assertEqual(response.status_code, 302, form_errors(response))
+        override = BindingOverride.objects.get()
+        self.assertEqual(override.definition, self.other_key.definition)
+        link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
+        self.assertEqual(link.get("href"), self.eth2.get_absolute_url())
+
+    def test_a_connector_that_only_the_revision_of_the_type_has_is_rejected(self):
+        response = self.add_override("con-r1")
+
+        self.assertContains(
+            response, "The active revision of acme/other has no connector con-r1."
+        )
+        self.assertFalse(BindingOverride.objects.exists())
+
+    def test_a_pinned_device_of_a_type_without_an_association_gets_an_override(self):
+        Association.objects.all().delete()
+
+        response = self.add_override("con-eth1")
+
+        self.assertEqual(response.status_code, 302, form_errors(response))
+        self.assertEqual(
+            BindingOverride.objects.get().definition, self.other_key.definition
+        )
