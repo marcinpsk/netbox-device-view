@@ -334,6 +334,37 @@ class ActivationFirstTests(ConcurrentActivationTestCase):
             )
         )
 
+    def test_a_rename_of_the_bay_of_a_pinned_module_waits(self):
+        module_type = ModuleType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="NM-2X"
+        )
+        module_revision = self.import_files(MODULE_FILES, "ACME/NM-2X")
+        # The review names the pinned module of a device that the selection does not affect.
+        sw9 = Device.objects.create(
+            name="sw9",
+            device_type=DeviceType.objects.create(
+                manufacturer=self.device_type.manufacturer, model="SW-9", slug="sw-9"
+            ),
+            site=self.site,
+            role=self.role,
+        )
+        bay = ModuleBay.objects.create(device=sw9, name="visible-slot", position="1")
+        InstancePin.objects.create(
+            module=Module.objects.create(
+                device=sw9, module_bay=bay, module_type=module_type
+            ),
+            revision=module_revision,
+        )
+        self.url = review_url(
+            (self.newer, self.device_type), (module_revision, module_type)
+        )
+
+        self.assertIsNone(
+            self.writer_during_activation(
+                lambda: ModuleBay.objects.filter(pk=bay.pk).update(name="hidden-slot")
+            )
+        )
+
     def test_an_override_writer_waits_and_checks_the_new_revision(self):
         # The candidate has no con-r1; its binding finds no component, so nothing blocks.
         self.newer = self.import_files(WITHOUT_R1)

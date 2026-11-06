@@ -52,6 +52,7 @@ from .test_artwork_activation import (
 )
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 from .test_binding_override_activation import WITHOUT_ETH1
+from .test_module_activation import WITHOUT_P1
 
 ETH1_BINDING = "      - {component: interface, name: eth1}\n"
 assert ETH1_BINDING in MANIFEST
@@ -302,6 +303,88 @@ class BlockerTests(ReviewTestCase):
                 ),
                 ("ACME NM-2X in Network Module", None, None, review.NOT_DRAWN),
             ],
+        )
+
+    def damage(self, revision, path):
+        """Remove the stored file of ``path`` of ``revision``: the part shows as damaged."""
+        (self.media / revision.files.get(path=path).blob.name).unlink()
+
+    def damaged_review(self, *pairs):
+        with self.assertLogs("netbox_device_view.artwork.render", "WARNING"):
+            return self.reviewed(*pairs)
+
+    def test_a_damaged_active_artwork_keeps_its_bindings_in_the_comparison(self):
+        candidate = self.import_files(WITHOUT_ETH1)
+        self.damage(self.revision, "front.svg")
+
+        response, reviewed = self.damaged_review((candidate, self.device_type))
+
+        self.assertBlocked(response, reviewed)
+        self.assertEqual(
+            [(b.connector, b.component, b.reason) for b in reviewed.blockers],
+            [
+                (
+                    "con-eth1",
+                    "Interface eth1",
+                    "The candidate has no connector con-eth1.",
+                )
+            ],
+        )
+
+    def test_a_candidate_with_damaged_artwork_blocks(self):
+        candidate = self.import_files(NEWER)
+        self.damage(candidate, "front.svg")
+
+        response, reviewed = self.damaged_review((candidate, self.device_type))
+
+        self.assertBlocked(response, reviewed)
+        self.assertEqual(
+            reviewed.blockers,
+            (review.Blocker(self.device, "sw1", None, None, review.DAMAGED_CANDIDATE),),
+        )
+
+    def test_a_damaged_active_module_artwork_keeps_its_bindings_in_the_comparison(
+        self,
+    ):
+        self.activate_module_type()
+        self.install()
+        candidate = self.import_files(WITHOUT_P1, "ACME/NM-2X")
+        self.damage(self.module_revision, "installed.svg")
+
+        response, reviewed = self.damaged_review((candidate, self.module_type))
+
+        self.assertIsNone(token_of(response))
+        self.assertEqual(
+            [(b.part, b.connector, b.reason) for b in reviewed.blockers],
+            [
+                (
+                    "ACME NM-2X in Network Module",
+                    "con-p1",
+                    "The candidate has no connector con-p1.",
+                )
+            ],
+        )
+
+    def test_a_module_candidate_with_damaged_artwork_blocks(self):
+        self.activate_module_type()
+        self.install()
+        candidate = self.import_files(NEW_MODULE, "ACME/NM-2X")
+        self.damage(candidate, "installed.svg")
+
+        response, reviewed = self.damaged_review((candidate, self.module_type))
+
+        self.assertIsNone(token_of(response))
+        self.assertEqual(
+            reviewed.blockers,
+            (
+                review.Blocker(
+                    self.device,
+                    "ACME NM-2X in Network Module",
+                    None,
+                    None,
+                    review.DAMAGED_CANDIDATE,
+                ),
+            ),
         )
 
     def test_a_bay_size_change_is_a_warning_only(self):
