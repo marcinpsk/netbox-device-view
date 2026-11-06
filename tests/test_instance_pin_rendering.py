@@ -5,10 +5,11 @@ import io
 from django.urls import reverse
 from lxml import etree
 
-from netbox_device_view.artwork import activation, pins
+from netbox_device_view.artwork import pins
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import BindingOverride, InstancePin
 
+from .activation import activate
 from .artwork_samples import DEVICE_FILES, bundle, definition
 from .module_samples import NM_MANIFEST, NM_SVG
 from .test_api_artwork import ArtworkApiTestCase
@@ -65,10 +66,10 @@ class DevicePinTests(ArtworkApiTestCase):
         self.assertEqual(self.member(self.sw2)["representation"], "unavailable")
 
     def test_a_pin_keeps_its_revision_after_the_association_changes(self):
-        activation.activate(self.admin, self.revision, self.device_type)
+        activate(self.admin, (self.revision, self.device_type))
         pins.save(self.admin, InstancePin(device=self.device, revision=self.revision))
 
-        activation.activate(self.admin, self.other, self.device_type)
+        activate(self.admin, (self.other, self.device_type))
 
         self.assertEqual(self.revision_id(self.device), self.revision.pk)
         self.assertEqual(self.revision_id(self.sw2), self.other.pk)
@@ -117,7 +118,7 @@ class ModulePinTests(ModuleApiTestCase):
             ),
         )
 
-        activation.activate(self.admin, self.variant, inventory.nm_type)
+        activate(self.admin, (self.variant, inventory.nm_type))
 
         self.assertEqual(
             self.module_artwork(inventory.nm1)["revision_id"],

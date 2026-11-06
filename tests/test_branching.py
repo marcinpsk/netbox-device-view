@@ -40,7 +40,7 @@ from netbox_device_view.models import (
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .permissions import grant
-from .test_artwork_activation import ACTIVATE_URL
+from .test_artwork_activation import activate_through_review
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import CHANGELOG_URL as DEFINITION_CHANGELOG_URL
@@ -329,10 +329,7 @@ class LongNameActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 302)
         diff = ChangeDiff.objects.using("default").get(
@@ -403,10 +400,8 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        # The review and the activation run in the branch of the cookie.
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Association.objects.exists())
@@ -423,10 +418,7 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
         grant(self.user, DefinitionRevision, "delete")
-        activation = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        activation = activate_through_review(self.client, (revision, self.device_type))
         self.assertEqual(activation.status_code, 302)
         del self.client.cookies["active_branch"]
 
@@ -475,10 +467,7 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         )
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 403)
         with activate_branch(self.branch):

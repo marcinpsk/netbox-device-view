@@ -111,6 +111,16 @@ urlpatterns = (
         name="association_list",
     ),
     path(
+        "artwork-associations/review/",
+        views.AssociationReviewView.as_view(),
+        name="association_review",
+    ),
+    path(
+        "artwork-associations/review-update/",
+        views.AssociationReviewUpdateView.as_view(),
+        name="association_review_update",
+    ),
+    path(
         "artwork-associations/<int:pk>/",
         views.AssociationView.as_view(),
         name="association",
