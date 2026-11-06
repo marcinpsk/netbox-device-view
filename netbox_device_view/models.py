@@ -330,6 +330,38 @@ ONE_SCOPE = _(
 )
 
 
+@contextmanager
+def write_transaction(model):
+    """Open one transaction on main and on the connection of ``model``; yield the alias of that connection."""
+    # NetBox Branching routes the model to the branch and its ChangeDiff rows to main.
+    try:
+        with (
+            transaction.atomic(using=DEFAULT_DB_ALIAS),
+            transaction.atomic(using=router.db_for_write(model)),
+        ):
+            yield router.db_for_write(model)
+    except Exception:
+        # The events of a write that rolls back must not reach event rules.
+        clear_events.send(sender=model)
+        raise
+
+
+def type_key(obj) -> tuple[str, int]:
+    """Return (type field, type pk) of a device type or a module type, or of the type that ``obj`` names.
+
+    ``obj`` can also be a device, an installed module or an association. A
+    selection of active_revisions() uses this key.
+    """
+    for spec in TYPE_SCOPES.values():
+        if isinstance(obj, spec.model):
+            return (spec.field, obj.pk)
+    if isinstance(obj, Association):
+        spec = TYPE_SCOPES[obj.kind]
+    else:
+        spec = SCOPES[instance_scope(type(obj)).type_field]
+    return (spec.field, spec.id_of(obj))
+
+
 # NetBox marks the message of an AbortRequest safe, so these hold no object names.
 SCOPE_BUSY = _("Another change of the scope runs at the same time. Try again.")
 SCOPE_TYPE_CHANGED = _("The type of the scope changed. Try again.")
@@ -381,26 +413,10 @@ class ScopedRow:
         if any(getattr(self, n) != stored[n] for n in fields):
             raise ValidationError(message)
 
-    @classmethod
-    @contextmanager
-    def writing(cls):
-        """Open one transaction on main and on the routed connection; yield the routed alias."""
-        # NetBox Branching routes the row to the branch and its ChangeDiff rows to main.
-        try:
-            with (
-                transaction.atomic(using=DEFAULT_DB_ALIAS),
-                transaction.atomic(using=router.db_for_write(cls)),
-            ):
-                yield router.db_for_write(cls)
-        except Exception:
-            # The events of a write that rolls back must not reach event rules.
-            clear_events.send(sender=cls)
-            raise
-
     @contextmanager
     def locked(self):
-        """Hold the lock of the scope's type in the transaction of writing()."""
-        with self.writing() as using:
+        """Hold the lock of the scope's type in a write_transaction()."""
+        with write_transaction(type(self)) as using:
             hardware_type = self.hardware_type
             lock_types([hardware_type], using)
             self._lock_scope(hardware_type)
@@ -646,8 +662,8 @@ def active_revisions(parts, selection=None) -> dict[int, DefinitionRevision]:
     """Return {pk: revision} for the devices or the installed modules ``parts`` that have one.
 
     The pin of a part comes first, then the revision that ``selection``
-    ({(type field, type pk): revision}) gives its type, then the active
-    revision of its type.
+    ({type_key(): revision}) gives its type, then the active revision of its
+    type.
     """
     if not parts:
         return {}
@@ -669,7 +685,7 @@ def active_revisions(parts, selection=None) -> dict[int, DefinitionRevision]:
     selected = selection or {}
     revisions = {
         part.pk: pinned.get(part.pk)
-        or selected.get((type_spec.field, type_spec.id_of(part)))
+        or selected.get(type_key(part))
         or active.get(type_spec.id_of(part))
         for part in parts
     }

@@ -255,16 +255,16 @@ A virtual chassis shows the artwork of each member when every member that you ca
 
 ### Review an activation
 
-The review compares each affected device in two states. The current state uses the [instance pins](#instance-pins), then the active revision of each type. The new state uses the pins, then the selected revisions, then the active revisions. In each state, the review composes the device as the Device View does: with the artwork of the device when the state gives it a revision, else as a schematic. A review holds 100 types at most.
+The review compares each affected device in two states. The active state uses the [instance pins](#instance-pins), then the active revision of each type. The candidate state uses the pins, then the selected revisions (the candidates), then the active revisions. In each state, the review composes the device as the Device View does: with the artwork of the device when the state gives it a revision, else as a schematic. A review holds 100 types at most.
 
 - The affected devices of a device type are its devices without a pin. The affected installed modules of a module type are its modules without a pin, and the devices that hold them. The review lists them for each selected type. It lists each pinned device or module as **Pinned, unchanged**: a pin stays after the activation.
 - A blocker stops the activation. A blocker is one of:
-    - A binding that finds a component now and finds no component after the activation. This includes a connector that the new revision does not have, and a part that the new state does not draw with artwork. The review shows the device, the part, the connector and the component.
-    - An installed module, at any depth, that shows now and does not show after the activation.
-    - A [binding override](#binding-overrides) of the type, or of an instance without a pin, whose connector key is not in the new revision.
-- A binding that finds no component now does not block. **Unresolved bindings** lists each binding that finds no component after the activation.
-- A new warning of an installed module, for example a bay size change, does not block. **Warnings** lists it.
-- A device or an installed module whose type is selected, and that has no pin and no active revision, compares from an empty state. Nothing on it or below it blocks. Thus a first activation over a schematic does not block on a module that the artwork does not draw.
+    - A binding that finds a component in the active state and finds no component in the candidate state. This includes a connector that the candidate revision does not have, and a part that the candidate state does not draw with artwork. The review shows the device, the part, the connector and the component.
+    - An installed module, at any depth, that the active state draws and the candidate state does not draw.
+    - A [binding override](#binding-overrides) of the type, or of an instance without a pin, whose connector key is not in the candidate revision.
+- A binding that finds no component in the active state does not block. **Unresolved bindings** lists each binding that finds no component in the candidate state.
+- A warning of an installed module that the candidate state adds or changes, for example a bay size change, does not block. **Warnings** lists it.
+- A device or an installed module whose type is selected, and that has no revision in the active state, compares from an empty state. Nothing on it or below it blocks. Thus a first activation over a schematic does not block on a module that the artwork does not draw.
 - The components of a schematic are not bindings of a revision. The review compares only the connectors of the parts that artwork draws.
 
 The review writes nothing. Its **Activate** button holds a signed token. The token is valid for 15 minutes, for your user, and in the branch of the review only. It holds the selection and a fingerprint of the affected objects: the associations, the affected devices, their installed modules, components and module bays, the instance pins and the binding overrides. Cable state is not in it. On activation, the plugin locks these objects and makes the review again. When the fingerprint, the blockers or your permissions differ, or a concurrent change locks the same objects, the activation stops with **Review the activation again**. No association changes then.

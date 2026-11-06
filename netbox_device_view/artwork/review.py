@@ -1,12 +1,4 @@
-"""Review the impact of an activation, and activate a reviewed selection: the one writer of associations.
-
-A review compares two states of each affected device. The active state
-uses the pins, then the associations. The candidate state uses the pins,
-then the selected revisions, then the associations. Each state composes
-the device as rendering does. A signed token holds the selection and a
-fingerprint of the impact set. Activation locks the dependency set, makes
-the review again and writes every association of the selection, or none.
-"""
+"""Review the impact of an activation, and activate a reviewed selection: the one writer of associations."""
 
 import functools
 import hashlib
@@ -17,19 +9,12 @@ from dataclasses import dataclass, field
 
 from core.choices import ObjectChangeActionChoices
 from core.models import ObjectChange, ObjectType
-from core.signals import clear_events
 from dcim.models import Device, DeviceType, Module, ModuleBay, ModuleType
 from django.core import signing
 from django.core.exceptions import PermissionDenied
-from django.db import (
-    DEFAULT_DB_ALIAS,
-    IntegrityError,
-    OperationalError,
-    connections,
-    router,
-    transaction,
-)
+from django.db import IntegrityError, OperationalError, connections, router
 from django.db.models import Q
+from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
 
 from ..components import BINDABLE_MODELS, component_label
@@ -45,10 +30,12 @@ from ..models import (
     InstancePin,
     active_revisions,
     instance_scope,
+    type_key,
     type_scope,
+    write_transaction,
 )
 from .overrides import depending_on
-from .render import ARTWORK, part_label, resolve_device, resolve_schematic
+from .render import ARTWORK, Part, part_label, resolve_device, resolve_schematic
 from .type_lock import lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
@@ -104,8 +91,35 @@ class Pair:
 
     @property
     def key(self) -> tuple[str, int]:
-        """Return the key of the type in a selection: see active_revisions()."""
-        return (self.scope.field, self.hardware_type.pk)
+        return type_key(self.hardware_type)
+
+    def to_token(self) -> list:
+        """Return the pair as it is in a review token: from_token() reads it."""
+        return [
+            self.scope.field,
+            self.hardware_type.pk,
+            self.revision.pk,
+            self.revision.digest,
+        ]
+
+    @classmethod
+    def from_token(cls, value) -> "Pair | None":
+        """Return the pair of a review token, or None when its type or revision does not exist any more."""
+        scope_field, type_pk, revision_pk, digest = value
+        hardware_type = (
+            SCOPES[scope_field]
+            .model.objects.filter(pk=type_pk)
+            .select_related("manufacturer")
+            .first()
+        )
+        revision = (
+            DefinitionRevision.objects.filter(pk=revision_pk, digest=digest)
+            .select_related("definition")
+            .first()
+        )
+        if hardware_type is None or revision is None:
+            return None
+        return cls(hardware_type, revision)
 
 
 @dataclass(frozen=True)
@@ -161,6 +175,17 @@ class Target:
             self.association is not None
             and self.association.revision_id == self.pair.revision.pk
         )
+
+    @property
+    def instance_label(self) -> str:
+        """Return the name of the instances of the type: "Device" or "Installed module"."""
+        field = instance_scope(type(self.pair.hardware_type)).field
+        return capfirst(InstancePin._meta.get_field(field).verbose_name)
+
+    @property
+    def names_device(self) -> bool:
+        """Return True when an instance is an installed module: its row names its device."""
+        return instance_scope(type(self.pair.hardware_type)).names_device
 
     @property
     def rows(self) -> list[tuple]:
@@ -220,15 +245,7 @@ def build(user, pairs) -> Review:
                 "user": user.pk,
                 # NetBox Branching gives each branch its own connection.
                 "connection": router.db_for_write(Association),
-                "pairs": [
-                    [
-                        pair.scope.field,
-                        pair.hardware_type.pk,
-                        pair.revision.pk,
-                        pair.revision.digest,
-                    ]
-                    for pair in pairs
-                ],
+                "pairs": [pair.to_token() for pair in pairs],
                 "fingerprint": review.fingerprint,
             },
             salt=SIGNING_SALT,
@@ -245,21 +262,12 @@ def apply(user, token) -> list[Association]:
     """
     pairs, fingerprint = _load(user, token)
     try:
-        try:
-            # NetBox Branching routes Association to the branch and its ChangeDiff rows to main.
-            with (
-                transaction.atomic(using=DEFAULT_DB_ALIAS),
-                transaction.atomic(using=router.db_for_write(Association)),
-            ):
-                return _apply(user, pairs, fingerprint)
-        except OperationalError as exc:
-            if getattr(exc.__cause__, "sqlstate", None) != DEADLOCK:
-                raise
-            raise ActivationRejected(CONCURRENT) from exc
-    except Exception:
-        # The events of a write that rolls back must not reach event rules.
-        clear_events.send(sender=Association)
-        raise
+        with write_transaction(Association):
+            return _apply(user, pairs, fingerprint)
+    except OperationalError as exc:
+        if getattr(exc.__cause__, "sqlstate", None) != DEADLOCK:
+            raise
+        raise ActivationRejected(CONCURRENT) from exc
 
 
 def previous_revision(association) -> DefinitionRevision | None:
@@ -296,22 +304,9 @@ def _load(user, token) -> tuple[list[Pair], str]:
         raise ActivationRejected(OTHER_USER)
     if payload["connection"] != router.db_for_write(Association):
         raise ActivationRejected(OTHER_BRANCH)
-    pairs = []
-    for scope_field, type_pk, revision_pk, digest in payload["pairs"]:
-        hardware_type = (
-            SCOPES[scope_field]
-            .model.objects.filter(pk=type_pk)
-            .select_related("manufacturer")
-            .first()
-        )
-        revision = (
-            DefinitionRevision.objects.filter(pk=revision_pk, digest=digest)
-            .select_related("definition")
-            .first()
-        )
-        if hardware_type is None or revision is None:
-            raise ActivationRejected(CHANGED)
-        pairs.append(Pair(hardware_type, revision))
+    pairs = [Pair.from_token(value) for value in payload["pairs"]]
+    if None in pairs:
+        raise ActivationRejected(CHANGED)
     return pairs, payload["fingerprint"]
 
 
@@ -399,10 +394,7 @@ def _write(user, target) -> Association | None:
 def _insert(association, pair) -> None:
     try:
         # A savepoint keeps the transaction usable for the check below.
-        with (
-            transaction.atomic(using=DEFAULT_DB_ALIAS),
-            transaction.atomic(using=router.db_for_write(Association)),
-        ):
+        with write_transaction(Association):
             association.save()
     except IntegrityError as exc:
         # Only a concurrent first association of the type is expected; other errors stay visible.
@@ -440,9 +432,9 @@ class _Affected:
         for pair in pairs:
             spec = instance_scope(type(pair.hardware_type))
             pins = set(
-                InstancePin.objects.filter(
-                    **{f"{spec.field}__{spec.type_field}": pair.hardware_type}
-                ).values_list(f"{spec.field}_id", flat=True)
+                InstancePin.objects.filter(_pins_of(pair.hardware_type)).values_list(
+                    f"{spec.field}_id", flat=True
+                )
             )
             found = list(
                 spec.model.objects.filter(**{spec.type_field: pair.hardware_type})
@@ -485,6 +477,12 @@ class _Affected:
         return ids
 
 
+def _pins_of(hardware_type) -> Q:
+    """Return the filter of the pins of the instances of a device type or a module type."""
+    spec = instance_scope(type(hardware_type))
+    return Q(**{f"{spec.field}__{spec.type_field}": hardware_type})
+
+
 # The objects that the labels of a device and an installed module read.
 _RELATIONS = {
     Device: ("device_type__manufacturer",),
@@ -498,7 +496,7 @@ def _inspect(user, pairs) -> Review:
     if not _visible(user, pairs, affected):
         return Review(hidden=True, dependency_types=types)
     associations = {
-        (TYPE_SCOPES[a.kind].field, TYPE_SCOPES[a.kind].id_of(a)): a
+        type_key(a): a
         for a in Association.objects.filter(_of_types(types)).select_related(
             "revision__definition"
         )
@@ -587,17 +585,13 @@ def _compare(user, affected, selection) -> list["_DeviceChange"]:
     after = active_revisions(devices, selection)
     modules = active_revisions(list(affected.modules))
     # A part whose type is selected and that has no revision now compares from an empty state.
-    new = {
-        *(
-            (Device, d.pk)
-            for d in devices
-            if ("device_type", d.device_type_id) in selection and d.pk not in before
-        ),
-        *(
-            (Module, m.pk)
-            for m in affected.modules
-            if ("module_type", m.module_type_id) in selection and m.pk not in modules
-        ),
+    first_activations = {
+        (type(part), part.pk)
+        for part, revisions in (
+            *((d, before) for d in devices),
+            *((m, modules) for m in affected.modules),
+        )
+        if type_key(part) in selection and part.pk not in revisions
     }
     parents = {m.pk: m.module_bay.module_id for m in affected.modules}
     return [
@@ -605,14 +599,14 @@ def _compare(user, affected, selection) -> list["_DeviceChange"]:
             device,
             _compose(device, user, before.get(device.pk)),
             _compose(device, user, after.get(device.pk), selection),
-            new,
+            first_activations,
             parents,
         )
         for device in devices
     ]
 
 
-def _compose(device, user, revision, selection=None):
+def _compose(device, user, revision, selection=None) -> Part:
     """Compose ``device`` as rendering does: its artwork when the state gives it a revision, else its schematic."""
     if revision is None:
         return resolve_schematic(device, user, plain=True, selection=selection)
@@ -624,19 +618,19 @@ class _DeviceChange:
     """One affected device composed in the active state and in the candidate state."""
 
     device: Device
-    active: object
-    candidate: object
+    active: Part
+    candidate: Part
     # {(Device or Module, pk)} of the parts that compare from an empty state.
-    new: set
+    first_activations: set
     # {module pk: the pk of the module that has its bay, or None}
     parents: dict
 
-    def is_new(self, module_pk) -> bool:
+    def compares_from_empty(self, module_pk) -> bool:
         """Return True when the part (a module, or None for the device) or a part above it compares from an empty state."""
-        if (Device, self.device.pk) in self.new:
+        if (Device, self.device.pk) in self.first_activations:
             return True
         while module_pk is not None:
-            if (Module, module_pk) in self.new:
+            if (Module, module_pk) in self.first_activations:
                 return True
             module_pk = self.parents.get(module_pk)
         return False
@@ -656,7 +650,7 @@ class _DeviceChange:
         artwork = _artwork_parts(self.candidate)
         blockers = []
         for (owner, key), connector in _drawn_connectors(self.active).items():
-            if self.is_new(owner):
+            if self.compares_from_empty(owner):
                 continue
             kept = found.get((owner, key))
             if kept is not None:
@@ -665,7 +659,9 @@ class _DeviceChange:
                 reason = NO_CONNECTOR.format(key=key)
             else:
                 reason = NOT_ARTWORK
-            lost = _found(connector) - (set() if kept is None else _found(kept))
+            lost = _bound_components(connector) - (
+                set() if kept is None else _bound_components(kept)
+            )
             blockers.extend(
                 Blocker(
                     self.device,
@@ -680,7 +676,8 @@ class _DeviceChange:
         blockers.extend(
             Blocker(self.device, placed.label, None, None, NOT_DRAWN)
             for placed in self.active.modules
-            if placed.module.pk in lost and not self.is_new(placed.module.pk)
+            if placed.module.pk in lost
+            and not self.compares_from_empty(placed.module.pk)
         )
         return blockers
 
@@ -735,7 +732,8 @@ def _drawn_modules(part) -> set[int]:
     return {p.module.pk for p in part.modules if p.element_id is not None}
 
 
-def _found(connector) -> set:
+def _bound_components(connector) -> set:
+    """Return (model, name) of each component that ``connector`` finds."""
     return {(b.model, b.name) for b in connector.bindings if b.status == FOUND}
 
 
@@ -743,16 +741,14 @@ def _fingerprint(affected, associations) -> str:
     """Return the SHA-256 of the impact set; cable state is not in it."""
     devices = [device.pk for device in affected.devices]
     types = affected.dependency_types
-    targets = [pair.hardware_type for pair in affected.pairs]
-    pins = (
-        Q(device__in=devices)
-        | Q(module__device__in=devices)
-        | Q(device__device_type__in=[t for t in targets if isinstance(t, DeviceType)])
-        | Q(module__module_type__in=[t for t in targets if isinstance(t, ModuleType)])
+    pins = functools.reduce(
+        operator.or_,
+        (_pins_of(pair.hardware_type) for pair in affected.pairs),
+        Q(device__in=devices) | Q(module__device__in=devices),
     )
     states = []
     for hardware_type in types:
-        key = (type_scope(hardware_type).field, hardware_type.pk)
+        key = type_key(hardware_type)
         association = associations.get(key)
         state = (
             [None, None]
