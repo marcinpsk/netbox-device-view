@@ -258,6 +258,7 @@ class ActivateRevisionForm(forms.Form):
             queryset=scope.model.objects.restrict(user, "view"),
             label=capfirst(scope.model._meta.verbose_name_plural),
             help_text=help_text,
+            error_messages={"invalid_choice": review.NOT_VIEWABLE},
         )
 
     @staticmethod
@@ -291,7 +292,11 @@ def review_url(pairs, **params) -> str:
 class ReviewForm(forms.Form):
     """The selection of a review: the revisions, and the types of each in its ActivateRevisionForm."""
 
-    revision = forms.ModelMultipleChoiceField(queryset=None, required=False)
+    revision = forms.ModelMultipleChoiceField(
+        queryset=None,
+        required=False,
+        error_messages={"invalid_choice": review.NOT_VIEWABLE},
+    )
     # The associations that a review of an update leaves out: they have the newest revision.
     current = forms.ModelMultipleChoiceField(queryset=None, required=False)
 

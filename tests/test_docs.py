@@ -66,6 +66,7 @@ MIB = 1024 * 1024
         f"the bay differ by more than {placement.SIZE_TOLERANCE} mm. The module still shows.",
         f"A module is more than {render.MAX_MODULE_DEPTH} modules deep",
         f"A review holds {review.MAX_PAIRS} types at most.",
+        f"Select {review.MAX_PAIRS} associations at most.",
         f"The token is valid for {review.REVIEW_MAX_AGE_SECONDS // 60} minutes",
         f'the review shows only "{review.HIDDEN}"',
     ],
