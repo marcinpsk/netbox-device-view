@@ -33,7 +33,7 @@
     {% endif %}
     {% if review %}
       <p class="text-muted">
-        {% trans "The review compares each affected device as it shows now with the same device after the activation of every selected revision. The review changes nothing." %}
+        {% trans "The review compares each affected device in the active state with the same device in the candidate state, where every selected revision is active. The review changes nothing." %}
       </p>
       {% for target in review.targets %}
         <div class="card">
@@ -73,8 +73,8 @@
             <table class="table table-hover mb-0">
               <thead>
                 <tr>
-                  <th scope="col">{% if target.pair.scope.field == "device_type" %}{% trans "Device" %}{% else %}{% trans "Installed module" %}{% endif %}</th>
-                  {% if target.pair.scope.field == "module_type" %}<th scope="col">{% trans "Device" %}</th>{% endif %}
+                  <th scope="col">{{ target.instance_label }}</th>
+                  {% if target.names_device %}<th scope="col">{% trans "Device" %}</th>{% endif %}
                   <th scope="col">{% trans "Result" %}</th>
                 </tr>
               </thead>
@@ -82,7 +82,7 @@
                 {% for instance, label, device, pinned in target.rows %}
                   <tr>
                     <td><a href="{{ instance.get_absolute_url }}">{{ label }}</a></td>
-                    {% if target.pair.scope.field == "module_type" %}<td><a href="{{ device.get_absolute_url }}">{{ device }}</a></td>{% endif %}
+                    {% if target.names_device %}<td><a href="{{ device.get_absolute_url }}">{{ device }}</a></td>{% endif %}
                     <td>{% if pinned %}<span class="text-muted">{% trans "Pinned, unchanged" %}</span>{% elif target.unchanged %}<span class="text-muted">{% trans "Unchanged" %}</span>{% else %}{% trans "Shows the candidate" %}{% endif %}</td>
                   </tr>
                 {% empty %}
@@ -97,7 +97,7 @@
       <div class="card">
         <h2 class="card-header">{% trans "Blockers" %}</h2>
         <div class="card-body pb-0">
-          <p class="text-muted">{% trans "A blocker is a binding that resolves now and is missing after the activation, or an installed module that shows now and does not show after it." %}</p>
+          <p class="text-muted">{% trans "A blocker is a binding that finds a component in the active state and no component in the candidate state, or an installed module that the active state draws and the candidate state does not draw." %}</p>
         </div>
         <div class="table-responsive">
           <table class="table table-hover mb-0">
@@ -130,7 +130,7 @@
       <div class="card">
         <h2 class="card-header">{% trans "Unresolved bindings" %}</h2>
         <div class="card-body pb-0">
-          <p class="text-muted">{% trans "These bindings find no component after the activation. A binding that is missing now does not block." %}</p>
+          <p class="text-muted">{% trans "These bindings find no component in the candidate state. A binding that finds no component in the active state does not block." %}</p>
         </div>
         <div class="table-responsive">
           <table class="table table-hover mb-0">

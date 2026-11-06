@@ -143,7 +143,7 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
 
 
 class _ErrorResponse(Exception):
-    """An error response of a write, raised so that the writing() transaction rolls back."""
+    """An error response of a write, raised so that the write_transaction() rolls back."""
 
     def __init__(self, response):
         super().__init__(response.status_code)
@@ -151,11 +151,11 @@ class _ErrorResponse(Exception):
 
 
 class ScopedRowViewSet(NetBoxModelViewSet):
-    """Each write runs in the writing() transaction of the model and takes the locks of its writer."""
+    """Each write runs in the write_transaction() of the model and takes the locks of its writer."""
 
     def _write(self, handler, request, *args, **kwargs):
         try:
-            with self.queryset.model.writing() as using:
+            with models.write_transaction(self.queryset.model) as using:
                 if isinstance(request.data, list) and not self._queues_job(request):
                     lock_bulk_writes(using)
                 response = handler(request, *args, **kwargs)
@@ -210,13 +210,15 @@ class ScopedRowViewSet(NetBoxModelViewSet):
         # Read through the delete constraints: a busy scope must not tell apart an id that the caller cannot delete.
         selected = list(
             self.get_queryset().filter(
-                pk__in=[o["id"] for o in serializer.validated_data]
+                pk__in=[row["id"] for row in serializer.validated_data]
             )
         )
         model = self.queryset.model
         model.lock_scopes(selected, router.db_for_write(model))
         return (
-            super().get_bulk_destroy_queryset().filter(pk__in=[o.pk for o in selected])
+            super()
+            .get_bulk_destroy_queryset()
+            .filter(pk__in=[row.pk for row in selected])
         )
 
 

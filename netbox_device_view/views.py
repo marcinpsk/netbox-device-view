@@ -396,17 +396,22 @@ class DefinitionRevisionListView(generic.ObjectListView):
     actions = (BundleImport, SourceImport)
 
 
-class ActivateRevision(ObjectAction):
+class ActivationAction(ObjectAction):
+    """A button for a user who can add or change associations."""
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # permissions_required needs every permission; activation needs add or change.
+        if not review.can_activate(context["request"].user):
+            return ""
+        return super().render(context, obj, **kwargs)
+
+
+class ActivateRevision(ActivationAction):
     name = "activate"
     label = _("Activate")
     template_name = "netbox_device_view/buttons/activate.html"
     url_kwargs = ("pk",)
-
-    @classmethod
-    def render(cls, context, obj, **kwargs):
-        if not review.can_activate(context["request"].user):
-            return ""
-        return super().render(context, obj, **kwargs)
 
 
 class DefinitionRevisionView(generic.ObjectView):
@@ -536,17 +541,11 @@ class AssociationReviewView(ActivationPermissionMixin, GetReturnURLMixin, View):
         return redirect(self.get_return_url(request))
 
 
-class ReviewUpdate(ObjectAction):
+class ReviewUpdate(ActivationAction):
     name = "review_update"
     label = _("Review update")
     multi = True
     template_name = "netbox_device_view/buttons/review_update.html"
-
-    @classmethod
-    def render(cls, context, obj, **kwargs):
-        if not review.can_activate(context["request"].user):
-            return ""
-        return super().render(context, obj, **kwargs)
 
 
 class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, View):
@@ -720,7 +719,7 @@ class TypeLockedDeleteView(generic.ObjectDeleteView):
 
     def post(self, request, *args, **kwargs):
         try:
-            with self.queryset.model.writing():
+            with models.write_transaction(self.queryset.model):
                 return super().post(request, *args, **kwargs)
         except AbortRequest as exc:
             messages.error(request, exc.message)
@@ -743,14 +742,12 @@ class BindingOverrideDeleteView(TypeLockedDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
 
 
-class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
-    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
-    filterset = filtersets.BindingOverrideFilterSet
-    table = tables.BindingOverrideTable
+class ScopedRowBulkDeleteView(generic.BulkDeleteView):
+    """Delete several overrides or pins with the bulk lock of their writers."""
 
     def post(self, request, **kwargs):
         try:
-            with models.BindingOverride.writing() as using:
+            with models.write_transaction(self.queryset.model) as using:
                 if self._deletes_now(request):
                     lock_bulk_writes(using)
                     self._lock_selection(request, using)
@@ -775,7 +772,7 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
         return is_background_request(request) or not background
 
     def _lock_selection(self, request, using):
-        """Lock the scopes of the overrides that BulkDeleteView.post() selects, before it reads them."""
+        """Lock the scopes of the rows that BulkDeleteView.post() selects, before it reads them."""
         # Read through the delete constraints: a row that the user cannot delete takes no lock.
         if request.POST.get("_all"):
             selected = self.filterset(request.GET, self.queryset, request=request).qs
@@ -784,9 +781,15 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
                 pk__in=[int(pk) for pk in request.POST.getlist("pk")]
             )
         selected = list(selected)
-        models.BindingOverride.lock_scopes(selected, using)
-        # An override that is not in the locked selection is not deleted.
-        self.queryset = self.queryset.filter(pk__in=[o.pk for o in selected])
+        self.queryset.model.lock_scopes(selected, using)
+        # A row that is not in the locked selection is not deleted.
+        self.queryset = self.queryset.filter(pk__in=[row.pk for row in selected])
+
+
+class BindingOverrideBulkDeleteView(ScopedRowBulkDeleteView):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    filterset = filtersets.BindingOverrideFilterSet
+    table = tables.BindingOverrideTable
 
 
 class InstancePinListView(generic.ObjectListView):
@@ -823,15 +826,10 @@ class InstancePinDeleteView(generic.ObjectDeleteView):
     queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
 
 
-class InstancePinBulkDeleteView(generic.BulkDeleteView):
+class InstancePinBulkDeleteView(ScopedRowBulkDeleteView):
     queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
     filterset = filtersets.InstancePinFilterSet
     table = tables.InstancePinTable
-
-    def post(self, request, **kwargs):
-        with models.InstancePin.writing() as using:
-            lock_bulk_writes(using)
-            return super().post(request, **kwargs)
 
 
 class ImportReceiptMixin:
