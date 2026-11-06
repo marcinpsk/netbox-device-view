@@ -219,7 +219,13 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 An association links a device type to one revision of a device definition, or a module type to one revision of a module definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of a device type then show the artwork instead of the layout. Each installed module of a module type shows its artwork in the bay of its parent: see [Module bays](#module-bays).
 
-In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. For a device definition, select the **Device type**. For a module definition, select the **Module type**. A revision activates only for a type of its kind. Click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type, and you can filter it by device type or module type. Delete an association to show the layout of the type again, or the schematic of each module of the type. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
+An activation always goes through a [review](#review-an-activation). The review shows what the activation changes. Nothing changes until you activate the reviewed selection. To open a review:
+
+- Go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select one or more types of the kind of the revision: device types for a device definition, module types for a module definition. Click **Review**.
+- Go to **Plugins → Artwork Associations**, select one or more associations and click **Review update**. The review pairs each association with the newest revision of its definition. An association that already has the newest revision is not in the review, and the review names it.
+- Open an association and click **Roll back**. The review pairs the association with its previous revision: the revision before the last change of the association. The association page shows the previous revision while it exists. The button shows only when you have the change permission on the association.
+
+Click **Activate** on the review. The plugin applies every selected association, or none of them. A type that already has an active revision changes to the selected one. The page then goes back to the page that opened the review. **Plugins → Artwork Associations** lists the active revision of each type, and you can filter it by device type or module type. Delete an association to show the layout of the type again, or the schematic of each module of the type. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
 
 The artwork view shows:
 
@@ -247,6 +253,22 @@ A cable that you cannot view gives no cable mark. The path state is in the toolt
 Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link and has the mark for no component found. The plugin never selects one component for a connector with several bindings: a click opens its details instead. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
 Each member of a virtual chassis resolves alone, so members with artwork, layouts and schematics show together. See [Virtual chassis](virtual-chassis.md).
+
+### Review an activation
+
+The review compares each affected device in two states. The current state uses the [instance pins](#instance-pins), then the active revision of each type. The new state uses the pins, then the selected revisions, then the active revisions. In each state, the review composes the device as the Device View does: with the artwork of the device when the state gives it a revision, else as a schematic. A review holds 100 types at most.
+
+- The affected devices of a device type are its devices without a pin. The affected installed modules of a module type are its modules without a pin, and the devices that hold them. The review lists them for each selected type. It lists each pinned device or module as **Pinned, unchanged**: a pin stays after the activation.
+- A blocker stops the activation. A blocker is one of:
+    - A binding that finds a component now and finds no component after the activation. This includes a connector that the new revision does not have, and a part that the new state does not draw with artwork. The review shows the device, the part, the connector and the component.
+    - An installed module, at any depth, that shows now and does not show after the activation.
+    - A [binding override](#binding-overrides) of the type, or of an instance without a pin, whose connector key is not in the new revision.
+- A binding that finds no component now does not block. **Unresolved bindings** lists each binding that finds no component after the activation.
+- A new warning of an installed module, for example a bay size change, does not block. **Warnings** lists it.
+- A device or an installed module whose type is selected, and that has no pin and no active revision, compares from an empty state. Nothing on it or below it blocks. Thus a first activation over a schematic does not block on a module that the artwork does not draw.
+- The components of a schematic are not bindings of a revision. The review compares only the connectors of the parts that artwork draws.
+
+The review writes nothing. Its **Activate** button holds a signed token. The token is valid for 15 minutes, for your user, and in the branch of the review only. It holds the selection and a fingerprint of the affected objects: the associations, the affected devices, their installed modules, components and module bays, the instance pins and the binding overrides. Cable state is not in it. On activation, the plugin locks these objects and makes the review again. When the fingerprint, the blockers or your permissions differ, or a concurrent change locks the same objects, the activation stops with **Review the activation again**. No association changes then.
 
 ### Module bays
 
@@ -302,11 +324,12 @@ Press **Escape** or click the close button to close the details. The focus then 
 
 ### Permissions
 
-- A first activation for a type needs the **add** permission on **Artwork association**. A later activation needs the **change** permission. Constraints of these permissions apply to the association after the change.
+- A first activation for a type needs the **add** permission on **Artwork association**. A later activation, and a rollback, need the **change** permission on the association of the type. Constraints of these permissions apply to the association after the change.
 - You must be able to view the revision and the type.
+- The review needs the **view** permission on each affected device and on each installed module, module bay and component of those devices: interfaces, console ports, console server ports, front ports, rear ports, power ports and power outlets. It also needs the view permission on each binding override of the selected types. Without one of them, the review shows only "Your permissions do not cover every affected object.". It shows no names and no counts, and you cannot activate.
+- The permission to view a device gives no permission to activate.
 - The association pages need the **view** permission on **Artwork association**.
 - The artwork view needs no permission on the association or the revision. Components, cables, modules and module bays show only when you can view them.
-- An activation fails when a [binding override](#binding-overrides) of the definition key, for the type or for one of its devices or installed modules, names a connector that the revision does not have. The message names each such override. If you cannot view all of them, the device of each, and the installed module of each, the message names none.
 
 ---
 
@@ -366,7 +389,7 @@ In the UI, go to **Plugins → Instance Pins** and click **Add**. Select the dev
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
-An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A binding override and an instance pin belong to the branch in the same way.
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A review in a branch activates only in that branch. A binding override and an instance pin belong to the branch in the same way.
 
 ---
 

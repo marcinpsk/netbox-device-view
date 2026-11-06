@@ -1,4 +1,4 @@
-"""Activation and binding overrides: activation refuses a revision without an override's connector, and both take the type lock."""
+"""Activation and binding overrides: the review blocks a revision without an override's connector, and both take the type lock."""
 
 import io
 import shutil
@@ -17,14 +17,19 @@ from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token, User
 from utilities.exceptions import AbortRequest
 
-from netbox_device_view.artwork import overrides
+from netbox_device_view.artwork import overrides, review
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_types
 from netbox_device_view.models import Association, BindingOverride
 
 from .artwork_samples import bundle, definition
 from .permissions import grant
-from .test_artwork_activation import ACTIVATE_URL, ActivationTestCase
+from .test_artwork_activation import (
+    REVIEW_AGAIN,
+    ActivationTestCase,
+    review_url,
+    token_of,
+)
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 from .test_artwork_import_concurrency import waiting_advisory_locks
 from .test_binding_override_api import DETAIL as API_DETAIL
@@ -66,31 +71,37 @@ class ActivationBlockTests(ActivationTestCase):
         grant(self.user, BindingOverride, "view")
         self.candidate = self.import_files(WITHOUT_ETH1)
 
+    def review_candidate(self):
+        return self.review((self.candidate, self.device_type))
+
     def assertBlocked(self, response, *names):
-        self.assertEqual(response.status_code, 409)
         self.assertContains(
             response,
-            "These binding overrides name a connector that the revision does not"
-            f" have: {', '.join(names)}.",
-            status_code=409,
+            "These binding overrides name a connector that the candidate does not"
+            " have.",
         )
+        for name in names:
+            self.assertContains(response, name)
+        self.assertIsNone(token_of(response))
         self.assertEqual(Association.objects.get().revision, self.revision)
 
     def test_a_type_override_of_a_connector_that_the_candidate_lacks_blocks_it(self):
         add_override(device_type=self.device_type)
 
-        self.assertBlocked(self.post(self.candidate), "ACME SW-24 · con-eth1")
+        self.assertBlocked(self.review_candidate(), "ACME SW-24 · con-eth1")
 
     def test_an_instance_override_of_the_type_blocks_it_too(self):
         add_override(device_type=self.device_type)
         add_override(device=self.device)
 
         self.assertBlocked(
-            self.post(self.candidate), "ACME SW-24 · con-eth1", "sw1 · con-eth1"
+            self.review_candidate(), "ACME SW-24 · con-eth1", "sw1 · con-eth1"
         )
 
     def test_overrides_of_connectors_that_the_candidate_has_do_not_block(self):
         kept = add_override("con-psu", device_type=self.device_type)
+        # A binding that is missing now does not block.
+        self.eth1.delete()
 
         response = self.post(self.candidate)
 
@@ -108,6 +119,7 @@ class ActivationBlockTests(ActivationTestCase):
         )
         add_override(device_type=other_type)
         add_override(device=self.make_device("sw48", other_type))
+        self.eth1.delete()
 
         self.assertEqual(self.post(self.candidate).status_code, 302)
 
@@ -118,9 +130,10 @@ class ActivationBlockTests(ActivationTestCase):
         Association.objects.all().delete()
         grant(self.user, Association, "add")
 
-        response = self.post(self.candidate)
+        response = self.review_candidate()
 
-        self.assertEqual(response.status_code, 409)
+        self.assertContains(response, "ACME SW-24 · con-eth1")
+        self.assertIsNone(token_of(response))
         self.assertFalse(Association.objects.exists())
 
     def test_a_blocking_override_that_the_user_cannot_view_is_not_named(self):
@@ -130,15 +143,11 @@ class ActivationBlockTests(ActivationTestCase):
             name__startswith="netbox_device_view.bindingoverride"
         ).update(constraints={"device__isnull": False})
 
-        response = self.post(self.candidate)
+        response = self.review_candidate()
 
-        self.assertContains(
-            response,
-            "Binding overrides name a connector that the revision does not have."
-            " Your permissions do not cover every affected object.",
-            status_code=409,
-        )
-        self.assertNotContains(response, "· con-eth1", status_code=409)
+        self.assertContains(response, review.HIDDEN)
+        self.assertNotContains(response, "· con-eth1")
+        self.assertIsNone(token_of(response))
 
     def test_a_blocking_override_of_a_device_that_the_user_cannot_view_is_not_named(
         self,
@@ -148,14 +157,11 @@ class ActivationBlockTests(ActivationTestCase):
             constraints={"name": "other"}
         )
 
-        response = self.post(self.candidate)
+        response = self.review_candidate()
 
-        self.assertContains(
-            response,
-            "Your permissions do not cover every affected object.",
-            status_code=409,
-        )
-        self.assertNotContains(response, "sw1 · con-eth1", status_code=409)
+        self.assertContains(response, review.HIDDEN)
+        self.assertNotContains(response, "sw1 · con-eth1")
+        self.assertIsNone(token_of(response))
 
 
 class WriterTests(ActivationTestCase):
@@ -302,6 +308,10 @@ class TypeLockTests(TransactionTestCase):
         self.assertFalse(BindingOverride.objects.exists())
 
     def test_an_activation_that_waits_for_an_override_writer_sees_the_override(self):
+        url = review_url((self.candidate, self.device_type))
+        token = token_of(self.client.get(url))
+        self.assertTrue(token)
+
         def write_override():
             BindingOverride.objects.create(
                 device_type=self.device_type,
@@ -311,14 +321,10 @@ class TypeLockTests(TransactionTestCase):
             )
 
         result = self.while_locked(
-            write_override,
-            lambda: self.client.post(
-                reverse(ACTIVATE_URL, args=[self.candidate.pk]),
-                {"device_type": self.device_type.pk},
-            ),
+            write_override, lambda: self.client.post(url, {"token": token})
         )
 
-        self.assertContains(result["value"], "ACME SW-24 · con-eth1", status_code=409)
+        self.assertContains(result["value"], REVIEW_AGAIN, status_code=409)
         self.assertEqual(Association.objects.get().revision, self.revision)
 
     def test_deleting_an_override_waits_for_the_type_lock(self):
