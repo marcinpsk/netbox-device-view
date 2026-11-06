@@ -13,11 +13,11 @@ from dcim.models import Device, DeviceType, Module, ModuleBay, ModuleType
 from django.core import signing
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, connections, router
-from django.db.models import Q
+from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
 
-from ..components import BINDABLE_MODELS, component_label
+from ..components import BINDABLE_MODELS, component_label, findable
 from ..details import FOUND, MISSING
 from ..models import (
     OVERRIDE_RELATIONS,
@@ -36,7 +36,7 @@ from ..models import (
 )
 from .overrides import depending_on
 from .render import ARTWORK, Part, part_label, resolve_device, resolve_schematic
-from .type_lock import lock_types
+from .type_lock import lock_bulk_writes, lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
 CHANGE_PERMISSION = "netbox_device_view.change_association"
@@ -317,6 +317,8 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     affected = _Affected.read(pairs)
     locked = affected.dependency_types
     # The writers of binding overrides and instance pins take the same locks.
+    # A bulk writer takes its type locks in row order, so the activation first waits for it.
+    lock_bulk_writes(using)
     lock_types(locked, using)
     # Plain querysets lock first: a restricted queryset is not read again after a lock wait.
     for spec in TYPE_SCOPES.values():
@@ -803,12 +805,15 @@ def _fingerprint(affected, associations) -> str:
         "modules": [
             [m.pk, m.module_type_id, m.module_bay_id] for m in affected.modules
         ],
+        # The name, the module and the fields that decide whether a binding can find the component.
         "components": sorted(
             [model._meta.model_name, *values]
             for model in BINDABLE_MODELS
-            for values in model.objects.filter(device__in=devices).values_list(
-                "pk", "name", "module_id"
+            for values in model.objects.filter(device__in=devices)
+            .annotate(
+                findable=ExpressionWrapper(findable(model), output_field=BooleanField())
             )
+            .values_list("pk", "name", "module_id", "findable")
         ),
         "bays": list(
             ModuleBay.objects.filter(device__in=devices)

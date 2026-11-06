@@ -19,7 +19,9 @@ from dcim.models import (
 )
 from django.contrib.messages import get_messages
 from django.core import signing
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from users.models import ObjectPermission, User
 
@@ -646,6 +648,14 @@ class TokenTests(ReviewTestCase):
 
         self.assertRefused(self.apply(tampered), review.INVALID_TOKEN)
 
+    def test_a_type_change_of_a_bound_component_after_the_review_needs_a_new_review(
+        self,
+    ):
+        # A binding does not find a virtual interface.
+        Interface.objects.filter(pk=self.eth1.pk).update(type="virtual")
+
+        self.assertRefused(self.apply(), REVIEW_AGAIN)
+
     def test_a_rename_of_a_pinned_device_after_the_review_needs_a_new_review(self):
         sw2 = self.make_device("sw2")
         InstancePin.objects.create(device=sw2, revision=self.revision)
@@ -779,6 +789,89 @@ class EntryTests(ReviewTestCase):
         self.assertRedirects(applied, reverse(LIST_URL))
         self.association.refresh_from_db()
         self.assertEqual(self.association.revision, newer)
+
+    def update(self, data, follow=False):
+        return self.client.post(
+            reverse("plugins:netbox_device_view:association_review_update"),
+            {**data, "return_url": reverse(LIST_URL)},
+            follow=follow,
+        )
+
+    def only_view(self, revision_pk):
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.definitionrevision"
+        ).update(constraints={"pk": revision_pk})
+
+    def test_an_update_is_not_an_older_revision_that_the_user_can_view(self):
+        newer = self.import_files(NEWER)
+        Association.objects.filter(pk=self.association.pk).update(revision=newer)
+        self.only_view(self.revision.pk)
+
+        response = self.update({"pk": [self.association.pk]}, follow=True)
+
+        # The association has the newest revision of its definition.
+        self.assertIsNone(response.context.get("review"))
+        self.assertContains(
+            response,
+            "These associations already have the newest revision of their definition",
+        )
+
+    def test_an_update_to_a_revision_that_the_user_cannot_view_is_rejected(self):
+        self.import_files(NEWER)
+        self.only_view(0)
+
+        response = self.update({"pk": [self.association.pk]}, follow=True)
+
+        self.assertContains(response, review.NOT_VIEWABLE, status_code=400)
+        self.assertNotContains(
+            response, "already have the newest revision", status_code=400
+        )
+
+    def test_an_update_of_too_many_associations_is_rejected_before_any_review_work(
+        self,
+    ):
+        for n in range(review.MAX_PAIRS):
+            Association.objects.create(
+                device_type=DeviceType.objects.create(
+                    manufacturer=self.manufacturer, model=f"T{n}", slug=f"t{n}"
+                ),
+                revision=self.revision,
+            )
+        pks = list(Association.objects.values_list("pk", flat=True))
+        for data in ({"pk": pks}, {"_all": "on"}):
+            with self.subTest(data=list(data)):
+                with CaptureQueriesContext(connection) as queries:
+                    response = self.update(data)
+
+                self.assertRedirects(
+                    response, reverse(LIST_URL), fetch_redirect_response=False
+                )
+                self.assertIn(
+                    f"Select at most {review.MAX_PAIRS} associations in one review.",
+                    [str(m) for m in get_messages(response.wsgi_request)],
+                )
+                sql = [query["sql"] for query in queries]
+                self.assertEqual(
+                    [q for q in sql if q.startswith('SELECT "netbox_device_view_')], []
+                )
+
+    def test_an_update_reads_the_newest_revisions_in_one_query(self):
+        self.activate_module_type()
+        newer = self.import_files(NEWER)
+        self.import_files(NEW_MODULE, "ACME/NM-2X")
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.update(
+                {"pk": list(Association.objects.values_list("pk", flat=True))}
+            )
+
+        revision_queries = [
+            q["sql"]
+            for q in queries
+            if 'FROM "netbox_device_view_definitionrevision"' in q["sql"]
+        ]
+        self.assertEqual(len(revision_queries), 1, revision_queries)
+        self.assertIn(f"r{newer.pk}-device_type", response.url)
 
     def test_the_bulk_review_update_needs_add_or_change_permission(self):
         ObjectPermission.objects.filter(

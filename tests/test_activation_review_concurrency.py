@@ -33,6 +33,7 @@ from users.models import User
 
 from netbox_device_view.artwork import overrides, pins
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_key, lock_types
 from netbox_device_view.models import Association, BindingOverride, InstancePin
 
 from .artwork_samples import MODULE_FILES, bundle, definition
@@ -353,6 +354,23 @@ class ActivationFirstTests(ConcurrentActivationTestCase):
 
 
 class ConcurrentActivationTests(ConcurrentActivationTestCase):
+    def test_an_activation_queues_behind_a_bulk_writer_without_a_deadlock(self):
+        module_type = self.module_association().module_type
+        # The dependency set of the activation holds both types.
+        first, later = sorted((self.device_type, module_type), key=lock_key)
+        token = self.token()
+        with transaction.atomic():
+            # A bulk writer of pins or overrides holds the bulk lock and the type lock of its first row.
+            lock_bulk_writes("default")
+            lock_types([later], "default")
+            activation = self.activate_in_thread(token)
+            self.wait_for_a_waiter(activation[0])
+            # Its next row needs the other type lock, which the activation must not hold.
+            lock_types([first], "default")
+
+        self.assertEqual(self.finish(*activation).status_code, 302)
+        self.assertActivated()
+
     def test_two_activations_of_one_association_cannot_both_apply(self):
         first_token, second_token = self.token(), self.token()
         self.pause_activation("first")
