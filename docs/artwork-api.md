@@ -133,7 +133,7 @@ A virtual chassis member gets `"schematic"` when its device type has no active a
 | Field | Type | Notes |
 |---|---|---|
 | `definition_key` | string \| null | The key of the visual definition, for example `acme/sw-24`. `null` for a schematic. |
-| `revision_id`, `digest` | int, string \| null | The active revision. `null` for a schematic. |
+| `revision_id`, `digest` | int, string \| null | The [pin](artwork-bundles.md#instance-pins) of the device, else the active revision of its type. `null` for a schematic. |
 | `faces` | array | One entry per face in physical order: `name` (`front`, `rear`, …), `label`, and `svg`. |
 | `connectors` | array | One entry per connector of the manifest, sorted by key. |
 | `modules` | array | One entry per installed module that a face shows: see [Module](#module). |
@@ -179,7 +179,7 @@ Each fact is its own field, and no field combines them. A disabled interface wit
 | `bay_key` | string \| null | The bay key in the manifest of the parent. `null` for a slot of a schematic. |
 | `face` | string | The face of the device that shows the module. |
 | `representation` | string | `"artwork"`, or `"schematic"`: a schematic of the components and module bays of the module, generated at the size of the bay, when the module type has no active artwork, a stored file of its revision is damaged, the placement is not a finite number, or the module is too deep. This is the fact for missing artwork. |
-| `artwork` | object \| null | `definition_key`, `revision_id` and `digest` of the active revision of the module type. `null` without one. |
+| `artwork` | object \| null | `definition_key`, `revision_id` and `digest` of the [pin](artwork-bundles.md#instance-pins) of the module, else of the active revision of the module type. `null` without one. |
 | `placement` | object \| null | The bay in the coordinates of the device face: `x`, `y`, `width`, `height`, and `rotate`, the rotation of the module face in degrees. A schematic is not turned, so its `rotate` is 0. `null` when the bay or the placement is not a finite number. |
 | `element_id` | string \| null | The `id` of the group that draws the module in the `svg` of its face. `null` when the module is not drawn. |
 | `connectors` | array | The connectors of the module, as [Connector](#connector). For artwork, the connectors of its manifest, with the `{module}` names resolved for this module. For a schematic, one connector for each component of the module that the user can view: the key is `<type>-<id>`, for example `interface-12`, the face is `schematic`, and the label is the component name. A module that is not drawn gives each connector `element_id: null`. |

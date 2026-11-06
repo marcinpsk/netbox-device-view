@@ -260,7 +260,7 @@ The plugin places the module face in the bay at true scale:
 
 The module draws as its own file does: it does not take the presentation attributes, opacity or clip of the groups of the parent artwork. Only `font-family` passes from the parent, because its initial value depends on the browser. Set the font of module text in the module artwork.
 
-Each installed module uses the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
+Each installed module uses its [pin](#instance-pins), else the active revision of its own module type. The revision of the device does not select the revisions of its modules. Two modules of one type in two bays have their own ids, links and connector states.
 
 - A click on the body of a module opens the module. A click on one of its connectors opens the component, or the details, as for a connector of the device. The details name the module.
 - A module type without active artwork shows as a schematic. The plugin generates it at the size of the bay, and does not turn it, so its labels stay readable. The schematic shows the model of the type, a box for each component of the module that you can view, by type and in NetBox name order, and a slot for each module bay of the module. Each component box has the links, marks and details of a connector. A click on the rest of the schematic opens the module.
@@ -340,11 +340,32 @@ In the UI, go to **Plugins → Binding Overrides** and click **Add**. Select the
 
 ---
 
+## Instance pins
+
+An instance pin keeps one device, or one installed module, on a chosen definition revision. The device or the module shows the pinned revision instead of the active revision of its type. A later activation for the type does not change a pinned device or module. The Device View tab, the device page panel and the [artwork API](artwork-api.md) use the pin in the same way.
+
+- A pin of a device needs a revision of a device definition. A pin of an installed module needs a revision of a module definition. The revision can be of any definition key of that kind.
+- A device or an installed module has one pin at most.
+- The device or the installed module of a pin cannot change. To move a pin, add a new pin and delete the old one.
+- The connectors bind with the [binding overrides](#binding-overrides) of the definition key of the pinned revision.
+- You cannot delete a revision that a pin uses. Delete the pin first.
+- When you delete a pin, the device or the module shows the active revision of its type again. When you delete the device or the module, NetBox deletes its pin too.
+
+In the UI, go to **Plugins → Instance Pins** and click **Add**. Select the device or the installed module in one of the tabs, then select the revision in the same tab. The API endpoint is `/api/plugins/device_view/instance-pins/`, with the `device_id`, `module_id`, `revision_id`, `definition_id`, `definition` (a definition key) and `q` filters. The API accepts the same data and checks the same rules as the UI.
+
+### Permissions
+
+- Pins need the **add**, **change** or **delete** permission on **Instance pin**. Constraints of these permissions apply to the pin after the change. The pages and the API need the **view** permission.
+- To add or change a pin, you must be able to view its device or installed module, and the revision.
+- The artwork view needs no permission on the pin.
+
+---
+
 ## NetBox Branching
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
-An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A binding override belongs to the branch in the same way.
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A binding override and an instance pin belong to the branch in the same way.
 
 ---
 

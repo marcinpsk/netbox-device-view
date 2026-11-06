@@ -48,6 +48,20 @@ menu_items = (
         ],
     ),
     PluginMenuItem(
+        link="plugins:netbox_device_view:instancepin_list",
+        link_text="Instance Pins",
+        permissions=["netbox_device_view.view_instancepin"],
+        buttons=[
+            PluginMenuButton(
+                link="plugins:netbox_device_view:instancepin_add",
+                title="Add",
+                icon_class="mdi mdi-plus-thick",
+                color=ButtonColorChoices.GREEN,
+                permissions=["netbox_device_view.add_instancepin"],
+            )
+        ],
+    ),
+    PluginMenuItem(
         link="plugins:netbox_device_view:definitionrevision_list",
         link_text="Artwork Revisions",
         permissions=["netbox_device_view.view_definitionrevision"],

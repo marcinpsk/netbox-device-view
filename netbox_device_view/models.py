@@ -295,6 +295,18 @@ def type_scope(hardware_type) -> Scope:
     )
 
 
+def instance_scope(model) -> Scope:
+    """Return the instance scope of a part model (a device or module) or of its type model."""
+    return next(
+        spec
+        for spec in SCOPES.values()
+        if spec.instance and model in (spec.model, SCOPES[spec.type_field].model)
+    )
+
+
+INSTANCE_FIELDS = tuple(field for field, spec in SCOPES.items() if spec.instance)
+
+
 # The objects that the label and the type lock of an override read.
 OVERRIDE_RELATIONS = (
     "device_type__manufacturer",
@@ -304,6 +316,14 @@ OVERRIDE_RELATIONS = (
     "module__module_bay",
     "module__module_type",
     "definition",
+)
+# The objects that the label and the type lock of a pin read.
+PIN_RELATIONS = (
+    "device__device_type",
+    "module__device",
+    "module__module_bay",
+    "module__module_type",
+    "revision__definition",
 )
 ONE_SCOPE = _(
     "Select one scope: a device type, a module type, a device or an installed module."
@@ -315,12 +335,106 @@ SCOPE_BUSY = _("Another change of the scope runs at the same time. Try again.")
 SCOPE_TYPE_CHANGED = _("The type of the scope changed. Try again.")
 
 
-def _only_scope(field):
-    return models.Q(**{f"{name}__isnull": name != field for name in SCOPE_FIELDS})
+def _only_scope(field, fields=SCOPE_FIELDS):
+    return models.Q(**{f"{name}__isnull": name != field for name in fields})
 
 
-class BindingOverride(ChangeLoggedModel):
+class ScopedRow:
+    """A row with one scope field of ``scope_fields``; each writer holds the lock of the scope's type."""
+
+    scope_fields: tuple[str, ...]
+
+    @property
+    def scope_field(self) -> str | None:
+        """Return the name of the one scope field that is set, or None."""
+        names = [n for n in self.scope_fields if getattr(self, f"{n}_id") is not None]
+        return names[0] if len(names) == 1 else None
+
+    @property
+    def scope(self):
+        return getattr(self, self.scope_field)
+
+    @property
+    def scope_label(self) -> str:
+        return SCOPES[self.scope_field].label(self.scope)
+
+    @property
+    def hardware_type(self):
+        """Return the device type or module type that the row depends on."""
+        spec = SCOPES[self.scope_field]
+        return getattr(self.scope, spec.type_field) if spec.instance else self.scope
+
+    @property
+    def definition_kind(self):
+        """Return the kind of definition that the scope needs."""
+        return SCOPES[self.scope_field].definition_kind
+
+    def _check_unchanged(self, fields, message):
+        """Raise ValidationError with ``message`` when one of ``fields`` differs from the stored row."""
+        stored = type(self).objects.filter(pk=self.pk).values(*fields).first()
+        if stored is None:
+            raise ValidationError(
+                _("The {name} does not exist any more.").format(
+                    name=self._meta.verbose_name
+                )
+            )
+        if any(getattr(self, n) != stored[n] for n in fields):
+            raise ValidationError(message)
+
+    @classmethod
+    @contextmanager
+    def writing(cls):
+        """Open one transaction on main and on the routed connection; yield the routed alias."""
+        # NetBox Branching routes the row to the branch and its ChangeDiff rows to main.
+        try:
+            with (
+                transaction.atomic(using=DEFAULT_DB_ALIAS),
+                transaction.atomic(using=router.db_for_write(cls)),
+            ):
+                yield router.db_for_write(cls)
+        except Exception:
+            # The events of a write that rolls back must not reach event rules.
+            clear_events.send(sender=cls)
+            raise
+
+    @contextmanager
+    def locked(self):
+        """Hold the lock of the scope's type in the transaction of writing()."""
+        with self.writing() as using:
+            hardware_type = self.hardware_type
+            lock_types([hardware_type], using)
+            self._lock_scope(hardware_type)
+            yield
+
+    def _lock_scope(self, hardware_type):
+        """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
+        spec = SCOPES[self.scope_field]
+        if not spec.instance:
+            return
+        scope = self.scope
+        # Without a wait: a writer with a stale type would hold that type lock while it waits.
+        try:
+            current = list(
+                type(scope)
+                .objects.select_for_update(nowait=True, no_key=True, of=("self",))
+                .filter(pk=scope.pk)
+                .order_by()
+                .values_list(f"{spec.type_field}_id", flat=True)
+            )
+        except OperationalError as exc:
+            raise AbortRequest(SCOPE_BUSY) from exc
+        if current != [hardware_type.pk]:
+            raise AbortRequest(SCOPE_TYPE_CHANGED)
+
+    def delete(self, *args, **kwargs):
+        with self.locked():
+            return super().delete(*args, **kwargs)
+
+
+class BindingOverride(ScopedRow, ChangeLoggedModel):
     """A local replacement of the bindings of one connector key, for one scope and definition key."""
+
+    scope_fields = SCOPE_FIELDS
 
     device_type = models.ForeignKey(
         to="dcim.DeviceType",
@@ -392,31 +506,6 @@ class BindingOverride(ChangeLoggedModel):
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:bindingoverride", args=[self.pk])
 
-    @property
-    def scope_field(self) -> str | None:
-        """Return the name of the one scope field that is set, or None."""
-        names = [n for n in SCOPE_FIELDS if getattr(self, f"{n}_id") is not None]
-        return names[0] if len(names) == 1 else None
-
-    @property
-    def scope(self):
-        return getattr(self, self.scope_field)
-
-    @property
-    def scope_label(self) -> str:
-        return SCOPES[self.scope_field].label(self.scope)
-
-    @property
-    def hardware_type(self):
-        """Return the device type or module type that the override depends on."""
-        spec = SCOPES[self.scope_field]
-        return getattr(self.scope, spec.type_field) if spec.instance else self.scope
-
-    @property
-    def definition_kind(self):
-        """Return the kind of definition that the scope needs."""
-        return SCOPES[self.scope_field].definition_kind
-
     def clean(self):
         super().clean()
         # The check constraint reports a missing or a second scope.
@@ -426,7 +515,14 @@ class BindingOverride(ChangeLoggedModel):
         if issues:
             raise ValidationError({"bindings": issues})
         if not self._state.adding:
-            self._check_identity()
+            # An override is its scope, definition key and connector key; only its bindings change.
+            self._check_unchanged(
+                (*(f"{n}_id" for n in SCOPE_FIELDS), "definition_id", "connector_key"),
+                _(
+                    "The scope and the connector of an override cannot change. Add a"
+                    " new override instead."
+                ),
+            )
         hardware_type = self.hardware_type
         association = (
             Association.objects.filter(
@@ -463,72 +559,84 @@ class BindingOverride(ChangeLoggedModel):
                 }
             )
 
-    def _check_identity(self):
-        """An override is its scope, definition key and connector key; only its bindings change."""
-        identity = (
-            *(f"{n}_id" for n in SCOPE_FIELDS),
-            "definition_id",
-            "connector_key",
+
+ONE_INSTANCE = _("Select one device or one installed module.")
+
+
+class InstancePin(ScopedRow, ChangeLoggedModel):
+    """The definition revision that one device or installed module shows instead of the active revision of its type."""
+
+    scope_fields = INSTANCE_FIELDS
+
+    device = models.OneToOneField(
+        to="dcim.Device",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    module = models.OneToOneField(
+        to="dcim.Module",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name=_("installed module"),
+    )
+    revision = models.ForeignKey(
+        to=DefinitionRevision, on_delete=models.PROTECT, related_name="pins"
+    )
+
+    class Meta:
+        ordering = ("pk",)
+        verbose_name = "instance pin"
+        constraints = (
+            models.CheckConstraint(
+                condition=functools.reduce(
+                    operator.or_,
+                    (_only_scope(field, INSTANCE_FIELDS) for field in INSTANCE_FIELDS),
+                ),
+                name="%(app_label)s_instancepin_one_instance",
+                violation_error_message=ONE_INSTANCE,
+            ),
         )
-        stored = BindingOverride.objects.filter(pk=self.pk).values(*identity).first()
-        if stored is None:
-            raise ValidationError(_("The override does not exist any more."))
-        if any(getattr(self, n) != stored[n] for n in identity):
-            raise ValidationError(
-                _(
-                    "The scope and the connector of an override cannot change. Add a new"
-                    " override instead."
-                )
-            )
 
-    @classmethod
-    @contextmanager
-    def writing(cls):
-        """Open one transaction on main and on the routed connection; yield the routed alias."""
-        # NetBox Branching routes an override to the branch and its ChangeDiff rows to main.
-        try:
-            with (
-                transaction.atomic(using=DEFAULT_DB_ALIAS),
-                transaction.atomic(using=router.db_for_write(BindingOverride)),
-            ):
-                yield router.db_for_write(cls)
-        except Exception:
-            # The events of a write that rolls back must not reach event rules.
-            clear_events.send(sender=cls)
-            raise
+    def __str__(self):
+        return f"{self.scope_label} → {self.revision}"
 
-    @contextmanager
-    def locked(self):
-        """Hold the lock of the override's type in the transaction of writing()."""
-        with self.writing() as using:
-            hardware_type = self.hardware_type
-            lock_types([hardware_type], using)
-            self._lock_scope(hardware_type)
-            yield
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:instancepin", args=[self.pk])
 
-    def _lock_scope(self, hardware_type):
-        """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
-        spec = SCOPES[self.scope_field]
-        if not spec.instance:
+    def clean(self):
+        super().clean()
+        # The check constraint reports a missing or a second instance.
+        if self.scope_field is None:
             return
-        scope = self.scope
-        # Without a wait: a writer with a stale type would hold that type lock while it waits.
-        try:
-            current = list(
-                type(scope)
-                .objects.select_for_update(nowait=True, no_key=True, of=("self",))
-                .filter(pk=scope.pk)
-                .order_by()
-                .values_list(f"{spec.type_field}_id", flat=True)
+        if not self._state.adding:
+            # The type lock of a write covers one instance, so a pin keeps its instance.
+            self._check_unchanged(
+                [f"{n}_id" for n in INSTANCE_FIELDS],
+                _(
+                    "The device or the installed module of a pin cannot change. Add a"
+                    " new pin instead."
+                ),
             )
-        except OperationalError as exc:
-            raise AbortRequest(SCOPE_BUSY) from exc
-        if current != [hardware_type.pk]:
-            raise AbortRequest(SCOPE_TYPE_CHANGED)
-
-    def delete(self, *args, **kwargs):
-        with self.locked():
-            return super().delete(*args, **kwargs)
+        if self.revision_id is None:
+            return
+        kind = self.revision.definition.kind
+        if kind != self.definition_kind:
+            raise ValidationError(
+                {
+                    "revision": _(
+                        "The revision is a {revision} definition. The {instance} needs a"
+                        " {kind} definition."
+                    ).format(
+                        revision=kind,
+                        instance=self._meta.get_field(self.scope_field).verbose_name,
+                        kind=self.definition_kind,
+                    )
+                }
+            )
 
 
 class ArtworkBlob(ImmutableMixin, models.Model):

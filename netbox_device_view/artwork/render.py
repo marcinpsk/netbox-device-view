@@ -44,8 +44,13 @@ from ..details import (
     details_id,
     resolution,
 )
-from ..models import TYPE_SCOPES, Association, DefinitionRevision
-from .manifest import MODULE_KIND
+from ..models import (
+    SCOPES,
+    Association,
+    DefinitionRevision,
+    InstancePin,
+    instance_scope,
+)
 from .overrides import connector_bindings, part_overrides
 from .placement import Rect, fit, place, transform_rect
 from .schematic import layout
@@ -359,16 +364,33 @@ class Part:
         return nodes(None)
 
 
-def active_revisions(kind, type_ids) -> dict[int, DefinitionRevision]:
-    """Return {type id: active revision} for the device types or module types (by definition ``kind``) that have one."""
-    scope = TYPE_SCOPES[kind]
-    # Rendering needs no permission on the association or the revision.
-    return {
-        scope.id_of(association): association.revision
-        for association in Association.objects.filter(
-            scope.among(type_ids)
+def active_revisions(parts) -> dict[int, DefinitionRevision]:
+    """Return {pk: revision} for the devices or the installed modules ``parts`` that have one.
+
+    The pin of a part comes before the active revision of its type.
+    """
+    if not parts:
+        return {}
+    spec = instance_scope(type(parts[0]))
+    type_spec = SCOPES[spec.type_field]
+    # Rendering needs no permission on the pin, the association or the revision.
+    pinned = {
+        spec.id_of(pin): pin.revision
+        for pin in InstancePin.objects.filter(
+            spec.among([part.pk for part in parts])
         ).select_related("revision__definition")
     }
+    active = {
+        type_spec.id_of(association): association.revision
+        for association in Association.objects.filter(
+            type_spec.among({type_spec.id_of(part) for part in parts})
+        ).select_related("revision__definition")
+    }
+    revisions = {
+        part.pk: pinned.get(part.pk) or active.get(type_spec.id_of(part))
+        for part in parts
+    }
+    return {pk: revision for pk, revision in revisions.items() if revision}
 
 
 def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
@@ -495,9 +517,8 @@ class _Composer:
             if bay.module_id in by_pk:
                 bay.module = by_pk[bay.module_id]
             self.installed[(bay.module_id, bay.name)] = module
-        self.revisions = active_revisions(
-            MODULE_KIND, {module.module_type_id for module in modules}
-        )
+        # {module pk: revision}
+        self.revisions = active_revisions(modules)
         self.overrides = part_overrides([device, *modules])
         self.faces = {}
         self.modules = []
@@ -657,7 +678,7 @@ class _Composer:
         ``others`` are the later bay keys that name the same module bay; they
         draw nothing. In a ``slot`` of a schematic, artwork is scaled to fit.
         """
-        revision = self.revisions.get(module.module_type_id)
+        revision = self.revisions.get(module.pk)
         inner = _Scope(
             module,
             f"{scope.part_id}-m{module.pk}",

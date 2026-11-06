@@ -11,6 +11,7 @@ from .models import (
     BindingOverride,
     DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
 )
 
@@ -55,6 +56,7 @@ class DeviceViewFilterSet(NetBoxModelFilterSet):
 @register_filterset
 class DefinitionRevisionFilterSet(ChangeLoggedModelFilterSet):
     q = django_filters.CharFilter(method="search", label=_("Search"))
+    kind = django_filters.CharFilter(field_name="definition__kind", label=_("Kind"))
 
     class Meta:
         model = DefinitionRevision
@@ -150,4 +152,46 @@ class BindingOverrideFilterSet(ChangeLoggedModelFilterSet):
             | Q(module_type__model__icontains=value)
             | Q(device__name__icontains=value)
             | Q(module__module_type__model__icontains=value)
+        )
+
+
+@register_filterset
+class InstancePinFilterSet(ChangeLoggedModelFilterSet):
+    q = django_filters.CharFilter(method="search", label=_("Search"))
+    device_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=Device.objects.all(), label=_("Device (ID)")
+    )
+    module_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=Module.objects.all(), label=_("Installed module (ID)")
+    )
+    revision_id = django_filters.ModelMultipleChoiceFilter(
+        field_name="revision",
+        queryset=DefinitionRevision.objects.all(),
+        label=_("Revision (ID)"),
+    )
+    definition_id = django_filters.ModelMultipleChoiceFilter(
+        field_name="revision__definition",
+        queryset=VisualDefinition.objects.all(),
+        label=_("Definition (ID)"),
+    )
+    definition = django_filters.ModelMultipleChoiceFilter(
+        field_name="revision__definition__key",
+        queryset=VisualDefinition.objects.all(),
+        to_field_name="key",
+        label=_("Definition key"),
+    )
+
+    class Meta:
+        model = InstancePin
+        fields = ("id",)
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(device__name__icontains=value)
+            | Q(module__device__name__icontains=value)
+            | Q(module__module_type__model__icontains=value)
+            | Q(revision__definition__key__icontains=value)
+            | Q(revision__digest__istartswith=value)
         )

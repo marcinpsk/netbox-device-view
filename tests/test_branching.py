@@ -123,13 +123,14 @@ class CatalogueModelTests(SimpleTestCase):
             for model in apps.get_app_config("netbox_device_view").get_models()
         }
 
-        # A branch can change device types and module types, so their links are branched too.
+        # A branch can change device types, module types, devices and modules, so their links are branched too.
         self.assertEqual(
             labels - CATALOGUE,
             {
                 "netbox_device_view.deviceview",
                 "netbox_device_view.association",
                 "netbox_device_view.bindingoverride",
+                "netbox_device_view.instancepin",
             },
         )
 
