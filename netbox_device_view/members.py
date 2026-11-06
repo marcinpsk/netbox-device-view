@@ -8,9 +8,8 @@ from dataclasses import dataclass
 
 from dcim.models import Device
 
-from .artwork.render import active_revisions
 from .components import panel_members
-from .models import DefinitionRevision, DeviceView
+from .models import DefinitionRevision, DeviceView, active_revisions
 
 
 @dataclass(frozen=True)
