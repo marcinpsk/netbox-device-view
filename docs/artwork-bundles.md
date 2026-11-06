@@ -325,7 +325,7 @@ An override has the schema of the `bindings` of a manifest connector: 0 to 16 bi
 
 An override follows the definition key, not a revision. An import of a new revision does not change or delete an override. When you save an override:
 
-- The type of the scope (the device type of a device, the module type of an installed module) must have an active revision. The override gets the definition key of that revision.
+- The scope must have an active revision. A device or an installed module uses its [pin](#instance-pins), else the active revision of its type. A device type or a module type uses its association. The override gets the definition key of that revision.
 - The connector key must be in the active revision. The **Connectors** table of the revision page lists the keys.
 - One scope has one override for each connector of a definition key.
 - The scope and the connector of an override cannot change. To move an override, add a new one and delete the old one.

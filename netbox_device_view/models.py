@@ -524,14 +524,18 @@ class BindingOverride(ScopedRow, ChangeLoggedModel):
                 ),
             )
         hardware_type = self.hardware_type
-        association = (
-            Association.objects.filter(
-                **{SCOPES[self.scope_field].type_field: hardware_type}
+        spec = SCOPES[self.scope_field]
+        if spec.instance:
+            # An instance shows its pin before the association of its type.
+            revision = active_revisions([self.scope]).get(self.scope.pk)
+        else:
+            association = (
+                Association.objects.filter(**{spec.field: hardware_type})
+                .select_related("revision__definition")
+                .first()
             )
-            .select_related("revision__definition")
-            .first()
-        )
-        if association is None:
+            revision = None if association is None else association.revision
+        if revision is None:
             raise ValidationError(
                 {
                     self.scope_field: _(
@@ -539,13 +543,12 @@ class BindingOverride(ScopedRow, ChangeLoggedModel):
                     ).format(type=hardware_type.full_name)
                 }
             )
-        revision = association.revision
         if self._state.adding:
             self.definition = revision.definition
         elif revision.definition_id != self.definition_id:
             raise ValidationError(
-                _("The active artwork of {type} is {active}, not {key}.").format(
-                    type=hardware_type.full_name,
+                _("The active artwork of {scope} is {active}, not {key}.").format(
+                    scope=self.scope_label,
                     active=revision.definition.key,
                     key=self.definition.key,
                 )
@@ -637,6 +640,35 @@ class InstancePin(ScopedRow, ChangeLoggedModel):
                     )
                 }
             )
+
+
+def active_revisions(parts) -> dict[int, DefinitionRevision]:
+    """Return {pk: revision} for the devices or the installed modules ``parts`` that have one.
+
+    The pin of a part comes before the active revision of its type.
+    """
+    if not parts:
+        return {}
+    spec = instance_scope(type(parts[0]))
+    type_spec = SCOPES[spec.type_field]
+    # Rendering needs no permission on the pin, the association or the revision.
+    pinned = {
+        spec.id_of(pin): pin.revision
+        for pin in InstancePin.objects.filter(
+            spec.among([part.pk for part in parts])
+        ).select_related("revision__definition")
+    }
+    active = {
+        type_spec.id_of(association): association.revision
+        for association in Association.objects.filter(
+            type_spec.among({type_spec.id_of(part) for part in parts})
+        ).select_related("revision__definition")
+    }
+    revisions = {
+        part.pk: pinned.get(part.pk) or active.get(type_spec.id_of(part))
+        for part in parts
+    }
+    return {pk: revision for pk, revision in revisions.items() if revision}
 
 
 class ArtworkBlob(ImmutableMixin, models.Model):
