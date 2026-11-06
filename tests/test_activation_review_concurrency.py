@@ -59,6 +59,8 @@ WITHOUT_R1 = {
 def waiting_locks():
     """Return the number of lock requests in this database that wait."""
     with connection.cursor() as cursor:
+        # In a transaction PostgreSQL keeps its first pg_stat_activity snapshot, without later backends.
+        cursor.execute("SELECT pg_stat_clear_snapshot()")
         cursor.execute(
             "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
             " WHERE NOT l.granted AND a.datname = current_database()"
@@ -246,6 +248,9 @@ class WriterFirstTests(ConcurrentActivationTestCase):
         self.activation_after(
             lambda: Device.objects.filter(pk=device.pk).update(name="sw2-renamed")
         )
+
+    def test_a_delete_of_the_candidate_revision(self):
+        self.activation_after(self.newer.delete)
 
     def test_an_override_change(self):
         self.activation_after(
