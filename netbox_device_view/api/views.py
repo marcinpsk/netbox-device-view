@@ -23,6 +23,7 @@ from ..filtersets import (
     BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
     DeviceViewFilterSet,
+    InstancePinFilterSet,
     VisualDefinitionFilterSet,
 )
 from ..forms import ArtworkSourceImportForm
@@ -32,6 +33,7 @@ from .serializers import (
     BindingOverrideSerializer,
     DefinitionRevisionSerializer,
     DeviceViewSerializer,
+    InstancePinSerializer,
     VisualDefinitionSerializer,
 )
 
@@ -141,23 +143,19 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
 
 
 class _ErrorResponse(Exception):
-    """An error response of a write, raised so that BindingOverride.writing() rolls back."""
+    """An error response of a write, raised so that the writing() transaction rolls back."""
 
     def __init__(self, response):
         super().__init__(response.status_code)
         self.response = response
 
 
-class BindingOverrideViewSet(NetBoxModelViewSet):
-    """Each write runs in BindingOverride.writing() and takes the locks of the override writer."""
-
-    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
-    serializer_class = BindingOverrideSerializer
-    filterset_class = BindingOverrideFilterSet
+class ScopedRowViewSet(NetBoxModelViewSet):
+    """Each write runs in the writing() transaction of the model and takes the locks of its writer."""
 
     def _write(self, handler, request, *args, **kwargs):
         try:
-            with models.BindingOverride.writing() as using:
+            with self.queryset.model.writing() as using:
                 if isinstance(request.data, list) and not self._queues_job(request):
                     lock_bulk_writes(using)
                 response = handler(request, *args, **kwargs)
@@ -198,16 +196,15 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
         if self.action != "destroy":
             return super().get_object_with_snapshot()
         # The read after the locks gives the delete constraints and the change record the current row.
-        [locked] = models.BindingOverride.lock_scopes(
-            [self.get_object()], router.db_for_write(models.BindingOverride)
-        )
+        model = self.queryset.model
+        [locked] = model.lock_scopes([self.get_object()], router.db_for_write(model))
         row = super().get_object_with_snapshot()
         if row.hardware_type != locked:
             raise AbortRequest(models.SCOPE_TYPE_CHANGED)
         return row
 
     def get_bulk_destroy_queryset(self):
-        # NetBox reads the locked overrides again with the delete constraints.
+        # NetBox reads the locked rows again with the delete constraints.
         serializer = BulkOperationSerializer(data=self.request.data, many=True)
         serializer.is_valid(raise_exception=True)
         # Read through the delete constraints: a busy scope must not tell apart an id that the caller cannot delete.
@@ -216,12 +213,23 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
                 pk__in=[o["id"] for o in serializer.validated_data]
             )
         )
-        models.BindingOverride.lock_scopes(
-            selected, router.db_for_write(models.BindingOverride)
-        )
+        model = self.queryset.model
+        model.lock_scopes(selected, router.db_for_write(model))
         return (
             super().get_bulk_destroy_queryset().filter(pk__in=[o.pk for o in selected])
         )
+
+
+class BindingOverrideViewSet(ScopedRowViewSet):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    serializer_class = BindingOverrideSerializer
+    filterset_class = BindingOverrideFilterSet
+
+
+class InstancePinViewSet(ScopedRowViewSet):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    serializer_class = InstancePinSerializer
+    filterset_class = InstancePinFilterSet
 
 
 def _error_response(exc: ArtworkError):

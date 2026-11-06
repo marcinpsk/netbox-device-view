@@ -12,30 +12,32 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from ..models import ONE_SCOPE, SCOPES, BindingOverride
+from ..models import ONE_SCOPE, SCOPES, BindingOverride, instance_scope
 
 
 def save(user, override) -> BindingOverride:
-    """Validate and save the override with the lock of its type; return it.
+    """Validate and save the override with the lock of its type; return it."""
+    return save_scoped(user, override, ONE_SCOPE)
 
-    Raise ValidationError for an invalid override, and PermissionDenied when the
-    permissions of ``user`` do not cover the saved row.
+
+def save_scoped(user, row, one_scope):
+    """Validate and save a row of one scope (an override or a pin) with the lock of the scope's type; return it.
+
+    Raise ValidationError for an invalid row, with ``one_scope`` when it has no
+    single scope, and PermissionDenied when the permissions of ``user`` do not
+    cover the saved row.
     """
-    action = "add" if override._state.adding else "change"
-    if override.scope_field is None:
-        raise ValidationError(ONE_SCOPE)
-    with override.locked():
+    action = "add" if row._state.adding else "change"
+    if row.scope_field is None:
+        raise ValidationError(one_scope)
+    with row.locked():
         # The lock holds the row of a device or module scope, so its visibility cannot change.
-        check_scope(user, override.scope_field, override.scope)
-        override.full_clean()
-        override.save()
-        if (
-            not BindingOverride.objects.restrict(user, action)
-            .filter(pk=override.pk)
-            .exists()
-        ):
+        check_scope(user, row.scope_field, row.scope)
+        row.full_clean()
+        row.save()
+        if not type(row).objects.restrict(user, action).filter(pk=row.pk).exists():
             raise PermissionDenied
-    return override
+    return row
 
 
 def can_view_scope(user, scope) -> bool:
@@ -55,20 +57,11 @@ def check_scope(user, field, scope) -> None:
         )
 
 
-def _instance_scope(model):
-    """Return the instance scope of a part model (a device or module) or of its type model."""
-    return next(
-        spec
-        for spec in SCOPES.values()
-        if spec.instance and model in (spec.model, SCOPES[spec.type_field].model)
-    )
-
-
 def part_overrides(parts) -> list[BindingOverride]:
     """Return the overrides of the devices and installed modules ``parts`` and of their types, in one query."""
     ids = defaultdict(set)
     for part in parts:
-        spec = _instance_scope(type(part))
+        spec = instance_scope(type(part))
         ids[SCOPES[spec.type_field]].add(SCOPES[spec.type_field].id_of(part))
         ids[spec].add(part.pk)
     condition = functools.reduce(
@@ -82,7 +75,7 @@ def connector_bindings(revision, part, overrides) -> dict[str, list]:
 
     ``overrides`` comes from part_overrides() for parts that include ``part``.
     """
-    spec = _instance_scope(type(part))
+    spec = instance_scope(type(part))
     type_spec = SCOPES[spec.type_field]
     result = {
         key: connector["bindings"]
@@ -107,7 +100,7 @@ def connector_bindings(revision, part, overrides) -> dict[str, list]:
 
 def depending_on(hardware_type) -> Q:
     """Return the overrides that depend on a type: those of the type and of its instances."""
-    spec = _instance_scope(type(hardware_type))
+    spec = instance_scope(type(hardware_type))
     return Q(**{spec.type_field: hardware_type}) | Q(
         **{f"{spec.field}__{spec.type_field}": hardware_type}
     )
