@@ -1,0 +1,204 @@
+{% extends 'generic/_base.html' %}
+{% load helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Review activation" %}{% endblock %}
+
+{% block content %}
+  {% if error %}
+    <div class="alert alert-danger" role="alert">
+      <div>{% trans "The activation was rejected. No association changed." %} {{ error }}</div>
+    </div>
+    <div class="btn-list">
+      <a href="{{ review_url }}" class="btn btn-primary">{% trans "Review again" %}</a>
+      <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+    </div>
+  {% elif form.errors %}
+    <div class="alert alert-danger" role="alert">
+      {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      {% for field in form %}{% for error in field.errors %}<div>{{ field.name }}: {{ error }}</div>{% endfor %}{% endfor %}
+    </div>
+    <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+  {% elif review.hidden %}
+    <div class="alert alert-warning" role="alert">{{ hidden_message }}</div>
+    <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+  {% else %}
+    {% if form.cleaned_data.current %}
+      <div class="alert alert-info" role="alert">
+        <div>
+          {% trans "These associations already have the newest revision of their definition, so the review leaves them out:" %}
+          {% for association in form.cleaned_data.current %}<a href="{{ association.get_absolute_url }}">{{ association.hardware_type.full_name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
+        </div>
+      </div>
+    {% endif %}
+    {% if review %}
+      <p class="text-muted">
+        {% trans "The review compares each affected device as it shows now with the same device after the activation of every selected revision. The review changes nothing." %}
+      </p>
+      {% for target in review.targets %}
+        <div class="card">
+          <h2 class="card-header">{{ target.pair.hardware_type.full_name }}</h2>
+          <table class="table table-hover attr-table">
+            <tr>
+              <th scope="row">{% trans "Active revision" %}</th>
+              <td class="font-monospace text-break">{% if target.association %}<a href="{{ target.association.revision.get_absolute_url }}">{{ target.association.revision }}</a>{% else %}{{ ''|placeholder }}{% endif %}</td>
+            </tr>
+            <tr>
+              <th scope="row">{% trans "Candidate revision" %}</th>
+              <td class="font-monospace text-break"><a href="{{ target.pair.revision.get_absolute_url }}">{{ target.pair.revision }}</a></td>
+            </tr>
+            <tr>
+              <th scope="row">{% trans "Change" %}</th>
+              <td>
+                {% if target.unchanged %}{% trans "None: the type already shows this revision" %}
+                {% elif target.association %}{% trans "Change of the association" %}
+                {% else %}{% trans "First association" %}{% endif %}
+              </td>
+            </tr>
+          </table>
+          {% if target.error or target.overrides %}
+            <div class="card-body">
+              {% if target.error %}<div class="alert alert-danger">{{ target.error }}</div>{% endif %}
+              {% if target.overrides %}
+                <div class="alert alert-danger">
+                  <div>
+                    {% trans "These binding overrides name a connector that the candidate does not have. Delete them, or select another revision:" %}
+                    {% for override in target.overrides %}<a href="{{ override.get_absolute_url }}">{{ override }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead>
+                <tr>
+                  <th scope="col">{% if target.pair.scope.field == "device_type" %}{% trans "Device" %}{% else %}{% trans "Installed module" %}{% endif %}</th>
+                  {% if target.pair.scope.field == "module_type" %}<th scope="col">{% trans "Device" %}</th>{% endif %}
+                  <th scope="col">{% trans "Result" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for instance, label, device, pinned in target.rows %}
+                  <tr>
+                    <td><a href="{{ instance.get_absolute_url }}">{{ label }}</a></td>
+                    {% if target.pair.scope.field == "module_type" %}<td><a href="{{ device.get_absolute_url }}">{{ device }}</a></td>{% endif %}
+                    <td>{% if pinned %}<span class="text-muted">{% trans "Pinned, unchanged" %}</span>{% elif target.unchanged %}<span class="text-muted">{% trans "Unchanged" %}</span>{% else %}{% trans "Shows the candidate" %}{% endif %}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="3" class="text-muted">{% trans "No instance of the type." %}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endfor %}
+
+      <div class="card">
+        <h2 class="card-header">{% trans "Blockers" %}</h2>
+        <div class="card-body pb-0">
+          <p class="text-muted">{% trans "A blocker is a binding that resolves now and is missing after the activation, or an installed module that shows now and does not show after it." %}</p>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{% trans "Device" %}</th>
+                <th scope="col">{% trans "Part" %}</th>
+                <th scope="col">{% trans "Connector" %}</th>
+                <th scope="col">{% trans "Component" %}</th>
+                <th scope="col">{% trans "Reason" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for blocker in review.blockers %}
+                <tr>
+                  <td><a href="{{ blocker.device.get_absolute_url }}">{{ blocker.device }}</a></td>
+                  <td>{{ blocker.part }}</td>
+                  <td class="font-monospace">{{ blocker.connector|placeholder }}</td>
+                  <td>{{ blocker.component|placeholder }}</td>
+                  <td>{{ blocker.reason }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-muted">{% trans "None" %}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-header">{% trans "Unresolved bindings" %}</h2>
+        <div class="card-body pb-0">
+          <p class="text-muted">{% trans "These bindings find no component after the activation. A binding that is missing now does not block." %}</p>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{% trans "Device" %}</th>
+                <th scope="col">{% trans "Part" %}</th>
+                <th scope="col">{% trans "Connector" %}</th>
+                <th scope="col">{% trans "Component" %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for binding in review.unresolved %}
+                <tr>
+                  <td><a href="{{ binding.device.get_absolute_url }}">{{ binding.device }}</a></td>
+                  <td>{{ binding.part }}</td>
+                  <td class="font-monospace">{{ binding.connector }}</td>
+                  <td>{{ binding.component }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="4" class="text-muted">{% trans "None" %}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {% if review.warnings %}
+        <div class="card">
+          <h2 class="card-header">{% trans "Warnings" %}</h2>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead>
+                <tr><th scope="col">{% trans "Device" %}</th><th scope="col">{% trans "Warning" %}</th></tr>
+              </thead>
+              <tbody>
+                {% for warning in review.warnings %}
+                  <tr>
+                    <td><a href="{{ warning.device.get_absolute_url }}">{{ warning.device }}</a></td>
+                    <td>{{ warning.message }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+        {% if review.token %}
+          <form method="post" action="{{ request.get_full_path }}">
+            {% csrf_token %}
+            <input type="hidden" name="token" value="{{ review.token }}">
+            <input type="hidden" name="return_url" value="{{ return_url }}">
+            <button type="submit" class="btn btn-green">{% trans "Activate" %}</button>
+          </form>
+        {% elif review.blocked %}
+          <span class="text-danger">{% trans "The selection cannot be activated: remove each blocker first." %}</span>
+        {% elif not review.permitted %}
+          <span class="text-danger">{% trans "Your permissions do not allow this activation." %}</span>
+        {% else %}
+          <span class="text-muted">{% trans "Nothing to activate: each type already shows its selected revision." %}</span>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="text-muted">{% trans "Nothing to review." %}</p>
+      <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+    {% endif %}
+  {% endif %}
+{% endblock content %}
