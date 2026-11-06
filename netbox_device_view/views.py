@@ -388,17 +388,22 @@ class DefinitionRevisionListView(generic.ObjectListView):
     actions = (BundleImport, SourceImport)
 
 
-class ActivateRevision(ObjectAction):
+class ActivationAction(ObjectAction):
+    """A button for a user who can add or change associations."""
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # permissions_required needs every permission; activation needs add or change.
+        if not review.can_activate(context["request"].user):
+            return ""
+        return super().render(context, obj, **kwargs)
+
+
+class ActivateRevision(ActivationAction):
     name = "activate"
     label = _("Activate")
     template_name = "netbox_device_view/buttons/activate.html"
     url_kwargs = ("pk",)
-
-    @classmethod
-    def render(cls, context, obj, **kwargs):
-        if not review.can_activate(context["request"].user):
-            return ""
-        return super().render(context, obj, **kwargs)
 
 
 class DefinitionRevisionView(generic.ObjectView):
@@ -496,17 +501,11 @@ class AssociationReviewView(ActivationPermissionMixin, GetReturnURLMixin, View):
         return redirect(self.get_return_url(request))
 
 
-class ReviewUpdate(ObjectAction):
+class ReviewUpdate(ActivationAction):
     name = "review_update"
     label = _("Review update")
     multi = True
     template_name = "netbox_device_view/buttons/review_update.html"
-
-    @classmethod
-    def render(cls, context, obj, **kwargs):
-        if not review.can_activate(context["request"].user):
-            return ""
-        return super().render(context, obj, **kwargs)
 
 
 class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, View):
@@ -680,15 +679,19 @@ class BindingOverrideDeleteView(generic.ObjectDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
 
 
-class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
+class ScopedRowBulkDeleteView(generic.BulkDeleteView):
+    """Delete several overrides or pins with the bulk lock of their writers."""
+
+    def post(self, request, **kwargs):
+        with models.write_transaction(self.queryset.model) as using:
+            lock_bulk_writes(using)
+            return super().post(request, **kwargs)
+
+
+class BindingOverrideBulkDeleteView(ScopedRowBulkDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     filterset = filtersets.BindingOverrideFilterSet
     table = tables.BindingOverrideTable
-
-    def post(self, request, **kwargs):
-        with models.BindingOverride.writing() as using:
-            lock_bulk_writes(using)
-            return super().post(request, **kwargs)
 
 
 class InstancePinListView(generic.ObjectListView):
@@ -725,15 +728,10 @@ class InstancePinDeleteView(generic.ObjectDeleteView):
     queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
 
 
-class InstancePinBulkDeleteView(generic.BulkDeleteView):
+class InstancePinBulkDeleteView(ScopedRowBulkDeleteView):
     queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
     filterset = filtersets.InstancePinFilterSet
     table = tables.InstancePinTable
-
-    def post(self, request, **kwargs):
-        with models.InstancePin.writing() as using:
-            lock_bulk_writes(using)
-            return super().post(request, **kwargs)
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

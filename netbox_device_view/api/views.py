@@ -138,7 +138,7 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
 
 
 class _ErrorResponse(Exception):
-    """An error response of a write, raised so that the writing() transaction rolls back."""
+    """An error response of a write, raised so that the write_transaction() rolls back."""
 
     def __init__(self, response):
         super().__init__(response.status_code)
@@ -146,11 +146,11 @@ class _ErrorResponse(Exception):
 
 
 class ScopedRowViewSet(NetBoxModelViewSet):
-    """Each write runs in the writing() transaction of the model and takes the locks of its writer."""
+    """Each write runs in the write_transaction() of the model and takes the locks of its writer."""
 
     def _write(self, handler, request, *args, **kwargs):
         try:
-            with self.queryset.model.writing() as using:
+            with models.write_transaction(self.queryset.model) as using:
                 if isinstance(request.data, list):
                     lock_bulk_writes(using)
                 response = handler(request, *args, **kwargs)

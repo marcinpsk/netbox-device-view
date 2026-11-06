@@ -1,8 +1,4 @@
-"""Instance pins: the one writer of a changed pin.
-
-A pin keeps one device or one installed module on a chosen definition
-revision. Rendering uses the pin before the association of the type.
-"""
+"""Instance pins: the one writer of a changed pin."""
 
 from ..models import ONE_INSTANCE, InstancePin
 from .overrides import check_scope, save_scoped
