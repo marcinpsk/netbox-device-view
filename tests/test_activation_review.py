@@ -186,6 +186,56 @@ class ImpactTests(ReviewTestCase):
         self.assertEqual(self.association.revision, self.revision)
 
 
+class StoppingOverrideTests(ReviewTestCase):
+    def test_the_overrides_of_the_active_key_stop_applying_under_another_key(self):
+        override = BindingOverride.objects.create(
+            device_type=self.device_type,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=[{"component": "interface", "name": "eth1"}],
+        )
+        sw2 = self.make_device("sw2")
+        InstancePin.objects.create(device=sw2, revision=self.revision)
+        # The pinned device keeps its revision, so its override keeps applying.
+        BindingOverride.objects.create(
+            device=sw2,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=[],
+        )
+        other_key = self.import_files(
+            {
+                **FILES,
+                "manifest.yaml": MANIFEST.replace("key: acme/sw-24", "key: acme/other"),
+            },
+            "ACME/OTHER",
+        )
+
+        response, reviewed = self.reviewed((other_key, self.device_type))
+
+        [target] = reviewed.targets
+        self.assertEqual(target.stopping_overrides, (override,))
+        self.assertContains(
+            response, "These binding overrides name acme/sw-24 and stop applying"
+        )
+        self.assertContains(response, override.get_absolute_url())
+        self.assertEqual(reviewed.blockers, ())
+        self.assertTrue(token_of(response))
+
+    def test_no_override_stops_applying_under_a_revision_of_the_same_key(self):
+        BindingOverride.objects.create(
+            device_type=self.device_type,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=[{"component": "interface", "name": "eth1"}],
+        )
+
+        response, reviewed = self.reviewed((self.import_files(NEWER), self.device_type))
+
+        self.assertEqual(reviewed.targets[0].stopping_overrides, ())
+        self.assertNotContains(response, "stop applying")
+
+
 class BlockerTests(ReviewTestCase):
     def assertBlocked(self, response, reviewed):
         self.assertTrue(reviewed.blockers)
@@ -595,6 +645,16 @@ class TokenTests(ReviewTestCase):
         )
 
         self.assertRefused(self.apply(tampered), review.INVALID_TOKEN)
+
+    def test_a_rename_of_a_pinned_device_after_the_review_needs_a_new_review(self):
+        sw2 = self.make_device("sw2")
+        InstancePin.objects.create(device=sw2, revision=self.revision)
+        self.token = token_of(self.client.get(self.url))
+        self.assertTrue(self.token)
+
+        Device.objects.filter(pk=sw2.pk).update(name="sw2-renamed")
+
+        self.assertRefused(self.apply(), REVIEW_AGAIN)
 
     def test_a_change_after_the_review_needs_a_new_review(self):
         changes = {
