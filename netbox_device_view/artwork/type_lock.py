@@ -1,4 +1,4 @@
-"""The advisory transaction locks that activation and the binding override writers share."""
+"""The advisory transaction locks that activation and the writers of binding overrides and instance pins share."""
 
 import hashlib
 
@@ -33,7 +33,7 @@ def _lock(keys, using: str) -> None:
 
 
 def lock_bulk_writes(using: str) -> None:
-    """Take the lock of a writer of several overrides, before any type lock."""
+    """Take the lock of a writer of several overrides or pins, before any type lock."""
     _lock([_BULK_LOCK], using)
 
 

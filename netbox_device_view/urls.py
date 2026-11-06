@@ -162,4 +162,40 @@ urlpatterns = (
         name="bindingoverride_changelog",
         kwargs={"model": models.BindingOverride},
     ),
+    path(
+        "instance-pins/",
+        views.InstancePinListView.as_view(),
+        name="instancepin_list",
+    ),
+    path(
+        "instance-pins/add/",
+        views.InstancePinEditView.as_view(),
+        name="instancepin_add",
+    ),
+    path(
+        "instance-pins/delete/",
+        views.InstancePinBulkDeleteView.as_view(),
+        name="instancepin_bulk_delete",
+    ),
+    path(
+        "instance-pins/<int:pk>/",
+        views.InstancePinView.as_view(),
+        name="instancepin",
+    ),
+    path(
+        "instance-pins/<int:pk>/edit/",
+        views.InstancePinEditView.as_view(),
+        name="instancepin_edit",
+    ),
+    path(
+        "instance-pins/<int:pk>/delete/",
+        views.InstancePinDeleteView.as_view(),
+        name="instancepin_delete",
+    ),
+    path(
+        "instance-pins/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="instancepin_changelog",
+        kwargs={"model": models.InstancePin},
+    ),
 )
