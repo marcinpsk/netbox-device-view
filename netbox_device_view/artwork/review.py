@@ -215,6 +215,8 @@ class Review:
     unresolved: tuple[Unresolved, ...] = ()
     warnings: tuple[ReviewWarning, ...] = ()
     fingerprint: str | None = None
+    # {(Device or Module, pk)} of the affected and pinned instances that the review read.
+    listed_rows: frozenset = frozenset()
     token: str | None = field(default=None, compare=False)
 
     @property
@@ -314,8 +316,7 @@ def _load(user, token) -> tuple[list[Pair], str]:
 
 def _apply(user, pairs, fingerprint) -> list[Association]:
     using = router.db_for_write(Association)
-    affected = _Affected.read(pairs)
-    locked = affected.dependency_types
+    locked = _Affected.read(pairs).dependency_types
     # The writers of binding overrides and instance pins take the same locks.
     # A bulk writer takes its type locks in row order, so the activation first waits for it.
     lock_bulk_writes(using)
@@ -325,16 +326,18 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
         targets = [p.hardware_type.pk for p in pairs if p.scope == spec]
         _lock(spec.model.objects.filter(pk__in=targets))
     _lock(Association.objects.filter(_of_types(p.hardware_type for p in pairs)))
-    device_ids = [device.pk for device in affected.devices]
+    # A pin or an instance can change while the activation waits, so the row locks come from a new read.
+    affected = _Affected.read(pairs)
     _lock(Device.objects.filter(pk__in=affected.listed_device_ids))
     _lock(Module.objects.filter(pk__in=affected.listed_module_ids))
     for model in (*BINDABLE_MODELS, ModuleBay):
-        _share(model, device_ids)
+        _share(model, [device.pk for device in affected.devices])
     review = _inspect(user, pairs)
     if (
         not review.ready
         or review.fingerprint != fingerprint
         or not review.dependency_types <= locked
+        or review.listed_rows != affected.listed_rows
     ):
         raise ActivationRejected(CHANGED)
     changed = [_write(user, target) for target in review.targets]
@@ -473,6 +476,16 @@ class _Affected:
         )
 
     @property
+    def listed_rows(self) -> frozenset:
+        """Return (Device or Module, pk) of each device and module that the review names."""
+        return frozenset(
+            {
+                *((Device, pk) for pk in self.listed_device_ids),
+                *((Module, pk) for pk in self.listed_module_ids),
+            }
+        )
+
+    @property
     def listed_module_ids(self) -> set[int]:
         """Return the modules of the affected devices and the pinned modules: the review names them."""
         ids = {module.pk for module in self.modules}
@@ -506,7 +519,9 @@ def _inspect(user, pairs) -> Review:
     affected = _Affected.read(pairs)
     types = affected.dependency_types
     if not _visible(user, pairs, affected):
-        return Review(hidden=True, dependency_types=types)
+        return Review(
+            hidden=True, dependency_types=types, listed_rows=affected.listed_rows
+        )
     associations = {
         type_key(a): a
         for a in Association.objects.filter(_of_types(types)).select_related(
@@ -537,6 +552,7 @@ def _inspect(user, pairs) -> Review:
         unresolved=tuple(u for change in changes for u in change.unresolved()),
         warnings=tuple(w for change in changes for w in change.warnings()),
         fingerprint=_fingerprint(affected, associations),
+        listed_rows=affected.listed_rows,
     )
 
 
