@@ -166,6 +166,8 @@ class Target:
     pinned: tuple
     # The overrides that name a connector that the candidate does not have.
     overrides: tuple[BindingOverride, ...]
+    # The overrides of the active definition key, which stop applying under a candidate of another key.
+    stopping_overrides: tuple[BindingOverride, ...]
     # Why the user cannot activate the pair, or None.
     error: str | None
 
@@ -322,8 +324,8 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
         _lock(spec.model.objects.filter(pk__in=targets))
     _lock(Association.objects.filter(_of_types(p.hardware_type for p in pairs)))
     device_ids = [device.pk for device in affected.devices]
-    _lock(Device.objects.filter(pk__in=device_ids))
-    _lock(Module.objects.filter(pk__in=[module.pk for module in affected.modules]))
+    _lock(Device.objects.filter(pk__in=affected.listed_device_ids))
+    _lock(Module.objects.filter(pk__in=affected.listed_module_ids))
     for model in (*BINDABLE_MODELS, ModuleBay):
         _share(model, device_ids)
     review = _inspect(user, pairs)
@@ -469,6 +471,14 @@ class _Affected:
         )
 
     @property
+    def listed_module_ids(self) -> set[int]:
+        """Return the modules of the affected devices and the pinned modules: the review names them."""
+        ids = {module.pk for module in self.modules}
+        for pinned in self.pinned.values():
+            ids |= {i.pk for i in pinned if isinstance(i, Module)}
+        return ids
+
+    @property
     def listed_device_ids(self) -> set[int]:
         """Return the affected devices and the devices of the pinned instances: the review names them."""
         ids = {device.pk for device in self.devices}
@@ -510,6 +520,9 @@ def _inspect(user, pairs) -> Review:
             affected.instances[pair.key],
             affected.pinned[pair.key],
             _blocking_overrides(pair, affected.pinned[pair.key]),
+            _stopping_overrides(
+                pair, associations.get(pair.key), affected.pinned[pair.key]
+            ),
             _permission_error(user, pair, associations.get(pair.key)),
         )
         for pair in pairs
@@ -563,16 +576,34 @@ def _permission_error(user, pair, association) -> str | None:
 
 
 def _blocking_overrides(pair, pinned) -> tuple[BindingOverride, ...]:
-    """Return the overrides of the type and its instances that name a connector that the candidate does not have.
+    """Return the overrides of the type and its instances that name a connector that the candidate does not have."""
+    return tuple(
+        _candidate_overrides(pair, pinned, pair.revision.definition_id).exclude(
+            connector_key__in=list(pair.revision.manifest["connectors"])
+        )
+    )
+
+
+def _stopping_overrides(pair, association, pinned) -> tuple[BindingOverride, ...]:
+    """Return the overrides of the active definition key when the candidate has another key: they stop applying."""
+    if association is None:
+        return ()
+    active = association.revision.definition_id
+    if active == pair.revision.definition_id:
+        return ()
+    return tuple(_candidate_overrides(pair, pinned, active))
+
+
+def _candidate_overrides(pair, pinned, definition_id):
+    """Return the overrides of ``definition_id`` of the type and of its instances that use the candidate.
 
     The override of a pinned instance does not use the candidate.
     """
     spec = instance_scope(type(pair.hardware_type))
-    return tuple(
+    return (
         BindingOverride.objects.filter(
-            depending_on(pair.hardware_type), definition=pair.revision.definition_id
+            depending_on(pair.hardware_type), definition=definition_id
         )
-        .exclude(connector_key__in=list(pair.revision.manifest["connectors"]))
         .exclude(**{f"{spec.field}__in": [i.pk for i in pinned]})
         .select_related(*OVERRIDE_RELATIONS)
     )
@@ -759,6 +790,16 @@ def _fingerprint(affected, associations) -> str:
     material = {
         "associations": sorted(states),
         "devices": [[d.pk, d.name, d.device_type_id] for d in affected.devices],
+        # The pinned instances that the review names.
+        "pinned": sorted(
+            (
+                ["device", i.pk, i.name]
+                if isinstance(i, Device)
+                else ["module", i.pk, i.module_bay.name, i.device_id, i.device.name]
+            )
+            for pinned in affected.pinned.values()
+            for i in pinned
+        ),
         "modules": [
             [m.pk, m.module_type_id, m.module_bay_id] for m in affected.modules
         ],

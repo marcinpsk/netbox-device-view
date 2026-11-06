@@ -18,7 +18,9 @@ from dcim.models import (
     DeviceType,
     Interface,
     Manufacturer,
+    Module,
     ModuleBay,
+    ModuleType,
     PowerPort,
     RearPort,
     Site,
@@ -33,7 +35,7 @@ from netbox_device_view.artwork import overrides, pins
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import Association, BindingOverride, InstancePin
 
-from .artwork_samples import bundle, definition
+from .artwork_samples import MODULE_FILES, bundle, definition
 from .test_artwork_activation import NEWER, REVIEW_AGAIN, review_url, token_of
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 
@@ -101,11 +103,29 @@ class ConcurrentActivationTestCase(TransactionTestCase):
         self.release = threading.Event()
         self.addCleanup(self.release.set)
 
-    def import_files(self, files):
+    def import_files(self, files, directory="ACME/SW-24"):
         [imported] = import_bundle(
-            self.admin, "sw24.zip", io.BytesIO(bundle(definition("ACME/SW-24", files)))
+            self.admin, "more.zip", io.BytesIO(bundle(definition(directory, files)))
         )
         return imported.revision
+
+    def module_association(self):
+        """Install a module in the device, with an association of its type: a type of the dependency set."""
+        module_type = ModuleType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="NM-2X"
+        )
+        Module.objects.create(
+            device=self.device, module_bay=self.bay, module_type=module_type
+        )
+        return Association.objects.create(
+            module_type=module_type,
+            revision=self.import_files(MODULE_FILES, "ACME/NM-2X"),
+        )
+
+    def pinned_device(self):
+        device = self.make_device("sw2")
+        InstancePin.objects.create(device=device, revision=self.revision)
+        return device
 
     def make_device(self, name):
         return Device.objects.create(
@@ -212,6 +232,20 @@ class WriterFirstTests(ConcurrentActivationTestCase):
 
         self.assertTrue(InstancePin.objects.exists())
 
+    def test_an_association_delete_of_a_dependency_type(self):
+        association = self.module_association()
+
+        self.activation_after(association.delete)
+
+        self.assertFalse(Association.objects.filter(pk=association.pk).exists())
+
+    def test_a_rename_of_a_pinned_device(self):
+        device = self.pinned_device()
+
+        self.activation_after(
+            lambda: Device.objects.filter(pk=device.pk).update(name="sw2-renamed")
+        )
+
     def test_an_override_change(self):
         self.activation_after(
             lambda: overrides.save(
@@ -282,6 +316,22 @@ class ActivationFirstTests(ConcurrentActivationTestCase):
         )
 
         self.assertTrue(InstancePin.objects.filter(device=self.device).exists())
+
+    def test_an_association_delete_of_a_dependency_type_waits(self):
+        association = self.module_association()
+
+        self.assertIsNone(self.writer_during_activation(association.delete))
+
+        self.assertFalse(Association.objects.filter(pk=association.pk).exists())
+
+    def test_a_rename_of_a_pinned_device_waits(self):
+        device = self.pinned_device()
+
+        self.assertIsNone(
+            self.writer_during_activation(
+                lambda: Device.objects.filter(pk=device.pk).update(name="sw2-renamed")
+            )
+        )
 
     def test_an_override_writer_waits_and_checks_the_new_revision(self):
         # The candidate has no con-r1; its binding finds no component, so nothing blocks.

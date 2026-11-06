@@ -56,7 +56,7 @@
               </td>
             </tr>
           </table>
-          {% if target.error or target.overrides %}
+          {% if target.error or target.overrides or target.stopping_overrides %}
             <div class="card-body">
               {% if target.error %}<div class="alert alert-danger">{{ target.error }}</div>{% endif %}
               {% if target.overrides %}
@@ -64,6 +64,14 @@
                   <div>
                     {% trans "These binding overrides name a connector that the candidate does not have. Delete them, or select another revision:" %}
                     {% for override in target.overrides %}<a href="{{ override.get_absolute_url }}">{{ override }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
+                  </div>
+                </div>
+              {% endif %}
+              {% if target.stopping_overrides %}
+                <div class="alert alert-warning">
+                  <div>
+                    {% blocktrans with key=target.association.revision.definition.key %}These binding overrides name {{ key }} and stop applying, because the candidate has another definition key:{% endblocktrans %}
+                    {% for override in target.stopping_overrides %}<a href="{{ override.get_absolute_url }}">{{ override }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
                   </div>
                 </div>
               {% endif %}

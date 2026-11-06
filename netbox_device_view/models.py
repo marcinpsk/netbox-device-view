@@ -241,6 +241,12 @@ class Association(ChangeLoggedModel):
                 }
             )
 
+    def delete(self, *args, **kwargs):
+        # An activation holds the lock of each type of its dependency set until it commits.
+        with write_transaction(type(self)) as using:
+            lock_types([self.hardware_type], using)
+            return super().delete(*args, **kwargs)
+
 
 @dataclass(frozen=True)
 class Scope:
