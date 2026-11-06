@@ -11,7 +11,7 @@ from core.choices import ObjectChangeActionChoices
 from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceType, Module, ModuleBay, ModuleType
 from django.core import signing
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import EmptyResultSet, PermissionDenied
 from django.db import IntegrityError, OperationalError, connections, router
 from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils.text import capfirst
@@ -75,6 +75,10 @@ NO_CONNECTOR = _("The candidate has no connector {key}.")
 NOT_ARTWORK = _("The candidate does not draw the part with artwork.")
 NOT_DRAWN = _("The candidate does not draw the installed module.")
 DAMAGED_CANDIDATE = _("The stored artwork of the candidate is damaged.")
+UNSTABLE = _(
+    "The affected objects changed while the review read them. Review the activation"
+    " again."
+)
 
 
 class ActivationRejected(Exception):
@@ -225,6 +229,8 @@ class Review:
     fingerprint: str | None = None
     # {(Device or Module, pk)} of the affected and pinned instances that the review read.
     listed_rows: frozenset = frozenset()
+    # False when the impact set changed while the review read it.
+    stable: bool = True
     token: str | None = field(default=None, compare=False)
 
     @property
@@ -242,7 +248,13 @@ class Review:
     @property
     def ready(self) -> bool:
         """Return True when the selection can be activated."""
-        return not self.hidden and self.permitted and not self.blocked and self.changes
+        return (
+            not self.hidden
+            and self.stable
+            and self.permitted
+            and not self.blocked
+            and self.changes
+        )
 
 
 def build(user, pairs) -> Review:
@@ -334,13 +346,23 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
         targets = [p.hardware_type.pk for p in pairs if p.scope == spec]
         _lock(spec.model.objects.filter(pk__in=targets))
     _lock(Association.objects.filter(_of_types(p.hardware_type for p in pairs)))
+    # The catalogue is on main; FOR SHARE keeps a candidate from a delete until the commit.
+    candidates = functools.reduce(
+        operator.or_, (Q(pk=p.revision.pk, digest=p.revision.digest) for p in pairs)
+    )
+    shared = _share(
+        DefinitionRevision.objects.filter(candidates),
+        router.db_for_write(DefinitionRevision),
+    )
+    if shared != {pair.revision.pk for pair in pairs}:
+        raise ActivationRejected(CHANGED)
     # A pin or an instance can change while the activation waits, so the row locks come from a new read.
     affected = _Affected.read(pairs)
     _lock(Device.objects.filter(pk__in=affected.listed_device_ids))
     _lock(Module.objects.filter(pk__in=affected.listed_module_ids))
     # The review reads the components and the module bays of each device that it names.
     for model in (*BINDABLE_MODELS, ModuleBay):
-        _share(model, sorted(affected.listed_device_ids))
+        _share(model.objects.filter(device__in=affected.listed_device_ids), using)
     review = _inspect(user, pairs)
     if (
         not review.ready
@@ -363,22 +385,17 @@ def _lock(queryset) -> None:
     )
 
 
-def _share(model, device_ids) -> None:
-    """Lock the rows of ``model`` on the devices FOR SHARE on the connection of associations, in primary key order."""
-    if not device_ids:
-        return
-    using = router.db_for_write(Association)
-    query = (
-        model.objects.using(using)
-        .filter(device__in=device_ids)
-        .order_by("pk")
-        .values_list("pk")
-        .query
-    )
-    # Django has no FOR SHARE.
-    sql, params = query.get_compiler(using=using).as_sql()
+def _share(queryset, using) -> set[int]:
+    """Lock the rows of a plain ``queryset`` FOR SHARE on ``using``, in primary key order; return their primary keys."""
+    query = queryset.using(using).order_by("pk").values_list("pk").query
+    try:
+        # Django has no FOR SHARE.
+        sql, params = query.get_compiler(using=using).as_sql()
+    except EmptyResultSet:
+        return set()
     with connections[using].cursor() as cursor:
         cursor.execute(f"{sql} FOR SHARE", params)
+        return {pk for (pk,) in cursor.fetchall()}
 
 
 def _write(user, target) -> Association | None:
@@ -524,19 +541,25 @@ _RELATIONS = {
 }
 
 
-def _inspect(user, pairs) -> Review:
+def _snapshot(pairs) -> tuple["_Affected", dict, str]:
+    """Return the affected set of ``pairs``, the associations of its types and the fingerprint of the impact set."""
     affected = _Affected.read(pairs)
+    associations = {
+        type_key(a): a
+        for a in Association.objects.filter(
+            _of_types(affected.dependency_types)
+        ).select_related("revision__definition")
+    }
+    return affected, associations, _fingerprint(affected, associations)
+
+
+def _inspect(user, pairs) -> Review:
+    affected, associations, fingerprint = _snapshot(pairs)
     types = affected.dependency_types
     if not _visible(user, pairs, affected):
         return Review(
             hidden=True, dependency_types=types, listed_rows=affected.listed_rows
         )
-    associations = {
-        type_key(a): a
-        for a in Association.objects.filter(_of_types(types)).select_related(
-            "revision__definition"
-        )
-    }
     selection = {pair.key: pair.revision for pair in pairs}
     changes = _compare(user, affected, selection)
     targets = tuple(
@@ -560,7 +583,9 @@ def _inspect(user, pairs) -> Review:
         blockers=tuple(b for change in changes for b in change.blockers()),
         unresolved=tuple(u for change in changes for u in change.unresolved()),
         warnings=tuple(w for change in changes for w in change.warnings()),
-        fingerprint=_fingerprint(affected, associations),
+        fingerprint=fingerprint,
+        # The page shows the fingerprinted objects only when nothing changed while the review read them.
+        stable=_snapshot(pairs)[2] == fingerprint,
         listed_rows=affected.listed_rows,
     )
 

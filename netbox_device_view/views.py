@@ -469,6 +469,7 @@ class AssociationReviewView(ActivationPermissionMixin, GetReturnURLMixin, View):
             "form": form,
             "return_url": self.get_return_url(request),
             "hidden_message": review.HIDDEN,
+            "unstable_message": review.UNSTABLE,
         }
         if not form.is_valid():
             return render(request, self.template_name, context, status=400)
