@@ -354,6 +354,32 @@ class ActivationFirstTests(ConcurrentActivationTestCase):
 
 
 class ConcurrentActivationTests(ConcurrentActivationTestCase):
+    def test_a_pin_delete_while_the_activation_waits_leaves_the_device_locked(self):
+        # The active revision binds con-r1 to the rear port R1, which does not exist; the candidate drops con-r1.
+        self.newer = self.import_files(WITHOUT_R1)
+        self.url = review_url((self.newer, self.device_type))
+        token = self.token()
+        pin = InstancePin.objects.create(device=self.device, revision=self.revision)
+        self.pause_activation()
+        with transaction.atomic():
+            # A bulk writer deletes the pin: the device is affected again when the activation runs.
+            lock_bulk_writes("default")
+            pin.delete()
+            activation = self.activate_in_thread(token)
+            self.wait_for_a_waiter(activation[0])
+        self.assertTrue(self.paused.wait(WAIT_SECONDS))
+        # A rename after the inspection would make con-r1 resolve, so its removal would block.
+        rename = self.start(
+            "writer",
+            lambda: RearPort.objects.filter(pk=self.spare.pk).update(name="R1"),
+        )
+        self.wait_for_a_waiter(rename[0])
+        self.release.set()
+
+        self.assertEqual(self.finish(*activation).status_code, 302)
+        self.finish(*rename)
+        self.assertActivated()
+
     def test_an_activation_queues_behind_a_bulk_writer_without_a_deadlock(self):
         module_type = self.module_association().module_type
         # The dependency set of the activation holds both types.
