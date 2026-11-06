@@ -358,13 +358,16 @@ class Part:
         return nodes(None)
 
 
-def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
+def resolve_device(
+    device, revision, user, view=OVERVIEW, plain=False, selection=None
+) -> Part:
     """Return the artwork Part of ``device`` with the components and modules that ``user`` can view.
 
     The connectors bind with the overrides of each part and its type. A
-    ``plain`` face has no class, links or marks.
+    ``plain`` face has no class, links or marks. A ``selection`` gives the
+    revisions of the types of a reviewed activation: see active_revisions().
     """
-    composer = _Composer(device, user, plain)
+    composer = _Composer(device, user, plain, selection)
     connectors = composer.connectors(revision, device)
     part_id = f"dv-{view}-d{device.pk}"
     data = _read_faces(revision)
@@ -389,13 +392,14 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     )
 
 
-def resolve_schematic(device, user, view=OVERVIEW, plain=False) -> Part:
+def resolve_schematic(device, user, view=OVERVIEW, plain=False, selection=None) -> Part:
     """Return the schematic Part of ``device``: one face with the components and module bays that ``user`` can view.
 
     A slot draws its installed module: its artwork scaled to fit, or its own
-    schematic. A ``plain`` face has no class, links or marks.
+    schematic. A ``plain`` face has no class, links or marks. A ``selection``
+    is as for resolve_device().
     """
-    composer = _Composer(device, user, plain)
+    composer = _Composer(device, user, plain, selection)
     part_id = f"dv-{view}-d{device.pk}"
     # A type can have a height of 0 U or less than 1 U.
     height = max(float(device.device_type.u_height), 1) * RACK_UNIT
@@ -451,7 +455,7 @@ class _Scope:
 class _Composer:
     """Draw the faces of one device, with each installed module that the user can view in its bay."""
 
-    def __init__(self, device, user, plain):
+    def __init__(self, device, user, plain, selection):
         self.device = device
         self.plain = plain
         self.states = device_components(device, user, BINDABLE_MODELS)
@@ -483,7 +487,7 @@ class _Composer:
                 bay.module = by_pk[bay.module_id]
             self.installed[(bay.module_id, bay.name)] = module
         # {module pk: revision}
-        self.revisions = active_revisions(modules)
+        self.revisions = active_revisions(modules, selection)
         self.overrides = part_overrides([device, *modules])
         self.faces = {}
         self.modules = []

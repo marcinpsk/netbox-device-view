@@ -20,9 +20,9 @@ from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import Token, User
 
-from netbox_device_view.artwork import activation
 from netbox_device_view.artwork.importing import import_bundle
 
+from .activation import activate
 from .reference_samples import (
     ARTWORK,
     COMMUNITY,
@@ -61,9 +61,7 @@ class C8300TestCase(TestCase):
 
     def device(self, community, name):
         device_type = community_type(community / CHASSIS)
-        activation.activate(
-            self.admin, self.revisions["cisco/c8300-1n1s-6t"], device_type
-        )
+        activate(self.admin, (self.revisions["cisco/c8300-1n1s-6t"], device_type))
         return Device.objects.create(
             name=name,
             device_type=device_type,
@@ -157,10 +155,11 @@ class NestedTests(C8300TestCase):
             role: community_type(COMMUNITY / "module-types" / "Cisco" / f"{model}.yaml")
             for role, model in MODULES.items()
         }
-        activation.activate(
-            self.admin, self.revisions["cisco/c-sm-16p4m2x"], types["sm"]
+        activate(
+            self.admin,
+            (self.revisions["cisco/c-sm-16p4m2x"], types["sm"]),
+            (self.revisions["cisco/glc-te"], types["optic"]),
         )
-        activation.activate(self.admin, self.revisions["cisco/glc-te"], types["optic"])
         self.router = self.device(COMMUNITY, "rtr1")
         self.optic4 = self.install(self.router, "Transceiver 0/0/4", types["optic"])
         self.optic5 = self.install(self.router, "Transceiver 0/0/5", types["optic"])

@@ -2,6 +2,8 @@ from core.models import DataSource
 from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.urls import reverse
+from django.utils.http import urlencode
 from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
@@ -22,7 +24,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
-from .artwork import overrides, pins
+from .artwork import overrides, pins, review
 from .artwork.manifest import (
     BINDING_COMPONENTS,
     DEVICE_KIND,
@@ -41,6 +43,7 @@ from .models import (
     DeviceView,
     InstancePin,
     VisualDefinition,
+    type_scope,
 )
 from .utils import normalize_grid_template_area
 
@@ -215,49 +218,114 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
 _ACTIVATION_TEXTS = {
     DEVICE_KIND: (
         _(
-            "After activation, the Device View of each device of the selected type"
-            " shows this revision of {key}. A type that already has an active revision"
-            " changes to this one."
+            "Select the device types that show this revision of {key}. The review"
+            " lists the devices that change and what the change breaks. Nothing"
+            " changes until you activate the reviewed selection."
         ),
-        _("The Device View of every device of this type shows the revision."),
+        _("The Device View of every device of these types shows the revision."),
     ),
     MODULE_KIND: (
         _(
-            "After activation, each installed module of the selected type shows this"
-            " revision of {key} in the bay of its device. A type that already has an"
-            " active revision changes to this one."
+            "Select the module types that show this revision of {key}. The review"
+            " lists the installed modules and the devices that change, and what the"
+            " change breaks. Nothing changes until you activate the reviewed"
+            " selection."
         ),
         _(
-            "Every installed module of this type shows the revision in the bay of its"
-            " device."
+            "Every installed module of these types shows the revision in the bay of"
+            " its device."
         ),
     ),
 }
 
 
 class ActivateRevisionForm(forms.Form):
-    """The one type field of the revision's kind: a device type, or a module type."""
+    """The types of the revision's kind that a review activates the revision for.
+
+    The prefix of the form names the revision, so one query holds the types
+    of several revisions: see review_url().
+    """
 
     def __init__(self, *args, user, revision, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, prefix=self.prefix_of(revision), **kwargs)
         kind = revision.definition.kind
         scope = TYPE_SCOPES[kind]
+        self.revision = revision
         self.type_field = scope.field
         intro, help_text = _ACTIVATION_TEXTS[kind]
         self.intro = intro.format(key=revision.definition.key)
-        self.fields[self.type_field] = DynamicModelChoiceField(
+        self.fields[self.type_field] = DynamicModelMultipleChoiceField(
             queryset=scope.model.objects.restrict(user, "view"),
-            label=capfirst(scope.model._meta.verbose_name),
+            label=capfirst(scope.model._meta.verbose_name_plural),
             help_text=help_text,
         )
+
+    @staticmethod
+    def prefix_of(revision) -> str:
+        return f"r{revision.pk}"
 
     @property
     def type_bound_field(self):
         return self[self.type_field]
 
     @property
-    def hardware_type(self):
-        return self.cleaned_data[self.type_field]
+    def pairs(self) -> list[review.Pair]:
+        return [
+            review.Pair(hardware_type, self.revision)
+            for hardware_type in self.cleaned_data[self.type_field]
+        ]
+
+
+def review_url(pairs, **params) -> str:
+    """Return the URL of the review of ``pairs`` of (type, revision), in the format that ReviewForm reads."""
+    query = {"revision": [], **params}
+    for hardware_type, revision in pairs:
+        if revision.pk not in query["revision"]:
+            query["revision"].append(revision.pk)
+        name = f"{ActivateRevisionForm.prefix_of(revision)}-{type_scope(hardware_type).field}"
+        query.setdefault(name, []).append(hardware_type.pk)
+    page = reverse("plugins:netbox_device_view:association_review")
+    return f"{page}?{urlencode(query, doseq=True)}"
+
+
+class ReviewForm(forms.Form):
+    """The selection of a review: the revisions, and the types of each in its ActivateRevisionForm."""
+
+    revision = forms.ModelMultipleChoiceField(queryset=None, required=False)
+    # The associations that a review of an update leaves out: they have the newest revision.
+    current = forms.ModelMultipleChoiceField(queryset=None, required=False)
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.fields["revision"].queryset = DefinitionRevision.objects.restrict(
+            user, "view"
+        ).select_related("definition")
+        self.fields["current"].queryset = Association.objects.restrict(
+            user, "view"
+        ).select_related("device_type__manufacturer", "module_type__manufacturer")
+        self.pairs = []
+
+    def clean(self):
+        data = super().clean()
+        for revision in data.get("revision") or ():
+            form = ActivateRevisionForm(self.data, user=self.user, revision=revision)
+            if not form.is_valid():
+                for errors in form.errors.values():
+                    for error in errors:
+                        self.add_error(None, f"{revision}: {error}")
+                continue
+            self.pairs.extend(form.pairs)
+        keys = [pair.key for pair in self.pairs]
+        if len(set(keys)) != len(keys):
+            raise ValidationError(_("Select each type once."))
+        if len(keys) > review.MAX_PAIRS:
+            raise ValidationError(
+                _("Select at most {count} types in one review.").format(
+                    count=review.MAX_PAIRS
+                )
+            )
+        return data
 
 
 class AssociationFilterForm(SavedFiltersMixin, FilterForm):

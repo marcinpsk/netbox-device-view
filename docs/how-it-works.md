@@ -12,7 +12,7 @@ When you visit a device of that type, the plugin:
 
 The Device View tab, the device page panel, the [rendered-layout API](rendered-layout-api.md) and the [artwork API](artwork-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
 
-A device type with an active artwork revision shows that artwork instead of its layout. See [Activate a revision](artwork-bundles.md#activate-a-revision). The artwork shows each installed module in its bay, with the active artwork of the module type: see [Module bays](artwork-bundles.md#module-bays). [Binding overrides](artwork-bundles.md#binding-overrides) change which components the connectors of the artwork bind to. An [instance pin](artwork-bundles.md#instance-pins) keeps one device or one installed module on a chosen revision.
+A device type with an active artwork revision shows that artwork instead of its layout. An activation goes through a [review](artwork-bundles.md#review-an-activation) of what it changes. See [Activate a revision](artwork-bundles.md#activate-a-revision). The artwork shows each installed module in its bay, with the active artwork of the module type: see [Module bays](artwork-bundles.md#module-bays). [Binding overrides](artwork-bundles.md#binding-overrides) change which components the connectors of the artwork bind to. An [instance pin](artwork-bundles.md#instance-pins) keeps one device or one installed module on a chosen revision.
 
 ---
 

@@ -642,10 +642,12 @@ class InstancePin(ScopedRow, ChangeLoggedModel):
             )
 
 
-def active_revisions(parts) -> dict[int, DefinitionRevision]:
+def active_revisions(parts, selection=None) -> dict[int, DefinitionRevision]:
     """Return {pk: revision} for the devices or the installed modules ``parts`` that have one.
 
-    The pin of a part comes before the active revision of its type.
+    The pin of a part comes first, then the revision that ``selection``
+    ({(type field, type pk): revision}) gives its type, then the active
+    revision of its type.
     """
     if not parts:
         return {}
@@ -664,8 +666,11 @@ def active_revisions(parts) -> dict[int, DefinitionRevision]:
             type_spec.among({type_spec.id_of(part) for part in parts})
         ).select_related("revision__definition")
     }
+    selected = selection or {}
     revisions = {
-        part.pk: pinned.get(part.pk) or active.get(type_spec.id_of(part))
+        part.pk: pinned.get(part.pk)
+        or selected.get((type_spec.field, type_spec.id_of(part)))
+        or active.get(type_spec.id_of(part))
         for part in parts
     }
     return {pk: revision for pk, revision in revisions.items() if revision}
