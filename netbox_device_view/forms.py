@@ -2,6 +2,7 @@ from core.models import DataSource
 from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.forms.utils import ErrorDict
 from django.urls import reverse
 from django.utils.http import urlencode
 from django.utils.text import capfirst, format_lazy
@@ -289,6 +290,13 @@ def review_url(pairs, **params) -> str:
     return f"{page}?{urlencode(query, doseq=True)}"
 
 
+def requested_pairs(data) -> int:
+    """Return how many revisions or (type, revision) pairs a review query requests, before any validation."""
+    names = tuple(f"-{spec.field}" for spec in TYPE_SCOPES.values())
+    pairs = sum(len(data.getlist(name)) for name in data if name.endswith(names))
+    return max(pairs, len(data.getlist("revision")))
+
+
 class ReviewForm(forms.Form):
     """The selection of a review: the revisions, and the types of each in its ActivateRevisionForm."""
 
@@ -311,6 +319,20 @@ class ReviewForm(forms.Form):
         ).select_related("device_type__manufacturer", "module_type__manufacturer")
         self.pairs = []
 
+    def full_clean(self):
+        # The limit applies before a field reads the database.
+        if self.is_bound and requested_pairs(self.data) > review.MAX_PAIRS:
+            self._errors = ErrorDict()
+            self.cleaned_data = {}
+            self.add_error(
+                None,
+                _("Select at most {count} types in one review.").format(
+                    count=review.MAX_PAIRS
+                ),
+            )
+            return
+        super().full_clean()
+
     def clean(self):
         data = super().clean()
         for revision in data.get("revision") or ():
@@ -324,12 +346,6 @@ class ReviewForm(forms.Form):
         keys = [pair.key for pair in self.pairs]
         if len(set(keys)) != len(keys):
             raise ValidationError(_("Select each type once."))
-        if len(keys) > review.MAX_PAIRS:
-            raise ValidationError(
-                _("Select at most {count} types in one review.").format(
-                    count=review.MAX_PAIRS
-                )
-            )
         return data
 
 

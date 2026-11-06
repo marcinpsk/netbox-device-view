@@ -196,6 +196,8 @@
             <input type="hidden" name="return_url" value="{{ return_url }}">
             <button type="submit" class="btn btn-green">{% trans "Activate" %}</button>
           </form>
+        {% elif not review.stable %}
+          <span class="text-danger">{{ unstable_message }}</span>
         {% elif review.blocked %}
           <span class="text-danger">{% trans "The selection cannot be activated: remove each blocker first." %}</span>
         {% elif not review.permitted %}

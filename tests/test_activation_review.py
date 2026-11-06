@@ -20,9 +20,11 @@ from dcim.models import (
 from django.contrib.messages import get_messages
 from django.core import signing
 from django.db import connection
+from django.db.models.signals import post_init
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils.http import urlencode
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork import pins, review
@@ -237,6 +239,30 @@ class StoppingOverrideTests(ReviewTestCase):
 
         self.assertEqual(reviewed.targets[0].stopping_overrides, ())
         self.assertNotContains(response, "stop applying")
+
+
+class SnapshotTests(ReviewTestCase):
+    def test_a_change_during_the_review_gives_no_token(self):
+        eth2 = Interface.objects.create(
+            device=self.device, name="eth2", type="1000base-t"
+        )
+        renamed = []
+
+        def rename(sender, instance, **kwargs):
+            # The comparison reads the first component after the review read its fingerprint.
+            if not renamed:
+                renamed.append(instance)
+                Interface.objects.filter(pk=eth2.pk).update(name="spare")
+
+        post_init.connect(rename, sender=Interface, weak=False)
+        self.addCleanup(post_init.disconnect, rename, sender=Interface)
+
+        response, reviewed = self.reviewed((self.import_files(NEWER), self.device_type))
+
+        self.assertTrue(renamed)
+        self.assertIsNone(token_of(response))
+        self.assertFalse(reviewed.stable)
+        self.assertContains(response, review.UNSTABLE)
 
 
 class BlockerTests(ReviewTestCase):
@@ -818,6 +844,32 @@ class EntryTests(ReviewTestCase):
         )
 
         self.assertContains(response, "Select each type once.", status_code=400)
+
+    def test_a_review_of_too_many_pairs_is_rejected_before_any_database_read(self):
+        query = urlencode(
+            {
+                "revision": self.revision.pk,
+                f"r{self.revision.pk}-device_type": range(1, review.MAX_PAIRS + 2),
+            },
+            doseq=True,
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(f"{reverse(REVIEW_URL)}?{query}")
+
+        self.assertContains(
+            response,
+            f"Select at most {review.MAX_PAIRS} types in one review.",
+            status_code=400,
+        )
+        self.assertEqual(
+            [
+                q["sql"]
+                for q in queries
+                if "netbox_device_view_" in q["sql"] or "dcim_" in q["sql"]
+            ],
+            [],
+        )
 
     def test_a_review_holds_a_bounded_number_of_types(self):
         types = [
