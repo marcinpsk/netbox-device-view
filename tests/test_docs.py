@@ -170,6 +170,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         element_id="dv-a-d1-m1",
         prefix="",
         connectors=(),
+        revision_connectors=(),
         ids=frozenset(),
         warnings=(),
     )
