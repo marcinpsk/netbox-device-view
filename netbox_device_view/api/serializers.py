@@ -16,13 +16,15 @@ from netbox.api.serializers import (
 from rest_framework import serializers
 from rest_framework.fields import get_error_detail
 
-from ..artwork import overrides
+from ..artwork import overrides, pins
 from ..models import (
+    INSTANCE_FIELDS,
     SCOPE_FIELDS,
     Association,
     BindingOverride,
     DefinitionRevision,
     DeviceView,
+    InstancePin,
     RevisionFile,
     RevisionImport,
     VisualDefinition,
@@ -149,14 +151,48 @@ class AssociationSerializer(BaseModelSerializer):
         read_only_fields = fields
 
 
-class BindingOverrideSerializer(ChangeLogMessageSerializer, ValidatedModelSerializer):
-    """Each write goes through the override writer, as on the plugin pages."""
+class WriterSerializer(ChangeLogMessageSerializer, ValidatedModelSerializer):
+    """Each write goes through ``writer``, as on the plugin pages."""
 
+    # The fields of the objects that the user must be able to view.
+    viewed_fields = ()
+    writer = None
+
+    def validate(self, data):
+        # The messages of the model validation name the related objects.
+        user = self.context["request"].user
+        if self.instance is not None and self.instance.scope_field is not None:
+            overrides.check_scope(user, self.instance.scope_field, self.instance.scope)
+        for field in self.viewed_fields:
+            if data.get(field) is not None:
+                overrides.check_scope(user, field, data[field])
+        return super().validate(data)
+
+    def create(self, validated_data):
+        return self._save(self.Meta.model(**validated_data))
+
+    def update(self, instance, validated_data):
+        validated_data.pop("changelog_message", None)
+        for name, value in validated_data.items():
+            setattr(instance, name, value)
+        return self._save(instance)
+
+    def _save(self, row):
+        try:
+            return self.writer(self.context["request"].user, row)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(get_error_detail(exc)) from exc
+
+
+class BindingOverrideSerializer(WriterSerializer):
     device_type = DeviceTypeSerializer(nested=True, required=False, allow_null=True)
     module_type = ModuleTypeSerializer(nested=True, required=False, allow_null=True)
     device = DeviceSerializer(nested=True, required=False, allow_null=True)
     module = ModuleSerializer(nested=True, required=False, allow_null=True)
     definition = VisualDefinitionSerializer(nested=True, read_only=True)
+
+    viewed_fields = SCOPE_FIELDS
+    writer = staticmethod(overrides.save)
 
     class Meta:
         model = BindingOverride
@@ -177,27 +213,26 @@ class BindingOverrideSerializer(ChangeLogMessageSerializer, ValidatedModelSerial
         )
         brief_fields = ("id", "url", "display", "connector_key")
 
-    def validate(self, data):
-        # The messages of the model validation name the type of the scope.
-        user = self.context["request"].user
-        if self.instance is not None and self.instance.scope_field is not None:
-            overrides.check_scope(user, self.instance.scope_field, self.instance.scope)
-        for field in SCOPE_FIELDS:
-            if data.get(field) is not None:
-                overrides.check_scope(user, field, data[field])
-        return super().validate(data)
 
-    def create(self, validated_data):
-        return self._save(BindingOverride(**validated_data))
+class InstancePinSerializer(WriterSerializer):
+    device = DeviceSerializer(nested=True, required=False, allow_null=True)
+    module = ModuleSerializer(nested=True, required=False, allow_null=True)
+    revision = DefinitionRevisionSerializer(nested=True)
 
-    def update(self, instance, validated_data):
-        validated_data.pop("changelog_message", None)
-        for name, value in validated_data.items():
-            setattr(instance, name, value)
-        return self._save(instance)
+    viewed_fields = (*INSTANCE_FIELDS, "revision")
+    writer = staticmethod(pins.save)
 
-    def _save(self, override):
-        try:
-            return overrides.save(self.context["request"].user, override)
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(get_error_detail(exc)) from exc
+    class Meta:
+        model = InstancePin
+        fields = (
+            "id",
+            "url",
+            "display_url",
+            "display",
+            "device",
+            "module",
+            "revision",
+            "created",
+            "last_updated",
+        )
+        brief_fields = ("id", "url", "display", "revision")

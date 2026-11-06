@@ -1,0 +1,21 @@
+{% extends 'generic/object.html' %}
+{% load helpers %}
+{% load i18n %}
+
+{% block content %}
+  <div class="row">
+    <div class="col col-12 col-md-6">
+      <div class="card">
+        <h2 class="card-header">{% trans "Instance pin" %}</h2>
+        <table class="table table-hover attr-table">
+          <tr><th scope="row">{% trans "Instance type" %}</th><td>{{ instance_type }}</td></tr>
+          <tr><th scope="row">{% trans "Instance" %}</th><td><a href="{{ object.scope.get_absolute_url }}">{{ object.scope_label }}</a></td></tr>
+          <tr><th scope="row">{% trans "Definition key" %}</th><td class="font-monospace">{{ object.revision.definition|linkify }}</td></tr>
+          <tr><th scope="row">{% trans "Pinned revision" %}</th><td class="font-monospace text-break"><a href="{{ object.revision.get_absolute_url }}">{{ object.revision.digest }}</a></td></tr>
+          <tr><th scope="row">{% trans "Title" %}</th><td>{{ object.revision.manifest.title }}</td></tr>
+          <tr><th scope="row">{% trans "Last updated" %}</th><td>{{ object.last_updated|isodatetime }}</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

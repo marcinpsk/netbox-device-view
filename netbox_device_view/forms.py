@@ -22,7 +22,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
-from .artwork import overrides
+from .artwork import overrides, pins
 from .artwork.manifest import (
     BINDING_COMPONENTS,
     DEVICE_KIND,
@@ -32,11 +32,14 @@ from .artwork.manifest import (
 )
 from .components import BINDING_MODELS
 from .models import (
+    INSTANCE_FIELDS,
     SCOPE_FIELDS,
     TYPE_SCOPES,
     Association,
     BindingOverride,
+    DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
 )
 from .utils import normalize_grid_template_area
@@ -344,7 +347,28 @@ BindingRows = forms.formset_factory(
 )
 
 
-class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
+class WriterSaveMixin:
+    """Save the instance of a model form through ``writer``, which takes the type lock and checks the saved row."""
+
+    writer = None
+
+    def save(self, commit=True):
+        if not commit:
+            raise ValueError(
+                f"A {self.instance._meta.verbose_name} saves only through its writer."
+            )
+        # ObjectEditView gives the form no user; NetBox sets the request of each view.
+        user = current_request.get().user
+        try:
+            return self.writer(user, self.instance)
+        except ValidationError as exc:
+            # ObjectEditView shows an AbortRequest or a PermissionsViolation on the form.
+            raise AbortRequest(" ".join(exc.messages)) from exc
+        except PermissionDenied as exc:
+            raise PermissionsViolation from exc
+
+
+class BindingOverrideForm(WriterSaveMixin, ChangelogMessageMixin, forms.ModelForm):
     """The scope and the connector of a new override, and the binding rows; only the rows change later."""
 
     device_type = DynamicModelChoiceField(
@@ -385,6 +409,8 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         FieldSet("connector_key", name=_("Connector")),
     )
 
+    writer = staticmethod(overrides.save)
+
     class Meta:
         model = BindingOverride
         fields = (*SCOPE_FIELDS, "connector_key", "bindings")
@@ -404,20 +430,6 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         if not self.binding_rows.is_valid():
             raise ValidationError(_("Correct the bindings."))
         return self.binding_rows.bindings
-
-    def save(self, commit=True):
-        """Save through the override writer, which takes the type lock and checks the saved row."""
-        if not commit:
-            raise ValueError("A binding override saves only through its writer.")
-        # ObjectEditView gives the form no user; NetBox sets the request of each view.
-        user = current_request.get().user
-        try:
-            return overrides.save(user, self.instance)
-        except ValidationError as exc:
-            # ObjectEditView shows an AbortRequest or a PermissionsViolation on the form.
-            raise AbortRequest(" ".join(exc.messages)) from exc
-        except PermissionDenied as exc:
-            raise PermissionsViolation from exc
 
     def clean(self):
         data = super().clean()
@@ -452,3 +464,89 @@ class BindingOverrideFilterForm(SavedFiltersMixin, FilterForm):
         label=_("Definition key"),
     )
     connector_key = forms.CharField(required=False, label=_("Connector key"))
+
+
+def _revision_field(kind):
+    return DynamicModelChoiceField(
+        queryset=DefinitionRevision.objects.filter(definition__kind=kind),
+        required=False,
+        query_params={"kind": kind},
+        label=_("Revision"),
+    )
+
+
+class InstancePinForm(WriterSaveMixin, ChangelogMessageMixin, forms.ModelForm):
+    """The device or the installed module of a new pin, with a revision of its kind; only the revision changes later."""
+
+    device = DynamicModelChoiceField(
+        queryset=Device.objects.all(), required=False, selector=True, label=_("Device")
+    )
+    device_revision = _revision_field(DEVICE_KIND)
+    module = DynamicModelChoiceField(
+        queryset=Module.objects.all(),
+        required=False,
+        selector=True,
+        label=_("Installed module"),
+    )
+    module_revision = _revision_field(MODULE_KIND)
+
+    fieldsets = (
+        FieldSet(
+            TabbedGroups(
+                FieldSet("device", "device_revision", name=_("Device")),
+                FieldSet("module", "module_revision", name=_("Installed module")),
+            ),
+            name=_("Pin"),
+        ),
+    )
+    writer = staticmethod(pins.save)
+
+    class Meta:
+        model = InstancePin
+        fields = INSTANCE_FIELDS
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.instance._state.adding:
+            for name in INSTANCE_FIELDS:
+                self.fields[name].disabled = True
+                if name != self.instance.scope_field:
+                    del self.fields[f"{name}_revision"]
+            self.initial[f"{self.instance.scope_field}_revision"] = (
+                self.instance.revision_id
+            )
+
+    def clean(self):
+        data = super().clean()
+        # The check constraint reports a missing or a second instance.
+        chosen = [name for name in INSTANCE_FIELDS if data.get(name)]
+        if len(chosen) == 1:
+            field = f"{chosen[0]}_revision"
+            if data.get(field) is None:
+                self.add_error(field, self.fields[field].error_messages["required"])
+            else:
+                self.instance.revision = data[field]
+        return data
+
+
+class InstancePinFilterForm(SavedFiltersMixin, FilterForm):
+    model = InstancePin
+    fieldsets = (
+        FieldSet("q", "filter_id"),
+        FieldSet("device_id", "module_id", name=_("Instance")),
+        FieldSet("definition_id", "revision_id", name=_("Revision")),
+    )
+    device_id = DynamicModelMultipleChoiceField(
+        queryset=Device.objects.all(), required=False, label=_("Device")
+    )
+    module_id = DynamicModelMultipleChoiceField(
+        queryset=Module.objects.all(), required=False, label=_("Installed module")
+    )
+    definition_id = DynamicModelMultipleChoiceField(
+        queryset=VisualDefinition.objects.all(),
+        required=False,
+        label=_("Definition key"),
+    )
+    revision_id = DynamicModelMultipleChoiceField(
+        queryset=DefinitionRevision.objects.all(), required=False, label=_("Revision")
+    )

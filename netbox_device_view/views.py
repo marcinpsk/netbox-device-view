@@ -595,6 +595,51 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
             return super().post(request, **kwargs)
 
 
+class InstancePinListView(generic.ObjectListView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    table = tables.InstancePinTable
+    filterset = filtersets.InstancePinFilterSet
+    filterset_form = forms.InstancePinFilterForm
+    actions = (AddObject, BulkExport, BulkDelete)
+
+
+class InstancePinView(generic.ObjectView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    actions = (EditObject, DeleteObject)
+
+    def get_extra_context(self, request, instance):
+        field = instance._meta.get_field(instance.scope_field)
+        return {"instance_type": capfirst(field.verbose_name)}
+
+
+class InstancePinEditView(generic.ObjectEditView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    form = forms.InstancePinForm
+
+    def get_object(self, **kwargs):
+        obj = super().get_object(**kwargs)
+        # The checks of a pin name its instance, so a hidden instance hides the pin.
+        if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
+            raise Http404
+        return obj
+
+
+class InstancePinDeleteView(generic.ObjectDeleteView):
+    # InstancePin.delete() takes the type lock.
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+
+
+class InstancePinBulkDeleteView(generic.BulkDeleteView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    filterset = filtersets.InstancePinFilterSet
+    table = tables.InstancePinTable
+
+    def post(self, request, **kwargs):
+        with models.InstancePin.writing() as using:
+            lock_bulk_writes(using)
+            return super().post(request, **kwargs)
+
+
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
     """Upload an offline artwork bundle and import its definitions as candidate revisions."""
 
