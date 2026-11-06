@@ -514,9 +514,7 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
     default_return_url = "plugins:netbox_device_view:association_list"
 
     def post(self, request):
-        queryset = models.Association.objects.restrict(
-            request.user, "view"
-        ).select_related("device_type", "module_type", "revision")
+        queryset = models.Association.objects.restrict(request.user, "view")
         if request.POST.get("_all"):
             queryset = filtersets.AssociationFilterSet(
                 request.GET, queryset, request=request
@@ -528,20 +526,40 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
                 if pk is not None
             }
             queryset = queryset.filter(pk__in=pks)
-        revisions = models.DefinitionRevision.objects.restrict(request.user, "view")
-        pairs, current = [], []
-        for association in queryset:
-            # The ordering of revisions puts the newest of a definition first.
-            newest = revisions.filter(
-                definition=association.revision.definition_id
-            ).first()
-            if newest is None or newest.pk == association.revision_id:
-                current.append(association.pk)
-            else:
-                pairs.append((association.hardware_type, newest))
-        if not pairs and not current:
+        count = queryset.count()
+        if not count:
             messages.warning(request, _("Select one or more associations."))
             return redirect(self.get_return_url(request))
+        if count > review.MAX_PAIRS:
+            messages.error(
+                request,
+                _("Select at most {count} associations in one review.").format(
+                    count=review.MAX_PAIRS
+                ),
+            )
+            return redirect(self.get_return_url(request))
+        associations = list(
+            queryset.select_related("device_type", "module_type", "revision").defer(
+                "revision__manifest"
+            )
+        )
+        # The newest revision of each definition; the review checks that the user can view it.
+        newest = {
+            revision.definition_id: revision
+            for revision in models.DefinitionRevision.objects.filter(
+                definition__in={a.revision.definition_id for a in associations}
+            )
+            .order_by("definition_id", "-created", "pk")
+            .distinct("definition_id")
+            .only("pk", "definition_id")
+        }
+        pairs, current = [], []
+        for association in associations:
+            candidate = newest[association.revision.definition_id]
+            if candidate.pk == association.revision_id:
+                current.append(association.pk)
+            else:
+                pairs.append((association.hardware_type, candidate))
         return redirect(
             forms.review_url(
                 pairs, current=current, return_url=self.get_return_url(request)
