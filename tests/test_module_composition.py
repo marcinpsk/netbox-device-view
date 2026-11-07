@@ -23,12 +23,12 @@ from django.urls import reverse
 from lxml import etree
 from users.models import ObjectPermission, User
 
-from netbox_device_view.artwork import activation
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.render import MAX_MODULE_DEPTH
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.details import details_id
 
+from .activation import activate
 from .artwork_samples import bundle, definition
 from .module_samples import CHASSIS_SVG, NM_MANIFEST, NM_SVG, Inventory, manifest
 from .permissions import grant
@@ -456,7 +456,7 @@ def activate_alias_revision(test):
     [imported] = import_bundle(
         test.admin, "alias.zip", io.BytesIO(bundle(definition("NM", files)))
     )
-    activation.activate(test.admin, imported.revision, test.inventory.nm_type)
+    activate(test.admin, (imported.revision, test.inventory.nm_type))
 
 
 class DuplicateBayTests(CompositionTestCase):
@@ -497,7 +497,7 @@ class DepthTests(CompositionTestCase):
         [imported] = import_bundle(
             self.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
         )
-        activation.activate(self.admin, imported.revision, loop)
+        activate(self.admin, (imported.revision, loop))
         chain = []
         bay = ModuleBay.objects.get(device=self.device, name="Spare")
         for _level in range(MAX_MODULE_DEPTH + 1):

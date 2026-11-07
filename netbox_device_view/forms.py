@@ -2,6 +2,9 @@ from core.models import DataSource
 from dcim.models import Device, DeviceType, Manufacturer, Module, ModuleType
 from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.forms.utils import ErrorDict
+from django.urls import reverse
+from django.utils.http import urlencode
 from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
@@ -22,7 +25,7 @@ from utilities.forms.fields import (
 from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
-from .artwork import overrides
+from .artwork import overrides, pins, review
 from .artwork.manifest import (
     BINDING_COMPONENTS,
     DEVICE_KIND,
@@ -32,12 +35,16 @@ from .artwork.manifest import (
 )
 from .components import BINDING_MODELS
 from .models import (
+    INSTANCE_FIELDS,
     SCOPE_FIELDS,
     TYPE_SCOPES,
     Association,
     BindingOverride,
+    DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
+    type_scope,
 )
 from .utils import normalize_grid_template_area
 
@@ -212,49 +219,134 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
 _ACTIVATION_TEXTS = {
     DEVICE_KIND: (
         _(
-            "After activation, the Device View of each device of the selected type"
-            " shows this revision of {key}. A type that already has an active revision"
-            " changes to this one."
+            "Select the device types that show this revision of {key}. The review"
+            " lists the devices that change and what the change breaks. Nothing"
+            " changes until you activate the reviewed selection."
         ),
-        _("The Device View of every device of this type shows the revision."),
+        _("The Device View of every device of these types shows the revision."),
     ),
     MODULE_KIND: (
         _(
-            "After activation, each installed module of the selected type shows this"
-            " revision of {key} in the bay of its device. A type that already has an"
-            " active revision changes to this one."
+            "Select the module types that show this revision of {key}. The review"
+            " lists the installed modules and the devices that change, and what the"
+            " change breaks. Nothing changes until you activate the reviewed"
+            " selection."
         ),
         _(
-            "Every installed module of this type shows the revision in the bay of its"
-            " device."
+            "Every installed module of these types shows the revision in the bay of"
+            " its device."
         ),
     ),
 }
 
 
 class ActivateRevisionForm(forms.Form):
-    """The one type field of the revision's kind: a device type, or a module type."""
+    """The types of the revision's kind that a review activates the revision for.
+
+    The prefix of the form names the revision, so one query holds the types
+    of several revisions: see review_url().
+    """
 
     def __init__(self, *args, user, revision, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, prefix=self.prefix_of(revision), **kwargs)
         kind = revision.definition.kind
         scope = TYPE_SCOPES[kind]
+        self.revision = revision
         self.type_field = scope.field
         intro, help_text = _ACTIVATION_TEXTS[kind]
         self.intro = intro.format(key=revision.definition.key)
-        self.fields[self.type_field] = DynamicModelChoiceField(
+        self.fields[self.type_field] = DynamicModelMultipleChoiceField(
             queryset=scope.model.objects.restrict(user, "view"),
-            label=capfirst(scope.model._meta.verbose_name),
+            label=capfirst(scope.model._meta.verbose_name_plural),
             help_text=help_text,
+            error_messages={"invalid_choice": review.NOT_VIEWABLE},
         )
+
+    @staticmethod
+    def prefix_of(revision) -> str:
+        return f"r{revision.pk}"
 
     @property
     def type_bound_field(self):
         return self[self.type_field]
 
     @property
-    def hardware_type(self):
-        return self.cleaned_data[self.type_field]
+    def pairs(self) -> list[review.Pair]:
+        return [
+            review.Pair(hardware_type, self.revision)
+            for hardware_type in self.cleaned_data[self.type_field]
+        ]
+
+
+def review_url(pairs, **params) -> str:
+    """Return the URL of the review of ``pairs`` of (type, revision), in the format that ReviewForm reads."""
+    query = {"revision": [], **params}
+    for hardware_type, revision in pairs:
+        if revision.pk not in query["revision"]:
+            query["revision"].append(revision.pk)
+        name = f"{ActivateRevisionForm.prefix_of(revision)}-{type_scope(hardware_type).field}"
+        query.setdefault(name, []).append(hardware_type.pk)
+    page = reverse("plugins:netbox_device_view:association_review")
+    return f"{page}?{urlencode(query, doseq=True)}"
+
+
+def requested_pairs(data) -> int:
+    """Return how many revisions or (type, revision) pairs a review query requests, before any validation."""
+    names = tuple(f"-{spec.field}" for spec in TYPE_SCOPES.values())
+    pairs = sum(len(data.getlist(name)) for name in data if name.endswith(names))
+    return max(pairs, len(data.getlist("revision")))
+
+
+class ReviewForm(forms.Form):
+    """The selection of a review: the revisions, and the types of each in its ActivateRevisionForm."""
+
+    revision = forms.ModelMultipleChoiceField(
+        queryset=None,
+        required=False,
+        error_messages={"invalid_choice": review.NOT_VIEWABLE},
+    )
+    # The associations that a review of an update leaves out: they have the newest revision.
+    current = forms.ModelMultipleChoiceField(queryset=None, required=False)
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.fields["revision"].queryset = DefinitionRevision.objects.restrict(
+            user, "view"
+        ).select_related("definition")
+        self.fields["current"].queryset = Association.objects.restrict(
+            user, "view"
+        ).select_related("device_type__manufacturer", "module_type__manufacturer")
+        self.pairs = []
+
+    def full_clean(self):
+        # The limit applies before a field reads the database.
+        if self.is_bound and requested_pairs(self.data) > review.MAX_PAIRS:
+            self._errors = ErrorDict()
+            self.cleaned_data = {}
+            self.add_error(
+                None,
+                _("Select at most {count} types in one review.").format(
+                    count=review.MAX_PAIRS
+                ),
+            )
+            return
+        super().full_clean()
+
+    def clean(self):
+        data = super().clean()
+        for revision in data.get("revision") or ():
+            form = ActivateRevisionForm(self.data, user=self.user, revision=revision)
+            if not form.is_valid():
+                for errors in form.errors.values():
+                    for error in errors:
+                        self.add_error(None, f"{revision}: {error}")
+                continue
+            self.pairs.extend(form.pairs)
+        keys = [pair.key for pair in self.pairs]
+        if len(set(keys)) != len(keys):
+            raise ValidationError(_("Select each type once."))
+        return data
 
 
 class AssociationFilterForm(SavedFiltersMixin, FilterForm):
@@ -344,7 +436,28 @@ BindingRows = forms.formset_factory(
 )
 
 
-class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
+class WriterSaveMixin:
+    """Save the instance of a model form through ``writer``, which takes the type lock and checks the saved row."""
+
+    writer = None
+
+    def save(self, commit=True):
+        if not commit:
+            raise ValueError(
+                f"A {self.instance._meta.verbose_name} saves only through its writer."
+            )
+        # ObjectEditView gives the form no user; NetBox sets the request of each view.
+        user = current_request.get().user
+        try:
+            return self.writer(user, self.instance)
+        except ValidationError as exc:
+            # ObjectEditView shows an AbortRequest or a PermissionsViolation on the form.
+            raise AbortRequest(" ".join(exc.messages)) from exc
+        except PermissionDenied as exc:
+            raise PermissionsViolation from exc
+
+
+class BindingOverrideForm(WriterSaveMixin, ChangelogMessageMixin, forms.ModelForm):
     """The scope and the connector of a new override, and the binding rows; only the rows change later."""
 
     device_type = DynamicModelChoiceField(
@@ -385,6 +498,8 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         FieldSet("connector_key", name=_("Connector")),
     )
 
+    writer = staticmethod(overrides.save)
+
     class Meta:
         model = BindingOverride
         fields = (*SCOPE_FIELDS, "connector_key", "bindings")
@@ -404,20 +519,6 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         if not self.binding_rows.is_valid():
             raise ValidationError(_("Correct the bindings."))
         return self.binding_rows.bindings
-
-    def save(self, commit=True):
-        """Save through the override writer, which takes the type lock and checks the saved row."""
-        if not commit:
-            raise ValueError("A binding override saves only through its writer.")
-        # ObjectEditView gives the form no user; NetBox sets the request of each view.
-        user = current_request.get().user
-        try:
-            return overrides.save(user, self.instance)
-        except ValidationError as exc:
-            # ObjectEditView shows an AbortRequest or a PermissionsViolation on the form.
-            raise AbortRequest(" ".join(exc.messages)) from exc
-        except PermissionDenied as exc:
-            raise PermissionsViolation from exc
 
     def clean(self):
         data = super().clean()
@@ -452,3 +553,89 @@ class BindingOverrideFilterForm(SavedFiltersMixin, FilterForm):
         label=_("Definition key"),
     )
     connector_key = forms.CharField(required=False, label=_("Connector key"))
+
+
+def _revision_field(kind):
+    return DynamicModelChoiceField(
+        queryset=DefinitionRevision.objects.filter(definition__kind=kind),
+        required=False,
+        query_params={"kind": kind},
+        label=_("Revision"),
+    )
+
+
+class InstancePinForm(WriterSaveMixin, ChangelogMessageMixin, forms.ModelForm):
+    """The device or the installed module of a new pin, with a revision of its kind; only the revision changes later."""
+
+    device = DynamicModelChoiceField(
+        queryset=Device.objects.all(), required=False, selector=True, label=_("Device")
+    )
+    device_revision = _revision_field(DEVICE_KIND)
+    module = DynamicModelChoiceField(
+        queryset=Module.objects.all(),
+        required=False,
+        selector=True,
+        label=_("Installed module"),
+    )
+    module_revision = _revision_field(MODULE_KIND)
+
+    fieldsets = (
+        FieldSet(
+            TabbedGroups(
+                FieldSet("device", "device_revision", name=_("Device")),
+                FieldSet("module", "module_revision", name=_("Installed module")),
+            ),
+            name=_("Pin"),
+        ),
+    )
+    writer = staticmethod(pins.save)
+
+    class Meta:
+        model = InstancePin
+        fields = INSTANCE_FIELDS
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.instance._state.adding:
+            for name in INSTANCE_FIELDS:
+                self.fields[name].disabled = True
+                if name != self.instance.scope_field:
+                    del self.fields[f"{name}_revision"]
+            self.initial[f"{self.instance.scope_field}_revision"] = (
+                self.instance.revision_id
+            )
+
+    def clean(self):
+        data = super().clean()
+        # The check constraint reports a missing or a second instance.
+        chosen = [name for name in INSTANCE_FIELDS if data.get(name)]
+        if len(chosen) == 1:
+            field = f"{chosen[0]}_revision"
+            if data.get(field) is None:
+                self.add_error(field, self.fields[field].error_messages["required"])
+            else:
+                self.instance.revision = data[field]
+        return data
+
+
+class InstancePinFilterForm(SavedFiltersMixin, FilterForm):
+    model = InstancePin
+    fieldsets = (
+        FieldSet("q", "filter_id"),
+        FieldSet("device_id", "module_id", name=_("Instance")),
+        FieldSet("definition_id", "revision_id", name=_("Revision")),
+    )
+    device_id = DynamicModelMultipleChoiceField(
+        queryset=Device.objects.all(), required=False, label=_("Device")
+    )
+    module_id = DynamicModelMultipleChoiceField(
+        queryset=Module.objects.all(), required=False, label=_("Installed module")
+    )
+    definition_id = DynamicModelMultipleChoiceField(
+        queryset=VisualDefinition.objects.all(),
+        required=False,
+        label=_("Definition key"),
+    )
+    revision_id = DynamicModelMultipleChoiceField(
+        queryset=DefinitionRevision.objects.all(), required=False, label=_("Revision")
+    )

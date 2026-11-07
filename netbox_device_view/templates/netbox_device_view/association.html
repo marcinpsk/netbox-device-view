@@ -17,6 +17,10 @@
           <tr><th scope="row">{% trans "Active revision" %}</th><td class="font-monospace text-break"><a href="{{ object.revision.get_absolute_url }}">{{ object.revision.digest }}</a></td></tr>
           <tr><th scope="row">{% trans "Title" %}</th><td>{{ object.revision.manifest.title }}</td></tr>
           <tr><th scope="row">{% trans "Activated" %}</th><td>{{ object.last_updated|isodatetime }}</td></tr>
+          <tr>
+            <th scope="row">{% trans "Previous revision" %}</th>
+            <td class="font-monospace text-break">{% if previous_revision %}<a href="{{ previous_revision.get_absolute_url }}">{{ previous_revision.digest }}</a>{% else %}{{ ''|placeholder }}{% endif %}</td>
+          </tr>
         </table>
       </div>
     </div>

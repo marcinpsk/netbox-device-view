@@ -20,6 +20,7 @@ from ..filtersets import (
     BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
     DeviceViewFilterSet,
+    InstancePinFilterSet,
     VisualDefinitionFilterSet,
 )
 from ..forms import ArtworkSourceImportForm
@@ -29,6 +30,7 @@ from .serializers import (
     BindingOverrideSerializer,
     DefinitionRevisionSerializer,
     DeviceViewSerializer,
+    InstancePinSerializer,
     VisualDefinitionSerializer,
 )
 
@@ -131,23 +133,19 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
 
 
 class _ErrorResponse(Exception):
-    """An error response of a write, raised so that BindingOverride.writing() rolls back."""
+    """An error response of a write, raised so that the write_transaction() rolls back."""
 
     def __init__(self, response):
         super().__init__(response.status_code)
         self.response = response
 
 
-class BindingOverrideViewSet(NetBoxModelViewSet):
-    """Each write runs in BindingOverride.writing() and takes the locks of the override writer."""
-
-    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
-    serializer_class = BindingOverrideSerializer
-    filterset_class = BindingOverrideFilterSet
+class ScopedRowViewSet(NetBoxModelViewSet):
+    """Each write runs in the write_transaction() of the model and takes the locks of its writer."""
 
     def _write(self, handler, request, *args, **kwargs):
         try:
-            with models.BindingOverride.writing() as using:
+            with models.write_transaction(self.queryset.model) as using:
                 if isinstance(request.data, list):
                     lock_bulk_writes(using)
                 response = handler(request, *args, **kwargs)
@@ -181,6 +179,18 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
     def perform_destroy(self, instance):
         with instance.locked():
             super().perform_destroy(instance)
+
+
+class BindingOverrideViewSet(ScopedRowViewSet):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    serializer_class = BindingOverrideSerializer
+    filterset_class = BindingOverrideFilterSet
+
+
+class InstancePinViewSet(ScopedRowViewSet):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    serializer_class = InstancePinSerializer
+    filterset_class = InstancePinFilterSet
 
 
 def _error_response(exc: ArtworkError):

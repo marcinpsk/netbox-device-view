@@ -9,6 +9,7 @@ from .models import (
     BindingOverride,
     DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
 )
 
@@ -225,3 +226,45 @@ class BindingOverrideTable(NetBoxTable):
 
     def value_bindings(self, value):
         return binding_labels(value)
+
+
+class InstancePinTable(NetBoxTable):
+    id = tables.Column(linkify=True, verbose_name="ID")
+    instance = tables.Column(
+        verbose_name="Instance",
+        accessor="pk",
+        orderable=False,
+        linkify=lambda record: record.scope.get_absolute_url(),
+    )
+    definition = tables.Column(
+        verbose_name="Definition key",
+        accessor="revision__definition__key",
+        linkify=lambda record: record.revision.definition.get_absolute_url(),
+    )
+    revision = tables.TemplateColumn(
+        verbose_name="Pinned revision",
+        accessor="revision__digest",
+        linkify=lambda record: record.revision.get_absolute_url(),
+        template_code='<span class="font-monospace" title="{{ value }}">{{ value|truncatechars:13 }}</span>',
+    )
+    last_updated = columns.DateTimeColumn(verbose_name="Last updated")
+    actions = columns.ActionsColumn(actions=("edit", "delete", "changelog"))
+
+    class Meta(NetBoxTable.Meta):
+        model = InstancePin
+        fields = (
+            "pk",
+            "id",
+            "instance",
+            "definition",
+            "revision",
+            "last_updated",
+            "actions",
+        )
+        default_columns = ("id", "instance", "definition", "revision", "last_updated")
+
+    def render_instance(self, record):
+        return record.scope_label
+
+    def value_instance(self, record):
+        return record.scope_label
