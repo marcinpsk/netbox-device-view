@@ -2,7 +2,7 @@ import django_tables2 as tables
 from django.utils.html import mark_safe
 from netbox.tables import NetBoxTable, columns
 
-from .models import DeviceView
+from .models import DefinitionRevision, DeviceView
 
 
 class LayoutColumn(tables.Column):
@@ -56,3 +56,57 @@ class DeviceViewTable(NetBoxTable):
         model = DeviceView
         fields = ("pk", "id", "device_type", "device_count", "layout", "render_mode")
         default_columns = ("device_type", "device_count", "layout", "render_mode")
+
+
+class DefinitionRevisionTable(NetBoxTable):
+    key = tables.Column(
+        verbose_name="Definition key",
+        accessor="definition__key",
+        linkify=lambda record: record.get_absolute_url(),
+    )
+    kind = tables.Column(verbose_name="Kind", accessor="definition__kind")
+    title = tables.Column(
+        verbose_name="Title", accessor="manifest__title", orderable=False
+    )
+    sku = tables.Column(
+        verbose_name="SKU", accessor="manifest__hardware__sku", orderable=False
+    )
+    license = tables.Column(
+        verbose_name="Licence", accessor="manifest__license", orderable=False
+    )
+    digest = tables.TemplateColumn(
+        verbose_name="Digest",
+        template_code='<span class="font-monospace" title="{{ value }}">{{ value|truncatechars:13 }}</span>',
+    )
+    created = columns.DateTimeColumn(verbose_name="Imported")
+    imported_by = tables.Column(verbose_name="Imported by")
+    source_name = tables.Column(verbose_name="Source")
+    actions = columns.ActionsColumn(actions=("delete", "changelog"))
+
+    class Meta(NetBoxTable.Meta):
+        model = DefinitionRevision
+        fields = (
+            "pk",
+            "id",
+            "key",
+            "kind",
+            "title",
+            "sku",
+            "license",
+            "digest",
+            "created",
+            "imported_by",
+            "source_name",
+            "actions",
+        )
+        default_columns = (
+            "key",
+            "kind",
+            "title",
+            "sku",
+            "license",
+            "digest",
+            "created",
+            "imported_by",
+            "source_name",
+        )
