@@ -2,8 +2,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
-from utilities.querysets import RestrictedQuerySet
 
 from .artwork.manifest import FACES
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
@@ -101,8 +101,11 @@ class ImmutableMixin:
         super().save(*args, **kwargs)
 
 
-class VisualDefinition(models.Model):
+class VisualDefinition(ChangeLoggedModel):
     """The stable definition key that all revisions of one definition share."""
+
+    # The source that a null key_owner stands for.
+    OFFLINE_UPLOADS = _("offline uploads")
 
     key = models.CharField(
         max_length=MANIFEST_SCHEMA["properties"]["key"]["maxLength"], unique=True
@@ -123,13 +126,20 @@ class VisualDefinition(models.Model):
         related_name="+",
     )
 
-    objects = RestrictedQuerySet.as_manager()
-
     class Meta:
         ordering = ("key",)
 
     def __str__(self):
         return self.key
+
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:visualdefinition", args=[self.pk])
+
+    @classmethod
+    def lock(cls, pks) -> None:
+        """Wait for concurrent changes of the definitions; a later query reads their result."""
+        # NetBox restricts a queryset with a pk IN subquery, which a lock wait does not read again.
+        list(cls.objects.select_for_update().filter(pk__in=pks).values_list("pk"))
 
 
 class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
