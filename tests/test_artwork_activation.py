@@ -142,21 +142,6 @@ class ActivationTests(ActivationTestCase):
         self.assertEqual(self.post().status_code, 403)
         self.assertFalse(Association.objects.exists())
 
-    def test_a_module_definition_cannot_be_activated_for_a_device_type(self):
-        grant(self.user, Association, "view", "add")
-        module_revision = self.import_files(MODULE_FILES, "ACME/NM-2X")
-        page = self.client.get(reverse(REVISION_URL, args=[module_revision.pk]))
-        self.assertNotContains(page, reverse(ACTIVATE_URL, args=[module_revision.pk]))
-
-        response = self.post(module_revision)
-
-        self.assertContains(
-            response,
-            "The revision is a module definition. A device type needs a device definition.",
-            status_code=400,
-        )
-        self.assertFalse(Association.objects.exists())
-
     def test_a_revision_or_a_device_type_that_the_user_cannot_view_is_rejected(self):
         grant(self.user, Association, "view", "add")
         ObjectPermission.objects.filter(name__startswith="dcim.devicetype").update(

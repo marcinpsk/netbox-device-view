@@ -4,12 +4,12 @@ import re
 from pathlib import Path
 
 import pytest
-from dcim.models import Interface
+from dcim.models import Interface, Module
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.api import device_artwork
 from netbox_device_view.api.rendered_layout import UnavailableReason
-from netbox_device_view.artwork import limits
+from netbox_device_view.artwork import limits, placement, render
 from netbox_device_view.artwork.manifest import MAX_BINDINGS
 from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
@@ -63,6 +63,8 @@ MIB = 1024 * 1024
         f"| Data Source files | {limits.MAX_MEMBERS} and {limits.MAX_EXPANDED_BYTES // MIB} MiB below the prefix |",
         f"The import shows at most {limits.MAX_ISSUES} errors.",
         f"An override has the schema of the `bindings` of a manifest connector: 0 to {MAX_BINDINGS} bindings",
+        f"the bay differ by more than {placement.SIZE_TOLERANCE} mm. The module still shows.",
+        f"A module is more than {render.MAX_MODULE_DEPTH} modules deep",
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):
@@ -137,3 +139,48 @@ def test_artwork_api_page_documents_each_binding_field():
     }
     missing = Binding(Interface, "eth1", MISSING, None)
     assert documented == set(device_artwork._binding(missing))
+
+
+def _documented_fields(text, heading):
+    """Return the names in the first column of the first table under ``heading``."""
+    table = text.split(f"### {heading}\n", 1)[1].split("###", 1)[0].split("\n\n|")[0]
+    return {
+        name
+        for line in table.splitlines()
+        if line.startswith("| `")
+        for name in re.findall(r"`(\w+)`", line.split("|")[1])
+    }
+
+
+def test_artwork_api_page_documents_each_module_field_and_warning_code():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    module = render.PlacedModule(
+        module=Module(pk=1, module_bay_id=2),
+        parent=None,
+        bay_key="bay-nm",
+        face="front",
+        representation=render.OUTLINE,
+        revision=None,
+        bay=None,
+        rotate=0,
+        element_id="dv-a-d1-m1",
+        prefix="",
+        connectors=(),
+        ids=frozenset(),
+        warnings=(),
+    )
+    assert _documented_fields(text, "Module") == set(device_artwork._module(module))
+    assert _documented_fields(text, "Warning") == {"code", "message"}
+    section = text.split("### Warning\n", 1)[1].split("###", 1)[0]
+    codes = section.split("| Code |", 1)[1]
+    documented = {
+        line.split("`")[1] for line in codes.splitlines() if line.startswith("| `")
+    }
+    assert documented == {
+        value for name, value in vars(render.WarningCode).items() if name.isupper()
+    }
+    assert (
+        f"more than {render.MAX_MODULE_DEPTH} modules deep on its placement path"
+        in text
+    )
+    assert f"differ by more than {placement.SIZE_TOLERANCE} mm" in text

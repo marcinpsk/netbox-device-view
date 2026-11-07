@@ -263,6 +263,14 @@ class Scope:
             return scope.full_name
         return f"{scope.device} {scope}" if self.names_device else str(scope)
 
+    def id_of(self, obj):
+        """Return the id that ``obj`` (an association, an override, a device or a module) has in this field."""
+        return getattr(obj, f"{self.field}_id")
+
+    def among(self, values) -> models.Q:
+        """Return the filter of the rows whose field of this scope is one of ``values``."""
+        return models.Q(**{f"{self.field}__in": values})
+
 
 SCOPES = {
     scope.field: scope
@@ -274,6 +282,19 @@ SCOPES = {
     )
 }
 SCOPE_FIELDS = tuple(SCOPES)
+# The type scope that each definition kind needs: its field is also the field of an association.
+TYPE_SCOPES = {
+    spec.definition_kind: spec for spec in SCOPES.values() if not spec.instance
+}
+
+
+def type_scope(hardware_type) -> Scope:
+    """Return the scope of a device type or a module type."""
+    return next(
+        spec for spec in TYPE_SCOPES.values() if isinstance(hardware_type, spec.model)
+    )
+
+
 # The objects that the label and the type lock of an override read.
 OVERRIDE_RELATIONS = (
     "device_type__manufacturer",

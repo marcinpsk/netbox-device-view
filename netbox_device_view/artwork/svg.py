@@ -40,6 +40,8 @@ CONNECTOR_ELEMENTS = SHAPES | {"g", "use", "text"}
 DEFINITIONS = GRADIENTS | {"defs", "symbol", "clipPath"}
 
 MAX_DASHES = 32
+# The attributes of a bay rect, in face coordinates.
+BAY_ATTRIBUTES = ("x", "y", "width", "height")
 MAX_FONT_NAME = 64
 
 
@@ -759,7 +761,7 @@ class _Validator:
         if tag != "rect":
             self.add(element.sourceline, f"bay {ident} must be a <rect>, not <{tag}>")
             return
-        for name in ("x", "y", "width", "height"):
+        for name in BAY_ATTRIBUTES:
             raw = element.get(name)
             if raw is None:
                 if name in ("width", "height"):

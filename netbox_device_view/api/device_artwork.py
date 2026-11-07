@@ -1,14 +1,22 @@
 """Compose the artwork API envelope: one entry per member of a device that the user can view.
 
-Active artwork comes from ``artwork.render``, as on the Device View tab. A
-member without it gets the panels of the rendered-layout API, or a reason.
+Active artwork and its placed modules come from ``artwork.render``, as on the
+Device View tab. A member without it gets the panels of the rendered-layout
+API, or a reason.
 """
 
 import logging
 
 from dcim.models import Device
 
-from ..artwork.render import API, DAMAGED, active_revisions, resolve_device
+from ..artwork.manifest import DEVICE_KIND
+from ..artwork.render import (
+    API,
+    ARTWORK,
+    DAMAGED,
+    active_revisions,
+    resolve_device,
+)
 from ..components import panel_members, viewable_device_view
 from ..layout.parser import LayoutParseError
 from ..models import DeviceView
@@ -17,7 +25,6 @@ from .rendered_layout import UnavailableReason, member_panels
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
-ARTWORK = "artwork"
 LAYOUT = "layout"
 UNAVAILABLE = "unavailable"
 # Reserved for a generic schematic (#47); no member gets it yet.
@@ -30,7 +37,9 @@ _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_co
 def compose_device_artwork(device: Device, user) -> dict:
     """Return the artwork envelope of ``device`` with only the objects that ``user`` can view."""
     members = panel_members(device, user)
-    revisions = active_revisions({member.device_type_id for member in members})
+    revisions = active_revisions(
+        DEVICE_KIND, {member.device_type_id for member in members}
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "device_id": device.pk,
@@ -85,25 +94,60 @@ def _unavailable_member(reason: str) -> dict:
     }
 
 
+def _revision(revision) -> dict:
+    return {
+        "definition_key": revision.definition.key,
+        "revision_id": revision.pk,
+        "digest": revision.digest,
+    }
+
+
 def _artwork(part) -> dict:
     faces = {face.name: face for face in part.faces}
     return {
-        "definition_key": part.revision.definition.key,
-        "revision_id": part.revision.pk,
-        "digest": part.revision.digest,
+        **_revision(part.revision),
         "faces": [
             {"name": face.name, "label": face.label, "svg": str(face.svg)}
             for face in part.faces
         ],
         "connectors": [
-            {
-                "key": connector.key,
-                "face": connector.face,
-                "label": connector.label,
-                "element_id": faces[connector.face].element_id(connector.key),
-                "bindings": [_binding(binding) for binding in connector.bindings],
-            }
+            _connector(connector, faces[connector.face].element_id(connector.key))
             for connector in part.connectors
+        ],
+        "modules": [_module(placed) for placed in part.modules],
+    }
+
+
+def _connector(connector, element_id) -> dict:
+    return {
+        "key": connector.key,
+        "face": connector.face,
+        "label": connector.label,
+        "element_id": element_id,
+        "bindings": [_binding(binding) for binding in connector.bindings],
+    }
+
+
+def _module(placed) -> dict:
+    """Return one placed module; its bay is in the coordinates of the device face."""
+    bay = placed.bay
+    return {
+        "module_id": placed.module.pk,
+        "module_bay_id": placed.module.module_bay_id,
+        "parent_module_id": None if placed.parent is None else placed.parent.pk,
+        "bay_key": placed.bay_key,
+        "face": placed.face,
+        "representation": placed.representation,
+        "artwork": None if placed.revision is None else _revision(placed.revision),
+        "placement": None if bay is None else {**vars(bay), "rotate": placed.rotate},
+        "element_id": placed.element_id,
+        "connectors": [
+            _connector(connector, placed.connector_id(connector.key))
+            for connector in placed.connectors
+        ],
+        "warnings": [
+            {"code": warning.code, "message": warning.message}
+            for warning in placed.warnings
         ],
     }
 
