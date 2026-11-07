@@ -93,7 +93,7 @@ class NavigationTests(AssemblyTestCase):
         )
         self.assertEqual(nav.get("aria-label"), "Assembly of ch1")
 
-    def test_each_module_with_artwork_has_a_focus_control_and_each_module_a_record_link(
+    def test_each_drawn_module_has_a_focus_control_and_a_record_link(
         self,
     ):
         inventory = self.inventory
@@ -103,15 +103,16 @@ class NavigationTests(AssemblyTestCase):
             [(text(b), b.get("data-dv-focus")) for b in controls],
             [
                 ("ch1", self.overview()),
-                ("ACME NM-2X in NM 1", self.view(1, inventory.nm1)),
-                ("ACME SFP-10G in Slot 1", self.view(2, inventory.nm1, inventory.sfp)),
-                ("ACME NM-2X in NM 2", self.view(3, inventory.nm2)),
-                ("ACME PSU-1 in PSU", self.view(4, inventory.psu)),
+                ("ACME FAN-1 in FAN", self.view(1, inventory.fan)),
+                ("ACME NM-2X in NM 1", self.view(2, inventory.nm1)),
+                ("ACME SFP-10G in Slot 1", self.view(3, inventory.nm1, inventory.sfp)),
+                ("ACME NM-2X in NM 2", self.view(4, inventory.nm2)),
+                ("ACME PSU-1 in PSU", self.view(5, inventory.psu)),
             ],
         )
         # The chassis is the current view; each control names the view it shows.
         self.assertEqual(
-            [b.get("aria-current") for b in controls], ["true", *[None] * 4]
+            [b.get("aria-current") for b in controls], ["true", *[None] * 5]
         )
         self.assertEqual(
             [b.get("aria-controls") for b in controls],
@@ -123,7 +124,7 @@ class NavigationTests(AssemblyTestCase):
         self.assertEqual(
             records,
             {
-                inventory.fan.get_absolute_url(): "ACME FAN-1 in FAN",
+                inventory.fan.get_absolute_url(): "Open ACME FAN-1 in FAN",
                 inventory.nm1.get_absolute_url(): "Open ACME NM-2X in NM 1",
                 inventory.sfp.get_absolute_url(): "Open ACME SFP-10G in Slot 1",
                 inventory.nm2.get_absolute_url(): "Open ACME NM-2X in NM 2",
@@ -138,10 +139,11 @@ class NavigationTests(AssemblyTestCase):
             [(v.get("id"), v.get("hidden")) for v in views],
             [
                 (self.overview(), None),
-                (self.view(1, self.inventory.nm1), ""),
-                (self.view(2, self.inventory.nm1, self.inventory.sfp), ""),
-                (self.view(3, self.inventory.nm2), ""),
-                (self.view(4, self.inventory.psu), ""),
+                (self.view(1, self.inventory.fan), ""),
+                (self.view(2, self.inventory.nm1), ""),
+                (self.view(3, self.inventory.nm1, self.inventory.sfp), ""),
+                (self.view(4, self.inventory.nm2), ""),
+                (self.view(5, self.inventory.psu), ""),
             ],
         )
 
@@ -178,7 +180,7 @@ class NavigationTests(AssemblyTestCase):
             content = self.client.get(self.device.get_absolute_url()).content.decode()
         page = lxml.html.fromstring(content)
         self.assertEqual(len(tree(self.nav(page).xpath("./ul/li/ul/li"))), 4)
-        self.assertEqual(len(focus_faces(content)), 4)
+        self.assertEqual(len(focus_faces(content)), 5)
 
     def test_a_device_without_drawn_modules_has_no_navigation(self):
         Module.objects.filter(device=self.device).delete()
@@ -191,24 +193,24 @@ class NavigationTests(AssemblyTestCase):
 class FocusViewTests(AssemblyTestCase):
     def test_a_focus_view_draws_the_module_and_its_parts_in_its_own_coordinates(self):
         inventory = self.inventory
-        nm1 = focus_face(self.tab(), "f1")
+        nm1 = focus_face(self.tab(), "f2")
         self.assertEqual(nm1.get("viewBox"), "0 0 100 30")
-        self.assertIn(f"{self.view(1, inventory.nm1)}-installed-con-p1", ids(nm1))
+        self.assertIn(f"{self.view(2, inventory.nm1)}-installed-con-p1", ids(nm1))
         # The transceiver sits in the bay of the network module, not of the chassis.
         [sfp] = nm1.findall(
-            f".//{G}[@id='{self.view(1, inventory.nm1, inventory.sfp)}']"
+            f".//{G}[@id='{self.view(2, inventory.nm1, inventory.sfp)}']"
         )
         self.assertEqual(clip_rect(nm1, sfp), ("40", "10", "14", "10"))
         self.assertEqual(art(sfp).get("transform"), "matrix(1 0 0 1 40 10)")
         self.assertIn(
-            f"{self.view(1, inventory.nm1, inventory.sfp)}-installed-con-port",
+            f"{self.view(2, inventory.nm1, inventory.sfp)}-installed-con-port",
             ids(sfp),
         )
 
     def test_a_turned_module_shows_unturned_in_its_focus_view(self):
         overview_psu = self.group(self.front(), self.inventory.psu)
         self.assertNotEqual(art(overview_psu).get("transform"), "matrix(1 0 0 1 0 0)")
-        psu = focus_face(self.tab(), "f4")
+        psu = focus_face(self.tab(), "f5")
         self.assertEqual(psu.get("viewBox"), "0 0 40 30")
         self.assertIsNone(psu.get("transform"))
         self.assertEqual(psu.findall(f"{G}[@transform]"), [])
@@ -223,11 +225,11 @@ class FocusViewTests(AssemblyTestCase):
 
     def test_connectors_and_modules_in_a_focus_view_open_their_records(self):
         inventory = self.inventory
-        nm1 = focus_face(self.tab(), "f1")
+        nm1 = focus_face(self.tab(), "f2")
         found = links(nm1)
         port = inventory.interface(inventory.nm1, "TenGigabitEthernet1/1/1")
         self.assertEqual(
-            found[f"{self.view(1, inventory.nm1)}-installed-con-p1"].get("href"),
+            found[f"{self.view(2, inventory.nm1)}-installed-con-p1"].get("href"),
             port.get_absolute_url(),
         )
         bodies = [
@@ -240,8 +242,8 @@ class FocusViewTests(AssemblyTestCase):
     def test_a_focus_connector_has_its_own_details(self):
         inventory = self.inventory
         content = self.tab()
-        nm1 = focus_face(content, "f1")
-        prefix = f"{self.view(1, inventory.nm1)}-installed-"
+        nm1 = focus_face(content, "f2")
+        prefix = f"{self.view(2, inventory.nm1)}-installed-"
         wrapper = links(nm1)[f"{prefix}con-p1"]
         ident = details_id(prefix, "con-p1")
         self.assertEqual(wrapper.get("data-dv-details"), ident)
@@ -253,8 +255,8 @@ class FocusViewTests(AssemblyTestCase):
     def test_a_focus_view_has_a_breadcrumb_back_to_each_parent(self):
         inventory = self.inventory
         page = self.page()
-        [sfp] = page.xpath(f"//*[@id='{self.view(2, inventory.nm1, inventory.sfp)}']")
-        self.assertEqual(sfp.get("data-dv-parent"), self.view(1, inventory.nm1))
+        [sfp] = page.xpath(f"//*[@id='{self.view(3, inventory.nm1, inventory.sfp)}']")
+        self.assertEqual(sfp.get("data-dv-parent"), self.view(2, inventory.nm1))
         [crumbs] = sfp.xpath(".//ol[contains(@class, 'breadcrumb')]")
         self.assertEqual(
             [
@@ -263,13 +265,13 @@ class FocusViewTests(AssemblyTestCase):
             ],
             [
                 ("ch1", [self.overview()], None),
-                ("ACME NM-2X in NM 1", [self.view(1, inventory.nm1)], None),
+                ("ACME NM-2X in NM 1", [self.view(2, inventory.nm1)], None),
                 ("ACME SFP-10G in Slot 1", [], "page"),
             ],
         )
         # Escape returns to the parent, the last button of the breadcrumb.
         self.assertEqual(crumbs.xpath(".//button/@aria-keyshortcuts"), ["Escape"])
-        [nm1] = page.xpath(f"//*[@id='{self.view(1, inventory.nm1)}']")
+        [nm1] = page.xpath(f"//*[@id='{self.view(2, inventory.nm1)}']")
         self.assertEqual(nm1.get("data-dv-parent"), self.overview())
 
     def test_the_artwork_api_has_no_focus_views(self):
@@ -317,7 +319,7 @@ class VirtualChassisTests(AssemblyTestCase):
             )
         other = self.other.device.pk
         self.assertIn(
-            f"dv-f1-d{other}-m{self.other.nm1.pk}",
+            f"dv-f2-d{other}-m{self.other.nm1.pk}",
             [v.get("id") for v in page.xpath(VIEWS)],
         )
         drawn = [*faces(content), *(face for _, face in focus_faces(content))]

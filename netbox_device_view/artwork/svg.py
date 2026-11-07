@@ -369,6 +369,22 @@ def multiply(m, n):
     )
 
 
+def invert(m):
+    """Return the inverse of matrix m, or None when it has none."""
+    a, b, c, d, e, f = m
+    det = a * d - b * c
+    if det == 0 or not math.isfinite(det):
+        return None
+    return (
+        d / det,
+        -b / det,
+        -c / det,
+        a / det,
+        (c * f - d * e) / det,
+        (b * e - a * f) / det,
+    )
+
+
 def _function_matrix(name: str, numbers: list[float]):
     if name == "matrix":
         return tuple(numbers)

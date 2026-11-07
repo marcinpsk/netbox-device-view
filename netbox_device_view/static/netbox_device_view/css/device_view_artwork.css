@@ -82,14 +82,38 @@
     outline-offset: 1px;
 }
 
-/* A module without artwork: an outline of its bay with the name of its type. */
-.dv-art-outline rect {
+/* A module without artwork: a schematic of its components and slots. */
+.dv-art-schematic rect {
     fill: var(--tblr-bg-surface-secondary);
     stroke: var(--tblr-secondary);
 }
 
-.dv-art-outline text {
+.dv-art-schematic text,
+.dv-art-schematic-part text,
+.dv-art-slot > text {
     fill: var(--tblr-body-color);
+}
+
+.dv-art-schematic-part rect {
+    fill: var(--tblr-bg-surface);
+    stroke: var(--tblr-body-color);
+}
+
+/* The frame and name of a slot, and a bay without a recorded module: a click goes through to the module body. */
+.dv-art-slot > rect,
+.dv-art-slot > text,
+.dv-art-not-recorded {
+    pointer-events: none;
+}
+
+.dv-art-slot > rect,
+.dv-art-not-recorded > rect {
+    stroke: var(--tblr-secondary);
+}
+
+.dv-art-not-recorded > text {
+    fill: var(--bs-secondary-color, #6c757d);
+    font-style: italic;
 }
 
 .dv-art-warnings {
@@ -221,8 +245,8 @@ button.dv-art-nav-item:hover {
     padding: 0.25rem 0.5rem;
 }
 
-/* An outline opens its module: it has no focus view. */
-a.dv-art-nav-outline {
+/* A module without a focus view: its item opens the module. */
+a.dv-art-nav-link {
     color: var(--tblr-link-color, var(--bs-link-color));
 }
 
