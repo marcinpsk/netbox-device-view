@@ -213,9 +213,37 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 ---
 
+## Activate a revision
+
+An association links a device type to one revision of a device definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of the type then show the artwork instead of the layout.
+
+In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to show the layout of the type again. A revision that an association uses cannot be deleted.
+
+The artwork view shows:
+
+- The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
+- A link on each connector where exactly one binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component. A connector where two or more bindings find a component has no link.
+- An outline on each linked connector whose component has a cable.
+- A tooltip on each linked connector that names its component. When the connector has its own title, the tooltip shows that title first.
+
+Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
+
+A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
+
+### Permissions
+
+- A first activation for a device type needs the **add** permission on **Artwork association**. A later activation needs the **change** permission. Constraints of these permissions apply to the association after the change.
+- You must be able to view the revision and the device type.
+- The association pages need the **view** permission on **Artwork association**.
+- The artwork view needs no permission on the association or the revision. Components, cables and modules show only when you can view them.
+
+---
+
 ## NetBox Branching
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
+
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main.
 
 ---
 

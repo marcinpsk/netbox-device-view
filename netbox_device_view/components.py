@@ -37,6 +37,8 @@ from .models import DeviceView
 # The component types that a layout key binds to.
 LAYOUT_MODELS = (Interface, ConsolePort, ConsoleServerPort, FrontPort, RearPort)
 BINDABLE_MODELS = (*LAYOUT_MODELS, PowerPort, PowerOutlet)
+# The model of each component name that an artwork binding uses.
+BINDING_MODELS = {model._meta.model_name: model for model in BINDABLE_MODELS}
 
 _TEMPLATE_MODELS = {
     Interface: InterfaceTemplate,

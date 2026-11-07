@@ -33,11 +33,14 @@ from utilities.views import (
 from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
+from .artwork import activation
 from .artwork import importing as artwork_importing
 from .artwork.errors import ArtworkError
+from .artwork.manifest import DEVICE_KIND
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
+    has_device_view,
 )
 
 
@@ -327,15 +330,13 @@ class DeviceViewDeleteView(generic.ObjectDeleteView):
 
 @register_model_view(Device, "deviceview", path="device-view")
 class DeviceDeviceView(generic.ObjectView):
-    queryset = models.DeviceView.objects
+    # The tab needs view permission on the device; artwork needs no permission of its own.
+    queryset = Device.objects
+    template_name = "netbox_device_view/deviceview.html"
 
     tab = ViewTab(
         label="Device View",
-        badge=lambda obj: models.DeviceView.objects.restrict(
-            current_request.get().user, "view"
-        )
-        .filter(device_type=obj.device_type)
-        .count(),
+        badge=lambda obj: int(has_device_view(obj, current_request.get().user)),
         hide_if_empty=True,
     )
 
@@ -383,9 +384,25 @@ class DefinitionRevisionListView(generic.ObjectListView):
     actions = (BundleImport, SourceImport)
 
 
+class ActivateRevision(ObjectAction):
+    name = "activate"
+    label = _("Activate")
+    template_name = "netbox_device_view/buttons/activate.html"
+    url_kwargs = ("pk",)
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # Module definitions are activated for module types with module composition.
+        if obj.definition.kind != DEVICE_KIND or not activation.can_activate(
+            context["request"].user
+        ):
+            return ""
+        return super().render(context, obj, **kwargs)
+
+
 class DefinitionRevisionView(generic.ObjectView):
     queryset = models.DefinitionRevision.objects.select_related("definition__key_owner")
-    actions = (DeleteObject,)
+    actions = (ActivateRevision, DeleteObject)
 
     def get_extra_context(self, request, instance):
         return {
@@ -396,6 +413,89 @@ class DefinitionRevisionView(generic.ObjectView):
 
 class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
     queryset = models.DefinitionRevision.objects.all()
+
+
+class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
+    """Make a revision the active artwork of a device type."""
+
+    template_name = "netbox_device_view/artwork_activate.html"
+
+    def has_permission(self):
+        return activation.can_activate(self.request.user)
+
+    def _render(self, request, revision, form, status=200):
+        return render(
+            request,
+            self.template_name,
+            {"object": revision, "form": form},
+            status=status,
+        )
+
+    def _revision(self, request, pk):
+        return get_object_or_404(
+            models.DefinitionRevision.objects.restrict(request.user, "view"), pk=pk
+        )
+
+    def get(self, request, pk):
+        revision = self._revision(request, pk)
+        return self._render(
+            request, revision, forms.ActivateRevisionForm(user=request.user)
+        )
+
+    def post(self, request, pk):
+        revision = self._revision(request, pk)
+        form = forms.ActivateRevisionForm(request.POST, user=request.user)
+        if not form.is_valid():
+            return self._render(request, revision, form, status=400)
+        try:
+            association = activation.activate(
+                request.user, revision, form.cleaned_data["device_type"]
+            )
+        except ValidationError as exc:
+            form.add_error(None, exc.messages)
+            return self._render(request, revision, form, status=400)
+        except activation.ActivationRejected as exc:
+            form.add_error(None, str(exc))
+            return self._render(request, revision, form, status=409)
+        messages.success(
+            request,
+            _("{type} now shows {revision}.").format(
+                type=association.device_type.full_name, revision=revision
+            ),
+        )
+        # The association page needs view permission on it; the revision page needs none more.
+        if (
+            models.Association.objects.restrict(request.user, "view")
+            .filter(pk=association.pk)
+            .exists()
+        ):
+            return redirect(association.get_absolute_url())
+        return redirect(revision.get_absolute_url())
+
+
+class AssociationListView(generic.ObjectListView):
+    queryset = models.Association.objects.select_related(
+        "device_type__manufacturer",
+        "module_type__manufacturer",
+        "revision__definition",
+    )
+    table = tables.AssociationTable
+    filterset = filtersets.AssociationFilterSet
+    filterset_form = forms.AssociationFilterForm
+    actions = ()
+
+
+class AssociationView(generic.ObjectView):
+    queryset = models.Association.objects.select_related(
+        "device_type__manufacturer",
+        "module_type__manufacturer",
+        "revision__definition",
+    )
+    actions = (DeleteObject,)
+
+
+class AssociationDeleteView(generic.ObjectDeleteView):
+    queryset = models.Association.objects.all()
 
 
 class VisualDefinitionListView(generic.ObjectListView):

@@ -1,0 +1,33 @@
+{% extends 'generic/_base.html' %}
+{% load form_helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Activate" %} {{ object }}{% endblock %}
+
+{% block content %}
+  <div class="row">
+    <div class="col col-md-10 col-lg-8">
+      <p class="text-muted">
+        {% blocktrans trimmed with key=object.definition.key %}
+          After activation, the Device View of each device of the selected type shows this revision of {{ key }}. A type that already has an active revision changes to this one.
+        {% endblocktrans %}
+      </p>
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}
+      <form method="post" class="card">
+        {% csrf_token %}
+        <h2 class="card-header">{% trans "Device type" %}</h2>
+        <div class="card-body">
+          {% render_field form.device_type %}
+          <div class="text-end">
+            <a href="{{ object.get_absolute_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+            <button type="submit" class="btn btn-primary">{% trans "Activate" %}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

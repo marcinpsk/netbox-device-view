@@ -13,12 +13,13 @@ from django.db import connection, connections, transaction
 from django.db.models.signals import post_save
 from django.test import Client, TransactionTestCase
 from django.urls import reverse
-from users.models import ObjectPermission, User
+from users.models import User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.layout import parse_yaml, render_css
 from netbox_device_view.models import DeviceView, RenderMode
 
+from .permissions import grant
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML, REVIEW_URL
 
 WAIT_SECONDS = 20
@@ -41,12 +42,7 @@ class ConcurrentApplyTestBase(TransactionTestCase):
         )
         user = User.objects.create_user(username="importer")
         for model in (DataSource, DataFile, Manufacturer, DeviceType, DeviceView):
-            permission = ObjectPermission.objects.create(
-                name=f"{model._meta.model_name}-all",
-                actions=["view", "add", "change"],
-            )
-            permission.users.add(user)
-            permission.object_types.add(ObjectType.objects.get_for_model(model))
+            grant(user, model, "view", "add", "change")
         self.clients = [Client(), Client()]
         for client in self.clients:
             client.force_login(user)
