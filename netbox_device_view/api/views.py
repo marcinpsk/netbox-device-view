@@ -15,7 +15,9 @@ from rest_framework.views import APIView
 from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
+from ..artwork.type_lock import lock_bulk_writes
 from ..filtersets import (
+    BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
     DeviceViewFilterSet,
     VisualDefinitionFilterSet,
@@ -24,6 +26,7 @@ from ..forms import ArtworkSourceImportForm
 from .device_artwork import compose_device_artwork
 from .rendered_layout import compose_rendered_layout
 from .serializers import (
+    BindingOverrideSerializer,
     DefinitionRevisionSerializer,
     DeviceViewSerializer,
     VisualDefinitionSerializer,
@@ -125,6 +128,59 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
         with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
             models.VisualDefinition.lock(update_data)
             return super().perform_bulk_update(objects, update_data, partial)
+
+
+class _ErrorResponse(Exception):
+    """An error response of a write, raised so that BindingOverride.writing() rolls back."""
+
+    def __init__(self, response):
+        super().__init__(response.status_code)
+        self.response = response
+
+
+class BindingOverrideViewSet(NetBoxModelViewSet):
+    """Each write runs in BindingOverride.writing() and takes the locks of the override writer."""
+
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    serializer_class = BindingOverrideSerializer
+    filterset_class = BindingOverrideFilterSet
+
+    def _write(self, handler, request, *args, **kwargs):
+        try:
+            with models.BindingOverride.writing() as using:
+                if isinstance(request.data, list):
+                    lock_bulk_writes(using)
+                response = handler(request, *args, **kwargs)
+                # A failed bulk write leaves ChangeDiff rows on main, and NetBox 4.5 its events.
+                if response.status_code >= status.HTTP_400_BAD_REQUEST:
+                    raise _ErrorResponse(response)
+        except _ErrorResponse as rejected:
+            return rejected.response
+        return response
+
+    def create(self, request, *args, **kwargs):
+        return self._write(super().create, request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        return self._write(super().update, request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return self._write(super().destroy, request, *args, **kwargs)
+
+    def bulk_update(self, request, *args, **kwargs):
+        return self._write(super().bulk_update, request, *args, **kwargs)
+
+    def bulk_destroy(self, request, *args, **kwargs):
+        return self._write(super().bulk_destroy, request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        # The type lock comes before the row lock that NetBox takes for If-Match.
+        with serializer.instance.locked():
+            super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        with instance.locked():
+            super().perform_destroy(instance)
 
 
 def _error_response(exc: ArtworkError):

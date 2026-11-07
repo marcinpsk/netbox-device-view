@@ -5,16 +5,18 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.db import router, transaction
 from django.db.models import Count, OuterRef, Subquery
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
+from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
 from django.views import View
 from netbox.context import current_request
 from netbox.object_actions import (
     AddObject,
+    BulkDelete,
     BulkExport,
     BulkImport,
     DeleteObject,
@@ -33,10 +35,12 @@ from utilities.views import (
 from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
-from .artwork import activation
+from .artwork import activation, overrides
 from .artwork import importing as artwork_importing
 from .artwork.errors import ArtworkError
 from .artwork.manifest import DEVICE_KIND
+from .artwork.type_lock import lock_bulk_writes
+from .components import binding_labels
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -406,6 +410,15 @@ class DefinitionRevisionView(generic.ObjectView):
 
     def get_extra_context(self, request, instance):
         return {
+            "connectors": [
+                {
+                    "key": key,
+                    "face": connector["face"],
+                    "label": connector.get("label"),
+                    "bindings": binding_labels(connector["bindings"]),
+                }
+                for key, connector in sorted(instance.manifest["connectors"].items())
+            ],
             "files": instance.files.select_related("blob"),
             "imports": instance.imports.select_related("data_source"),
         }
@@ -530,6 +543,55 @@ class VisualDefinitionEditView(generic.ObjectEditView):
         if self.request.method == "POST":
             models.VisualDefinition.lock([kwargs["pk"]])
         return super().get_object(**kwargs)
+
+
+class BindingOverrideListView(generic.ObjectListView):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    table = tables.BindingOverrideTable
+    filterset = filtersets.BindingOverrideFilterSet
+    filterset_form = forms.BindingOverrideFilterForm
+    actions = (AddObject, BulkExport, BulkDelete)
+
+
+class BindingOverrideView(generic.ObjectView):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    actions = (EditObject, DeleteObject)
+
+    def get_extra_context(self, request, instance):
+        field = instance._meta.get_field(instance.scope_field)
+        return {
+            "scope_type": capfirst(field.verbose_name),
+            "binding_labels": binding_labels(instance.bindings),
+        }
+
+
+class BindingOverrideEditView(generic.ObjectEditView):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    form = forms.BindingOverrideForm
+    template_name = "netbox_device_view/bindingoverride_edit.html"
+
+    def get_object(self, **kwargs):
+        obj = super().get_object(**kwargs)
+        # The checks of an override name its scope, so a hidden scope hides the override.
+        if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
+            raise Http404
+        return obj
+
+
+class BindingOverrideDeleteView(generic.ObjectDeleteView):
+    # BindingOverride.delete() takes the type lock.
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+
+
+class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    filterset = filtersets.BindingOverrideFilterSet
+    table = tables.BindingOverrideTable
+
+    def post(self, request, **kwargs):
+        with models.BindingOverride.writing() as using:
+            lock_bulk_writes(using)
+            return super().post(request, **kwargs)
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

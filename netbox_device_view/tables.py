@@ -3,7 +3,14 @@ from django.utils.html import mark_safe
 from django.utils.text import capfirst
 from netbox.tables import NetBoxTable, columns
 
-from .models import Association, DefinitionRevision, DeviceView, VisualDefinition
+from .components import binding_labels
+from .models import (
+    Association,
+    BindingOverride,
+    DefinitionRevision,
+    DeviceView,
+    VisualDefinition,
+)
 
 
 class LayoutColumn(tables.Column):
@@ -174,3 +181,47 @@ class AssociationTable(NetBoxTable):
 
     def render_hardware_type(self, record):
         return record.hardware_type.full_name
+
+
+class BindingOverrideTable(NetBoxTable):
+    id = tables.Column(linkify=True, verbose_name="ID")
+    scope = tables.Column(
+        verbose_name="Scope",
+        accessor="pk",
+        orderable=False,
+        linkify=lambda record: record.scope.get_absolute_url(),
+    )
+    definition = tables.Column(
+        verbose_name="Definition key",
+        accessor="definition__key",
+        linkify=lambda record: record.definition.get_absolute_url(),
+    )
+    connector_key = tables.Column(verbose_name="Connector", linkify=True)
+    bindings = tables.Column(verbose_name="Bindings", orderable=False)
+    last_updated = columns.DateTimeColumn(verbose_name="Last updated")
+    actions = columns.ActionsColumn(actions=("edit", "delete", "changelog"))
+
+    class Meta(NetBoxTable.Meta):
+        model = BindingOverride
+        fields = (
+            "pk",
+            "id",
+            "scope",
+            "definition",
+            "connector_key",
+            "bindings",
+            "last_updated",
+            "actions",
+        )
+        default_columns = ("scope", "definition", "connector_key", "bindings")
+
+    def render_scope(self, record):
+        return record.scope_label
+
+    def render_bindings(self, value):
+        return binding_labels(value) or mark_safe(
+            '<span class="text-muted">No binding</span>'
+        )
+
+    def value_bindings(self, value):
+        return binding_labels(value)

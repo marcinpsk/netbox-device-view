@@ -263,6 +263,37 @@ Press **Escape** or click the close button to close the details. The focus then 
 - You must be able to view the revision and the device type.
 - The association pages need the **view** permission on **Artwork association**.
 - The artwork view needs no permission on the association or the revision. Components, cables and modules show only when you can view them.
+- An activation fails when a [binding override](#binding-overrides) of the definition key, for the type or for one of its devices, names a connector that the revision does not have. The message names each such override. If you cannot view all of them, the message names none.
+
+---
+
+## Binding overrides
+
+A binding override replaces the bindings of one connector without a change to the NetBox component names or to the artwork. Its scope is one of:
+
+- A device type: the override applies to each device of the type.
+- A device: the override applies to that device only.
+- A module type or an installed module. The model, the pages and the API accept these scopes, but you cannot add one yet: an override needs the active artwork of its module type, and the plugin cannot activate module artwork before module composition (#45). Activation writes device type associations only.
+
+The bindings of a connector resolve in this order: the bindings of the artwork, then the override of the type, then the override of the device. Each level replaces the list of the level below it. The lists do not merge. The Device View tab, the device page panel and the [artwork API](artwork-api.md) use the same resolution.
+
+An override has the schema of the `bindings` of a manifest connector: 0 to 16 bindings, each with a `component` type and a `name`. An empty list leaves the connector with no binding. A binding that finds no component is a missing binding: the connector has the mark for no component found.
+
+An override follows the definition key, not a revision. An import of a new revision does not change or delete an override. When you save an override:
+
+- The type of the scope (the device type of a device, the module type of an installed module) must have an active revision. The override gets the definition key of that revision.
+- The connector key must be in the active revision. The **Connectors** table of the revision page lists the keys.
+- One scope has one override for each connector of a definition key.
+- The scope and the connector of an override cannot change. To move an override, add a new one and delete the old one.
+- An override of a definition key that is not active for its type does not apply. You cannot change it, but you can delete it.
+
+In the UI, go to **Plugins → Binding Overrides** and click **Add**. Select the scope in one of the tabs, enter the connector key and add a row for each binding. The page of a visual definition lists its overrides. The API endpoint is `/api/plugins/device_view/binding-overrides/`, with the `device_type_id`, `module_type_id`, `device_id`, `module_id`, `definition_id` and `connector_key` filters. The API accepts the same data and checks the same rules as the UI.
+
+### Permissions
+
+- Overrides need the **add**, **change** or **delete** permission on **Binding override**. Constraints of these permissions apply to the override after the change. The pages and the API need the **view** permission.
+- To add or change an override, you must be able to view its scope.
+- The permission to view a device gives no permission on its overrides.
 
 ---
 
@@ -270,7 +301,7 @@ Press **Escape** or click the close button to close the details. The focus then 
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
-An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main.
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A binding override belongs to the branch in the same way.
 
 ---
 
