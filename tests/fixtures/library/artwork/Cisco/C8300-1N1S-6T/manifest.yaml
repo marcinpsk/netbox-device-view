@@ -1,0 +1,60 @@
+schema: 1
+key: cisco/c8300-1n1s-6t
+kind: device
+title: Cisco Catalyst 8300-1N1S-6T
+hardware:
+  manufacturer: Cisco
+  sku: C8300-1N1S-6T
+  references:
+    - title: Hardware Installation Guide for Cisco Catalyst 8300 Series Edge Platforms, Overview
+      edition: web edition, updated 2020-10-28
+      figure: "1 and 2, tables 1 and 2"
+      url: https://www.cisco.com/c/en/us/td/docs/routers/cloud_edge/c8300/hardware_installation/b-catalyst-8300-series-edge-platforms-hig/m-overview.html
+    - title: Cisco Catalyst 8300 Series Edge Platforms Data Sheet
+      edition: web edition, updated 2026-10-06
+      figure: "table 15"
+      url: https://www.cisco.com/c/en/us/products/collateral/routers/catalyst-8300-series-edge-platforms/datasheet-c78-744088.html
+license: MIT
+authors: [Marcin Zieba]
+faces:
+  front: {file: front.svg}
+  rear: {file: rear.svg}
+connectors:
+  con-con0:
+    face: front
+    type: rj45
+    label: "CON"
+    bindings:
+      - {component: consoleport, name: "con0"}
+  con-gi0-0-0:
+    face: front
+    type: rj45
+    label: "0/0/0"
+    bindings:
+      - {component: interface, name: "GigabitEthernet0/0/0"}
+  con-gi0-0-1:
+    face: front
+    type: rj45
+    label: "0/0/1"
+    bindings:
+      - {component: interface, name: "GigabitEthernet0/0/1"}
+  con-gi0-0-2:
+    face: front
+    type: rj45
+    label: "0/0/2"
+    bindings:
+      - {component: interface, name: "GigabitEthernet0/0/2"}
+  con-gi0-0-3:
+    face: front
+    type: rj45
+    label: "0/0/3"
+    bindings:
+      - {component: interface, name: "GigabitEthernet0/0/3"}
+bays:
+  bay-sfp4: {face: front, module_bay: "Transceiver 0/0/4", rotate: 180}
+  bay-sfp5: {face: front, module_bay: "Transceiver 0/0/5"}
+  bay-nim1: {face: front, module_bay: "NIM 1"}
+  bay-sm1: {face: front, module_bay: "SM 1"}
+  bay-psu0: {face: rear, module_bay: "PSU0"}
+  bay-psu1: {face: rear, module_bay: "PSU1"}
+  bay-pim1: {face: rear, module_bay: "PIM 1"}
