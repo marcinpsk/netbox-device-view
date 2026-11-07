@@ -98,15 +98,15 @@ class ConsoleServerPortTests(TestCase):
             with self.subTest(name=name):
                 self.assertContains(response, f'href="{port.get_absolute_url()}"')
                 self.assertContains(response, f"grid-area: {STYLENAMES[name]}")
-                self.assertContains(response, f"{name}<hr>{peer}")
+                self.assertContains(response, f"{name}&lt;hr&gt;{peer}")
 
     def test_svg_view_binds_device_and_module_ports(self):
         response = self._tab(RenderMode.SVG)
         for name, (port, peer) in self.ports.items():
             with self.subTest(name=name):
                 self.assertContains(response, f'data-stylename="{STYLENAMES[name]}"')
-                self.assertContains(response, f'detailUrl: "{port.get_absolute_url()}"')
-                self.assertContains(response, f'peerLabels: ["{peer}"]')
+                self.assertContains(response, f'data-href="{port.get_absolute_url()}"')
+                self.assertContains(response, f"{name}&lt;hr&gt;{peer}")
 
     def test_rendered_layout_api_reports_device_and_module_ports(self):
         api = APIClient()

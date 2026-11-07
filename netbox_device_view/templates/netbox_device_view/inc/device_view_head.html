@@ -1,0 +1,25 @@
+{% load static %}
+<link
+	rel="stylesheet"
+	href="{% static 'netbox_device_view/css/device_view.css' %}"
+/>
+{% if use_svg %}
+<link
+	rel="stylesheet"
+	href="{% static 'netbox_device_view/css/device_view_svg.css' %}"
+/>
+{% else %}
+<style>
+	{% autoescape off %}
+	{% for id, ddv in dv.items %}
+	{{ ddv }}
+	{% endfor %}
+	{% endautoescape %}
+	{% if height %}
+
+	.deviceview {
+		height:{{ height }}px;
+	}
+	{% endif %}
+</style>
+{% endif %}
