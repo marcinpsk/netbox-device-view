@@ -73,6 +73,18 @@ def _reference(state) -> dict:
     }
 
 
+def component_fields(state) -> dict:
+    """Return the identity and the state of one component, as the API clients get them."""
+    return {
+        **_reference(state),
+        "enabled": state.enabled is not False,
+        "connection_state": state.connection_state,
+        "cable_color": state.cable_color,
+        "peer_labels": state.peer_labels,
+        "trace_supported": state.trace_supported,
+    }
+
+
 def _hotspot(cell: dict, binding) -> dict:
     geometry = {name: cell[name] for name in ("x", "y", "width", "height")}
     state = binding.state
@@ -89,15 +101,8 @@ def _hotspot(cell: dict, binding) -> dict:
             "trace_supported": False,
             "candidates": [_reference(candidate) for candidate in binding.candidates],
         }
-    return {
-        **_reference(state),
-        **geometry,
-        "enabled": state.enabled is not False,
-        "connection_state": binding.connection_state,
-        "cable_color": state.cable_color,
-        "peer_labels": state.peer_labels,
-        "trace_supported": state.trace_supported,
-    }
+    # The reference and the geometry come first; a merge keeps the first key order.
+    return {**_reference(state), **geometry, **component_fields(state)}
 
 
 def _unavailable(device_id: int, reason: str) -> dict:
@@ -109,6 +114,48 @@ def _unavailable(device_id: int, reason: str) -> dict:
         "render_mode": "svg",
         "panels": [],
     }
+
+
+def member_panels(
+    member: Device, device_view: DeviceView, user, key_prefix="", label_suffix=""
+) -> list[dict]:
+    """Return the panels of one device from the YAML layout of ``device_view``.
+
+    Raises LayoutParseError for a layout that does not parse.
+    """
+    normalized = parse_layout(device_view.yaml_layout)
+    member_modules = list(member.modules.restrict(user, "view"))
+    variant = _detect_variant(member_modules, device_view)
+    states = device_components(member, user)
+    panels = []
+    for face, view in face_views(normalized):
+        face_key = drawn_face(face, view)
+        bindings = bind_layout(states, face_key)
+        svg, geometry = render_api_view(
+            view,
+            fills={
+                key: _fill_for(binding.state)
+                for key, binding in bindings.items()
+                if binding.state
+            },
+            variant_name=variant,
+        )
+        width, height = svg_dims(view.canvas)
+        panels.append(
+            {
+                "key": f"{key_prefix}{face_key}",
+                "label": f"{face_key.capitalize()}{label_suffix}",
+                "width": width,
+                "height": height,
+                "svg": svg,
+                "hotspots": [
+                    _hotspot(cell, bindings[cell["key"]])
+                    for cell in geometry
+                    if cell["key"] in bindings
+                ],
+            }
+        )
+    return panels
 
 
 def compose_rendered_layout(device: Device, user) -> dict:
@@ -141,44 +188,13 @@ def compose_rendered_layout(device: Device, user) -> dict:
     panels = []
     try:
         for member in members:
-            device_view = member_views[member.pk]
-            normalized = parse_layout(device_view.yaml_layout)
-            member_modules = list(member.modules.restrict(user, "view"))
-            variant = _detect_variant(member_modules, device_view)
-            states = device_components(member, user)
-
-            member_prefix = f"member-{member.pk}-" if len(members) > 1 else ""
-            member_suffix = f" ({member.name})" if len(members) > 1 else ""
-
-            for face, view in face_views(normalized):
-                face_key = drawn_face(face, view)
-                bindings = bind_layout(states, face_key)
-                face_label = face_key.capitalize()
-                svg, geometry = render_api_view(
-                    view,
-                    fills={
-                        key: _fill_for(binding.state)
-                        for key, binding in bindings.items()
-                        if binding.state
-                    },
-                    variant_name=variant,
-                )
-                hotspots = [
-                    _hotspot(cell, bindings[cell["key"]])
-                    for cell in geometry
-                    if cell["key"] in bindings
-                ]
-                width, height = svg_dims(view.canvas)
-                panels.append(
-                    {
-                        "key": f"{member_prefix}{face_key}",
-                        "label": f"{face_label}{member_suffix}",
-                        "width": width,
-                        "height": height,
-                        "svg": svg,
-                        "hotspots": hotspots,
-                    }
-                )
+            if len(members) > 1:
+                prefix, suffix = f"member-{member.pk}-", f" ({member.name})"
+            else:
+                prefix, suffix = "", ""
+            panels += member_panels(
+                member, member_views[member.pk], user, prefix, suffix
+            )
     except LayoutParseError:
         logger.warning(
             "Invalid YAML layout for device %s (device_type %s)",

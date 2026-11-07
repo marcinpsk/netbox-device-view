@@ -1,12 +1,18 @@
 """The documentation states limits and versions that the code defines; keep them equal."""
 
+import re
 from pathlib import Path
 
 import pytest
+from dcim.models import Interface
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
+from netbox_device_view.api import device_artwork
+from netbox_device_view.api.rendered_layout import UnavailableReason
 from netbox_device_view.artwork import limits
+from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
+from netbox_device_view.layout import parser
 from netbox_device_view.layout.parser import MAX_CANVAS_CELLS, MAX_EXPANDED_ELEMENTS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,3 +65,73 @@ MIB = 1024 * 1024
 )
 def test_artwork_page_states_the_code_limits(statement):
     assert statement in (ROOT / "docs" / "artwork-bundles.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"at most {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} cells per canvas",
+        f"at most {parser.MAX_EXPANDED_ELEMENTS} expanded elements per layout",
+        f"`at` and `span` inside {parser.MAX_CANVAS_ROWS} rows and {parser.MAX_CANVAS_CELLS} columns",
+        (
+            f"at most {parser.MAX_RENDERED_CELLS} grid cells rendered and "
+            f"{parser.MAX_PAINTED_CELLS} grid cells painted"
+        ),
+        f"at most {parser.MAX_MERGED_KEYS} keys and references that YAML merge keys",
+        f"integers of at most {parser.MAX_INTEGER_DIGITS} digits",
+        f"at most {parser.MAX_LAYOUT_BYTES // 1024} KiB of YAML text",
+    ],
+)
+def test_layout_page_states_the_size_limits(statement):
+    assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        f"deeper than {parser._MAX_YAML_DEPTH} levels",
+        f"`{parser.IDENTIFIER.pattern}`, or has more than {parser.MAX_KEY_LENGTH} characters",
+        f"more than {parser.MAX_CSS_CLASSES} CSS classes",
+        f"printable text of at most {parser.MAX_LABEL_LENGTH} characters",
+        f"`{parser.VARIANT_NAME.pattern}`",
+        f"`cell_size` is more than {parser.MAX_CELL_SIZE}",
+    ],
+)
+def test_layout_page_states_the_save_rules(statement):
+    assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
+
+
+def test_artwork_api_page_states_the_values_of_the_code():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    assert f"(`schema_version: {device_artwork.SCHEMA_VERSION}`)" in text
+    *others, last = (
+        f'`"{value}"`'
+        for value in (
+            device_artwork.ARTWORK,
+            device_artwork.LAYOUT,
+            device_artwork.SCHEMATIC,
+            device_artwork.UNAVAILABLE,
+        )
+    )
+    assert f"{', '.join(others)} or {last}" in text
+    reasons = {
+        value for name, value in vars(UnavailableReason).items() if name.isupper()
+    } | {device_artwork.DAMAGED_ARTWORK}
+    table = text.split("### Reasons", 1)[1].split("###", 1)[0]
+    documented = {
+        line.split("`")[1] for line in table.splitlines() if line.startswith("| `")
+    }
+    assert documented == reasons
+
+
+def test_artwork_api_page_documents_each_binding_field():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    table = text.split("### Binding", 1)[1].split("###", 1)[0]
+    documented = {
+        name
+        for line in table.splitlines()
+        if line.startswith("| `")
+        for name in re.findall(r"`(\w+)`", line.split("|")[1])
+    }
+    missing = Binding(Interface, "eth1", MISSING, None)
+    assert documented == set(device_artwork._binding(missing))

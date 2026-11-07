@@ -40,8 +40,9 @@ ARTWORK = "artwork"
 DAMAGED = "damaged"
 FOUND = "found"
 MISSING = "missing"
-# The view part of an id: "o" for the overview of a device.
+# The view part of an id: "o" for the overview of a device, "a" for the artwork API.
 OVERVIEW = "o"
+API = "a"
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
@@ -56,6 +57,9 @@ _OUTLINE = 1 / 300
 
 @dataclass(frozen=True)
 class Binding:
+    # The component model and name that the manifest binds.
+    model: type
+    name: str
     status: str
     # None for a missing binding.
     state: ComponentState | None
@@ -78,11 +82,19 @@ class Connector:
 @dataclass(frozen=True)
 class RenderedFace:
     name: str
+    # The prefix of every id in the face.
+    prefix: str
     svg: SafeString
+    # The ids of the stored face that the face draws, without the prefix.
+    ids: frozenset[str]
 
     @property
     def label(self):
         return capfirst(self.name)
+
+    def element_id(self, key) -> str | None:
+        """Return the id of the element ``key`` in the face, or None when the face does not draw it."""
+        return self.prefix + key if key in self.ids else None
 
 
 @dataclass(frozen=True)
@@ -115,8 +127,16 @@ def active_revisions(device_type_ids) -> dict[int, DefinitionRevision]:
     }
 
 
-def resolve_device(device, revision, user, view=OVERVIEW) -> Part:
-    """Return the artwork Part of ``device`` with the components that ``user`` can view."""
+def face_prefix(view, device, face) -> str:
+    """Return the prefix of every id in one face of one device."""
+    return f"dv-{view}-d{device.pk}-{face}-"
+
+
+def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
+    """Return the artwork Part of ``device`` with the components that ``user`` can view.
+
+    A ``plain`` face has no class, connector links or outlines.
+    """
     states = device_components(device, user, BINDABLE_MODELS)
     connectors = tuple(
         _connector(key, item, states)
@@ -131,30 +151,37 @@ def resolve_device(device, revision, user, view=OVERVIEW) -> Part:
     except DamagedBlob as exc:
         logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
         return Part(device, DAMAGED, revision, (), connectors)
-    faces = tuple(
-        RenderedFace(
-            face,
-            _face_svg(
-                data[face],
-                f"dv-{view}-d{device.pk}-{face}-",
-                [connector for connector in connectors if connector.face == face],
-            ),
+    faces = []
+    for face in revision.face_names:
+        prefix = face_prefix(view, device, face)
+        svg, ids = _face_svg(
+            data[face],
+            prefix,
+            [connector for connector in connectors if connector.face == face],
+            plain,
         )
-        for face in revision.face_names
-    )
-    return Part(device, ARTWORK, revision, faces, connectors)
+        faces.append(RenderedFace(face, prefix, svg, ids))
+    return Part(device, ARTWORK, revision, tuple(faces), connectors)
 
 
 def _connector(key, item, states) -> Connector:
     bindings = []
     for binding in item["bindings"]:
-        found = find(states, BINDING_MODELS[binding["component"]], binding["name"])
+        model = BINDING_MODELS[binding["component"]]
+        found = find(states, model, binding["name"])
         # A device-scope name is unique per component type, so one match at most.
-        bindings.append(Binding(FOUND, found[0]) if found else Binding(MISSING, None))
+        bindings.append(
+            Binding(model, binding["name"], FOUND, found[0])
+            if found
+            else Binding(model, binding["name"], MISSING, None)
+        )
     return Connector(key, item["face"], item.get("label"), tuple(bindings))
 
 
-def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeString:
+def _face_svg(
+    data: bytes, prefix: str, connectors: list[Connector], plain: bool
+) -> tuple[SafeString, frozenset[str]]:
+    """Return the face markup and the ids of the stored face that it draws."""
     root = etree.fromstring(data, safe_parser(remove_comments=True, remove_pis=True))
     # HTML parses the content of title and desc as HTML, so they keep only their text.
     for element in root.iter(f"{{{SVG_NS}}}title", f"{{{SVG_NS}}}desc"):
@@ -168,9 +195,18 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
             elements[ident] = element
             element.set("id", prefix + ident)
         _rewrite_references(element, prefix)
-    view_box = parse_view_box(root.get("viewBox").strip())
     for name in ("x", "y", "width", "height"):
         root.attrib.pop(name, None)
+    if not plain:
+        _link_connectors(root, prefix, connectors, elements)
+    # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
+    svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
+    return svg, frozenset(elements)
+
+
+def _link_connectors(root, prefix, connectors, elements):
+    """Link each connector with a target to it, with an outline when it is occupied."""
+    view_box = parse_view_box(root.get("viewBox").strip())
     root.set("class", "dv-art-face")
     defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
@@ -188,8 +224,6 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
         _link(element, connector.target, outline)
     if len(defs):
         root.insert(0, defs)
-    # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
-    return mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
 
 
 def _unprefixed(element, parent=None):

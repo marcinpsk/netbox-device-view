@@ -130,7 +130,7 @@ _PORT_KINDS = {
 }
 
 
-# ── Strict rules (parse(..., strict=True), used by the Data Source import) ────
+# ── Limits: the resource limits apply in both modes, the rest only in strict mode ──
 MAX_CANVAS_CELLS = 4096
 MAX_CANVAS_ROWS = 64
 MAX_EXPANDED_ELEMENTS = 10000
@@ -143,6 +143,9 @@ MAX_LABEL_LENGTH = 64
 MAX_KEY_LENGTH = 64
 MAX_CSS_CLASSES = 8
 _MAX_YAML_DEPTH = 32
+MAX_MERGED_KEYS = 10000
+MAX_INTEGER_DIGITS = 64
+MAX_LAYOUT_BYTES = 256 * 1024
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 # Appended to "module" in a CSS class, so a leading digit is valid.
 VARIANT_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -169,10 +172,36 @@ class LayoutParseError(ValueError):
 
 
 _MERGE_TAG = "tag:yaml.org,2002:merge"
+_STR_TAG = "tag:yaml.org,2002:str"
 _MERGE_KEY = object()
 
 
-class DepthLimitedLoader(yaml.SafeLoader):
+class MergeLimitedLoader(yaml.SafeLoader):
+    """A SafeLoader with a budget for the keys that merge keys copy in one document."""
+
+    merged = 0
+
+    def flatten_mapping(self, node):
+        for key, value in node.value:
+            if key.tag == _MERGE_TAG:
+                items = value.value if isinstance(value, yaml.SequenceNode) else [value]
+                for item in items:
+                    self._charge(item)
+        super().flatten_mapping(node)
+
+    def _charge(self, node):
+        # Each reference and each key it copies costs one, before SafeLoader copies them.
+        self.merged += 1
+        if isinstance(node, yaml.MappingNode):
+            self.flatten_mapping(node)
+            self.merged += len(node.value)
+        if self.merged > MAX_MERGED_KEYS:
+            raise LayoutParseError(
+                f"Invalid YAML: merge keys copy more than {MAX_MERGED_KEYS} keys."
+            )
+
+
+class DepthLimitedLoader(MergeLimitedLoader):
     """A SafeLoader that stops at deep nesting before the scanner and composer slow down."""
 
     depth = 0
@@ -197,22 +226,48 @@ class DepthLimitedLoader(yaml.SafeLoader):
             if not isinstance(key_node, yaml.ScalarNode):
                 continue
             if key_node.tag == _MERGE_TAG:
-                key, name = _MERGE_KEY, "<<"
+                key = _MERGE_KEY
+            elif key_node.tag != _STR_TAG:
+                # Integer keys can share one hash, which makes the set quadratic.
+                raise LayoutParseError("Invalid YAML: mapping keys must be strings.")
             else:
-                # deep=True makes a container tag on a scalar key fail here.
                 key = self.construct_object(key_node, deep=True)
-                name = repr(key)
             if key in seen:
-                raise LayoutParseError(f"Invalid YAML: duplicate key {name:.80}.")
+                name = "<<" if key is _MERGE_KEY else repr(key[:80])
+                raise LayoutParseError(f"Invalid YAML: duplicate key {name}.")
             seen.add(key)
 
 
 def one_css_color(tokens: list[Any]) -> list[Any] | None:
     """Return the token list of one CSS color without whitespace, or None."""
     values = [token for token in tokens if token.type != "whitespace"]
-    if len(values) == 1 and tinycss2.color4.parse_color(values[0]) is not None:
-        return values
-    return None
+    if len(values) != 1:
+        return None
+    try:
+        color = tinycss2.color4.parse_color(values[0])
+    except ValueError:
+        # tinycss2 1.5 raises ValueError for some malformed functions, such as color().
+        return None
+    return values if color is not None else None
+
+
+def parse_css(function, *args, **kwargs):
+    """Call a tinycss2 parser; it raises ValueError for a number of over 4300 digits."""
+    try:
+        return function(*args, **kwargs)
+    except ValueError:
+        raise LayoutParseError("CSS: a number is too long.") from None
+
+
+def _shown(value: Any) -> str:
+    """Return a short form of a YAML value for an error message."""
+    if isinstance(value, str):
+        return repr(value[:80])
+    if value is None or isinstance(value, (bool, float)):
+        return repr(value)
+    if isinstance(value, int) and value.bit_length() <= 64:
+        return repr(value)
+    return f"a {type(value).__name__} value"
 
 
 def _is_identifier(value: Any) -> bool:
@@ -225,7 +280,11 @@ def _is_identifier(value: Any) -> bool:
 
 @dataclass
 class _Rules:
-    """The strict import rules; with strict=False each check keeps the lenient behaviour."""
+    """The strict save and import rules; with strict=False each check keeps the lenient behaviour.
+
+    The resource limits (canvas size, element placement, expanded elements, rendered and
+    painted cells) apply in both modes.
+    """
 
     strict: bool = False
     elements_left: int = MAX_EXPANDED_ELEMENTS
@@ -274,10 +333,10 @@ class _Rules:
     ) -> int:
         if not self.strict:
             try:
-                return int(raw)
+                value = int(raw)
             except (TypeError, ValueError, OverflowError) as exc:
                 raise LayoutParseError(f"{where}: must be an integer.") from exc
-        if (
+        elif (
             type(raw) is not int
             or raw < minimum
             or (maximum is not None and raw > maximum)
@@ -288,7 +347,27 @@ class _Rules:
                 else f"from {minimum} to {maximum}"
             )
             raise LayoutParseError(f"{where}: must be an integer {bounds}.")
-        return raw
+        else:
+            value = raw
+        # str() of an integer with more than 4300 digits raises ValueError.
+        if abs(value) >= 10**MAX_INTEGER_DIGITS:
+            raise LayoutParseError(
+                f"{where}: must be an integer of at most {MAX_INTEGER_DIGITS} digits."
+            )
+        return value
+
+    def canvas_size(self, raw: Any, where: str, maximum: int | None = None) -> int:
+        """Return a canvas row or column count from 1 to ``maximum`` in both modes."""
+        value = self.integer(raw, where, 1, maximum)
+        if value < 1:
+            raise LayoutParseError(f"{where}: must be an integer 1 or more.")
+        return self.bounded(value, where, maximum)
+
+    def bounded(self, value: int, where: str, maximum: int | None) -> int:
+        """Apply a resource maximum that lenient parsing does not check in ``integer``."""
+        if maximum is not None and value > maximum:
+            raise LayoutParseError(f"{where}: must be an integer {maximum} or less.")
+        return value
 
     def text(self, raw: Any, where: str, choices: tuple[str, ...] = ()) -> Any:
         """Return ``raw``; lenient mode rejects only an unhashable value, such as a list."""
@@ -313,7 +392,7 @@ class _Rules:
             return self.optional_string(raw, f"{where}.background")
         color = None
         if isinstance(raw, str):
-            color = one_css_color(tinycss2.parse_component_value_list(raw))
+            color = one_css_color(parse_css(tinycss2.parse_component_value_list, raw))
         if color is None:
             raise LayoutParseError(f"{where}: background must be one CSS color.")
         return tinycss2.serialize(color)
@@ -358,8 +437,6 @@ class _Rules:
 
     def take(self, count: int) -> None:
         """Reserve ``count`` elements before they are allocated; an empty entry costs one."""
-        if not self.strict:
-            return
         self.elements_left -= max(count, 1)
         if self.elements_left < 0:
             raise LayoutParseError(
@@ -368,8 +445,6 @@ class _Rules:
 
     def render(self, canvas: CanvasConfig, where: str) -> None:
         """Reserve the grid cells that the CSS renderer writes for one view or variant."""
-        if not self.strict:
-            return
         self.cells_left -= canvas.columns * canvas.rows
         if self.cells_left < 0:
             raise LayoutParseError(
@@ -385,11 +460,16 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     """
     Parse a YAML layout string and return a NormalizedLayout.
 
-    ``strict=True`` also applies the bounded, strict import rules.
+    ``strict=True`` also applies the strict rules of a save or an import.
     Raises LayoutParseError on schema violations.
     """
+    # The YAML reader rejects a lone surrogate, which a JSON import can give.
+    if len(yaml_text.encode(errors="surrogatepass")) > MAX_LAYOUT_BYTES:
+        raise LayoutParseError(
+            f"The layout is larger than {MAX_LAYOUT_BYTES // 1024} KiB."
+        )
     rules = _Rules(strict=strict)
-    loader = DepthLimitedLoader if strict else yaml.SafeLoader
+    loader = DepthLimitedLoader if strict else MergeLimitedLoader
     try:
         data = yaml.load(yaml_text, Loader=loader)
     except LayoutParseError:
@@ -411,7 +491,7 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     version = data.get("version", 1)
     if rules.integer(version, "version", 1) != SUPPORTED_VERSION:
         raise LayoutParseError(
-            f"Unsupported layout version {version!r}. "
+            f"Unsupported layout version {_shown(version)}. "
             f"This parser supports version {SUPPORTED_VERSION}."
         )
 
@@ -430,6 +510,8 @@ def parse(yaml_text: str, *, strict: bool = False) -> NormalizedLayout:
     _compile_variants(raw_variants, layout.views, canvas_cfg, rules)
     if strict:
         _check_elements(layout)
+    else:
+        _check_painted_cells(layout)
     return layout
 
 
@@ -548,9 +630,9 @@ def _parse_canvas(
     raw = rules.mapping(raw, "canvas", where)
     p = parent or CanvasConfig()
     canvas = CanvasConfig(
-        columns=rules.integer(raw.get("columns", p.columns), f"{where}.columns", 1),
-        rows=rules.integer(
-            raw.get("rows", p.rows), f"{where}.rows", 1, MAX_CANVAS_ROWS
+        columns=rules.canvas_size(raw.get("columns", p.columns), f"{where}.columns"),
+        rows=rules.canvas_size(
+            raw.get("rows", p.rows), f"{where}.rows", MAX_CANVAS_ROWS
         ),
         cell_size=rules.integer(
             raw.get("cell_size", p.cell_size), f"{where}.cell_size", 0, MAX_CELL_SIZE
@@ -559,7 +641,7 @@ def _parse_canvas(
             raw.get("background", global_bg or p.background), where
         ),
     )
-    if rules.strict and canvas.columns * canvas.rows > MAX_CANVAS_CELLS:
+    if canvas.columns * canvas.rows > MAX_CANVAS_CELLS:
         raise LayoutParseError(
             f"{where}: the canvas has more than {MAX_CANVAS_CELLS} cells."
         )
@@ -854,7 +936,7 @@ def _expand_sequence(
     kind_str = rules.text(seq.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
-        raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
+        raise LayoutParseError(f"{where}: Unknown element kind: {_shown(kind_str)}.")
 
     prefix = rules.text(seq.get("prefix", ""), f"{where}.prefix")
     start = rules.integer(seq.get("start", 1), f"{where}.start")
@@ -927,7 +1009,7 @@ def _expand_sequence(
 
     else:
         raise LayoutParseError(
-            f"{where}: Unknown sequence pattern: {pattern!r}. "
+            f"{where}: Unknown sequence pattern: {_shown(pattern)}. "
             "Use 'top-odd', 'top-even', or 'all'."
         )
 
@@ -1080,23 +1162,35 @@ def _expand_element(
     kind_str = rules.text(raw.get("kind", "port"), f"{where}.kind", tuple(_KIND_MAP))
     kind = _KIND_MAP.get(kind_str)
     if kind is None:
-        raise LayoutParseError(f"{where}: Unknown element kind: {kind_str!r}.")
+        raise LayoutParseError(f"{where}: Unknown element kind: {_shown(kind_str)}.")
 
     at = rules.optional_mapping(raw.get("at"), "at", f"{where}.at")
     span = rules.optional_mapping(raw.get("span"), "span", f"{where}.span")
 
     # Strict mode also checks the canvas of the view in _check_inside_canvas.
-    row = rules.integer(
-        at.get("row", default_row), f"{where}.at.row", 1, MAX_CANVAS_ROWS
+    row = rules.bounded(
+        rules.integer(
+            at.get("row", default_row), f"{where}.at.row", 1, MAX_CANVAS_ROWS
+        ),
+        f"{where}.at.row",
+        MAX_CANVAS_ROWS,
     )
-    col = rules.integer(
-        at.get("col", default_col), f"{where}.at.col", 1, MAX_CANVAS_CELLS
+    col = rules.bounded(
+        rules.integer(
+            at.get("col", default_col), f"{where}.at.col", 1, MAX_CANVAS_CELLS
+        ),
+        f"{where}.at.col",
+        MAX_CANVAS_CELLS,
     )
-    row_span = rules.integer(
-        span.get("rows", 1), f"{where}.span.rows", 1, MAX_CANVAS_ROWS
+    row_span = rules.bounded(
+        rules.integer(span.get("rows", 1), f"{where}.span.rows", 1, MAX_CANVAS_ROWS),
+        f"{where}.span.rows",
+        MAX_CANVAS_ROWS,
     )
-    col_span = rules.integer(
-        span.get("cols", 1), f"{where}.span.cols", 1, MAX_CANVAS_CELLS
+    col_span = rules.bounded(
+        rules.integer(span.get("cols", 1), f"{where}.span.cols", 1, MAX_CANVAS_CELLS),
+        f"{where}.span.cols",
+        MAX_CANVAS_CELLS,
     )
 
     # key is required for port-like elements; optional for spacers/blanks
@@ -1257,7 +1351,7 @@ def _painted_cells(el: PlacedElement, canvas: CanvasConfig) -> int:
 
 def _key_error(where: str, key: Any) -> str:
     return (
-        f"{where}: the element key {key!r:.80} must match {IDENTIFIER.pattern} "
+        f"{where}: the element key {_shown(key)} must match {IDENTIFIER.pattern} "
         f"and have at most {MAX_KEY_LENGTH} characters."
     )
 

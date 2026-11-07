@@ -12,7 +12,13 @@ from typing import Any
 
 import tinycss2
 
-from .parser import IDENTIFIER, VARIANT_NAME, LayoutParseError, one_css_color
+from .parser import (
+    IDENTIFIER,
+    VARIANT_NAME,
+    LayoutParseError,
+    one_css_color,
+    parse_css,
+)
 from .renderers.css_grid import (
     AUTO_SIZING_PROPERTIES,
     FRONT_CLASS,
@@ -34,7 +40,7 @@ _MAX_NESTING = 8
 
 def validate_css(css: str) -> None:
     """Raise LayoutParseError unless ``css`` is inside the import profile."""
-    tokens = tinycss2.parse_component_value_list(css)
+    tokens = parse_css(tinycss2.parse_component_value_list, css)
     nodes = _nodes(tokens)
     # tinycss2 closes open blocks and decodes escapes, so accepted text must serialize unchanged.
     if tinycss2.serialize(tokens) != css or any(node.type == "error" for node in nodes):
@@ -48,8 +54,8 @@ def validate_css(css: str) -> None:
         if node.type == "url" or (node.type == "function" and node.lower_name == "url"):
             raise LayoutParseError("CSS must not contain a URL.")
     names_area = False
-    for rule in tinycss2.parse_stylesheet(
-        css, skip_comments=True, skip_whitespace=True
+    for rule in parse_css(
+        tinycss2.parse_stylesheet, css, skip_comments=True, skip_whitespace=True
     ):
         names_area = _check_rule(rule) or names_area
     if not names_area:

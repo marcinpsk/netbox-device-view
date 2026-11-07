@@ -146,11 +146,7 @@ If a file has the same layout as the device view, the result is **Unchanged**. T
 
 ## What the import checks
 
-- **Content:** YAML layouts must pass the [YAML layout](layout-yaml.md) validation. Each element of a view or a variant must be fully inside the canvas of its view. The import also rejects a YAML layout when:
-    - an element with another key covers a cell of a port in a view, or in a variant together with its view. A `spacer`, a `blank` or a `label` can be covered;
-    - the cells of a key do not make one rectangle in a view, or in a variant together with its view. Overlapping elements are the usual cause;
-    - it has variants and both a front and a rear view;
-    - a variant names a view that is not in `views`.
+- **Content:** YAML layouts must pass the [YAML layout validation](layout-yaml.md#validation), as for a save in the edit form or with the API.
 
     CSS layouts can contain only the grid rules that the plugin renders:
     - selectors: one compound class selector with `.deviceview.area`, and optionally one module class and `.dFront` or `.dRear`;
