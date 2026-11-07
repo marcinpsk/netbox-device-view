@@ -1,6 +1,6 @@
 # Virtual Chassis
 
-When a device is part of a NetBox Virtual Chassis, the plugin renders each member as a separate panel within the same device view page.
+When a device is part of a NetBox Virtual Chassis, the plugin shows each member as a separate panel within the same device view page.
 
 ---
 
@@ -8,9 +8,11 @@ When a device is part of a NetBox Virtual Chassis, the plugin renders each membe
 
 For Virtual Chassis devices:
 
-- The plugin iterates over all VC members in `vc_position` order
-- Each member's DeviceView CSS is scoped with a `.d{vc_position}` suffix to avoid selector conflicts
-- Each member's ports are collected and displayed under a "Device {vc_position}" heading
+- The plugin shows the members that you can view in rack order: top of the rack first, unracked members last. A member that you cannot view has no panel and no label.
+- Each member has a label: its name, which links to its own Device View tab, and its position, for example `sw1 · position 1`. The label and the panel of the device that you opened are marked.
+- Each member resolves alone. Active artwork of its device type comes first. Else its DeviceView draws it: an SVG panel in SVG mode with a YAML layout, else a CSS grid. A member whose YAML layout does not parse shows the parse error; the other members still show.
+- A member with no artwork and no DeviceView that you can view shows a generated schematic: its components by type in NetBox name order, and a slot for each module bay. A slot shows its installed module (its artwork scaled to fit, or its schematic), or "not recorded".
+- When no member that you can view has artwork or a DeviceView, the device has no device view.
 
 ---
 
@@ -30,12 +32,11 @@ For the CSS renderer, each member's grid-area selectors are automatically rewrit
 }
 ```
 
-This happens automatically — you do not need to write scoped CSS yourself. The plugin applies the `.d{pos}` rewrite at render time using the base DeviceView CSS for each member's device type.
+This happens automatically. You do not need to write scoped CSS yourself. The plugin applies the `.d{pos}` rewrite at render time using the base DeviceView CSS for each member's device type. Each grid gets the height of its own device type.
 
 ---
 
 ## Limitations
 
-- **SVG mode works for Virtual Chassis devices** when every member's device type has an SVG-capable DeviceView (Render Mode → SVG, non-empty YAML Layout) — one panel is rendered per member, in rack order, using that member's own DeviceView.
-- Each VC member must have its own DeviceView configured for its device type.
-- If **any** member is missing a DeviceView (for either CSS or SVG rendering), the whole device's view fails to render — there is no partial/per-member fallback.
+- In CSS mode, a member grid shows no front or rear ports, because one grid per member cannot hold both faces.
+- The [rendered-layout API](rendered-layout-api.md#virtual-chassis) keeps its own rule: it needs an SVG-capable DeviceView for every member. The [artwork API](artwork-api.md) resolves each member as the page does.

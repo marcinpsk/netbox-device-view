@@ -96,7 +96,7 @@ The REST API (`GET /api/plugins/device_view/device-view/`) takes the same filter
 The Device View tab and the device page panel show only the objects that you can view. NetBox object permissions and their constraints apply to each object:
 
 - The Device View tab of a device that you cannot view is not found (`404`).
-- A virtual chassis member that you cannot view has no panel. The panel title shows the virtual chassis name only when you can view the virtual chassis.
+- A virtual chassis member that you cannot view has no panel and no label, and it does not give the other members a view. The panel title shows the virtual chassis name only when you can view the virtual chassis.
 - A DeviceView that you cannot view counts as missing. The device page then has no Device View tab.
 - A port that you cannot view is not in the panel. A peer that you cannot view is not in the port's details.
 - A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the details.
