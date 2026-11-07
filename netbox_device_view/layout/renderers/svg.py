@@ -165,6 +165,18 @@ def face_views(layout: NormalizedLayout) -> list[tuple[str | None, LayoutView]]:
     return [(None, view)] if view else []
 
 
+def drawn_keys(
+    layout: NormalizedLayout, variant_name: str | None = None
+) -> dict[str, set[str]]:
+    """Return {drawn face: the keys of the elements that ``render()`` draws}."""
+    keys = {}
+    for face, view in face_views(layout):
+        keys.setdefault(drawn_face(face, view), set()).update(
+            element.key for element in view.elements_for_variant(variant_name)
+        )
+    return keys
+
+
 def drawn_face(face: str | None, view: LayoutView) -> str:
     """Return the face that a view of ``face_views()`` draws: "front", or "rear" for a rear view."""
     if face:

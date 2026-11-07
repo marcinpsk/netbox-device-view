@@ -1,0 +1,14 @@
+{# The one details dialog of a device view; device_view_details.js fills it from a connector's <template>. #}
+{% load i18n %}
+<template id="dv-details-missing">
+	<p class="mb-0">{% blocktrans trimmed %}No component has the key <code data-dv-details-key></code>. It does not exist, or you cannot view it.{% endblocktrans %}</p>
+</template>
+<dialog class="dv-details" aria-labelledby="dv-details-title">
+	<div class="dv-details-content">
+		<div class="dv-details-header">
+			<h2 class="h3 mb-0" id="dv-details-title"></h2>
+			<button type="button" class="btn-close" data-dv-details-close aria-label="{% trans 'Close' %}"></button>
+		</div>
+		<div class="dv-details-body"></div>
+	</div>
+</dialog>

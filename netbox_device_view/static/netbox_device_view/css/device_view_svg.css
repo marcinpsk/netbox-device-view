@@ -89,6 +89,8 @@
 
 /* Ambiguous key: two or more components share it, so it links to none of them */
 .dv-port.dv-ambiguous  .dv-port-rect { fill: #adb5bd; stroke: #495057; stroke-dasharray: 3 2; }
+/* Missing key: no component has it, so the port is an empty dotted outline */
+.dv-port:not([data-connection-state]) .dv-port-rect { fill: transparent; stroke: #6c757d; stroke-dasharray: 1 2; }
 
 /* No-color (patch cable with no colour set) */
 .dv-port.nocolor .dv-port-rect {

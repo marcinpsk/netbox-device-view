@@ -81,6 +81,10 @@
     flood-color: var(--tblr-info);
 }
 
+.dv-art-flood-several {
+    flood-color: var(--tblr-purple);
+}
+
 .dv-art-flood-unresolved {
     flood-color: var(--tblr-gray-400);
 }
