@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="13.4mm" height="8.5mm" viewBox="0 0 13.4 8.5">
   <title>Cisco GLC-TE, installed</title>
   <rect x="0" y="0" width="13.4" height="8.5" fill="#b9bcc0" rx="0.4"/>
-  <g id="con-rj45"><path d="M1.1 0.5H12.3V6.63H8.72V7.8H4.68V6.63H1.1Z" fill="#1b1c1f" stroke="#5c5f66" stroke-width="0.3"/><path d="M3.96 1.4V3.59 M4.74 1.4V3.59 M5.52 1.4V3.59 M6.31 1.4V3.59 M7.09 1.4V3.59 M7.88 1.4V3.59 M8.66 1.4V3.59 M9.44 1.4V3.59" stroke="#b8954a" stroke-width="0.3"/></g>
+  <g id="con-rj45"><path d="M1.1 0.5H12.3V6.63H8.72V7.8H4.68V6.63H1.1Z" fill="#1e1f22" stroke="#6d6a66" stroke-width="0.3"/><path d="M3.96 1.4V3.59 M4.74 1.4V3.59 M5.52 1.4V3.59 M6.31 1.4V3.59 M7.09 1.4V3.59 M7.88 1.4V3.59 M8.66 1.4V3.59 M9.44 1.4V3.59" stroke="#b8954a" stroke-width="0.3"/></g>
   <path d="M0.45 0.45V8.05M12.95 0.45V8.05" stroke="#7d8085" stroke-width="0.35"/>
 </svg>
