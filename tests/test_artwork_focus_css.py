@@ -1,7 +1,7 @@
 """Each focusable element of the artwork shows its focus in every browser.
 
-WebKit paints no outline on an SVG element, so a focusable SVG element shows a
-focus ring element instead. These are pure unit tests: no Django, no DB.
+WebKit paints no outline on an SVG element, so a focusable SVG element also shows
+a focus ring element. These are pure unit tests: no Django, no DB.
 """
 
 import re
@@ -13,7 +13,7 @@ CSS = (
     Path(__file__).resolve().parents[1]
     / "netbox_device_view/static/netbox_device_view/css/device_view_artwork.css"
 )
-# The focusable SVG elements: each shows its .dv-art-focus-ring child.
+# The focusable SVG elements: each shows an outline and its .dv-art-focus-ring child.
 SVG_CLASSES = ("dv-art-connector",)
 # The focusable HTML elements: an outline shows in every browser.
 HTML_CLASSES = ("dv-art-viewport",)
@@ -58,8 +58,9 @@ def test_each_focusable_svg_element_shows_its_focus_ring():
         assert found.get(selector, {}).get("display") == "inline", selector
 
 
-def test_no_focusable_svg_element_has_an_outline():
-    # An outline shows in Chromium only, so two browsers would show two indicators.
-    for selector, declarations in rules():
-        if set(_FOCUSED.findall(selector)) & set(SVG_CLASSES):
-            assert declarations.get("outline", "none") == "none", selector
+def test_each_focusable_svg_element_has_an_outline():
+    # Blink and Gecko paint it also for a connector without paint, where the ring draws nothing.
+    found = dict(rules())
+    for name in SVG_CLASSES:
+        outline = found.get(f".{name}:focus-visible", {}).get("outline", "none")
+        assert outline != "none", name
