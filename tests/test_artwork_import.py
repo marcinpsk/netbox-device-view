@@ -348,6 +348,18 @@ class ApiTests(ArtworkTestCase):
                 response = getattr(self.api(), method)(url, {"digest": "0" * 64})
                 self.assertEqual(response.status_code, 405)
 
+    def test_the_api_has_no_create_or_bulk_write_of_revisions(self):
+        grant(self.user, DefinitionRevision, "add", "change", "delete")
+        self.post(bundle())
+        revision = DefinitionRevision.objects.get()
+        url = reverse("plugins-api:netbox_device_view-api:definitionrevision-list")
+        body = [{"id": revision.pk, "digest": "0" * 64}]
+        for method in ("post", "put", "patch", "delete"):
+            with self.subTest(method=method):
+                response = getattr(self.api(), method)(url, body, format="json")
+                self.assertEqual(response.status_code, 405)
+        self.assertEqual(DefinitionRevision.objects.get().digest, revision.digest)
+
     def test_api_delete_removes_the_revision_and_keeps_the_blobs(self):
         self.post(bundle())
         revision = DefinitionRevision.objects.get()

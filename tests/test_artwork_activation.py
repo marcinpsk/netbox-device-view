@@ -12,7 +12,8 @@ from django.contrib.messages import get_messages
 from django.db import connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
-from users.models import ObjectPermission, User
+from users.constants import TOKEN_PREFIX
+from users.models import ObjectPermission, Token, User
 
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import Association, DefinitionRevision, DeviceView
@@ -237,6 +238,20 @@ class AssociationPageTests(ActivationTestCase):
             follow=True,
         )
         self.assertContains(response, "Unable to delete")
+        self.assertTrue(DefinitionRevision.objects.filter(pk=self.revision.pk).exists())
+
+    def test_the_api_answers_a_delete_of_an_active_revision_with_409(self):
+        grant(self.user, DefinitionRevision, "delete")
+        token = Token.objects.create(user=self.user)
+        response = self.client.delete(
+            reverse(
+                "plugins-api:netbox_device_view-api:definitionrevision-detail",
+                args=[self.revision.pk],
+            ),
+            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("1 dependent objects were found", response.json()["detail"])
         self.assertTrue(DefinitionRevision.objects.filter(pk=self.revision.pk).exists())
 
     def test_deleting_the_association_returns_the_device_to_its_layout(self):

@@ -217,7 +217,7 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 An association links a device type to one revision of a device definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of the type then show the artwork instead of the layout.
 
-In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to show the layout of the type again. A revision that an association uses cannot be deleted.
+In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to show the layout of the type again. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
 
 The artwork view shows:
 
