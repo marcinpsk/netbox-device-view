@@ -448,7 +448,7 @@ class TypedLookupTests(ResolverTestBase):
 
 
 class HiddenObjectTests(ResolverTestBase):
-    """A hidden cable or module renders as an absent one."""
+    """A hidden cable, module or peer renders as an absent one."""
 
     @classmethod
     def setUpTestData(cls):
@@ -468,15 +468,29 @@ class HiddenObjectTests(ResolverTestBase):
         cls.module_interface = Interface.objects.create(
             device=cls.device, module=module, name="Gi3", type="1000base-t"
         )
+        cls.near = cls._device("sw2")
+        far = cls._device("far")
+        cls.far_cable = Cable(
+            a_terminations=[
+                Interface.objects.create(device=cls.near, name="Gi1", type="1000base-t")
+            ],
+            b_terminations=[
+                Interface.objects.create(device=far, name="Gi1", type="1000base-t")
+            ],
+        )
+        cls.far_cable.save()
         cls.user = User.objects.create_user(username="viewer")
-        for name in (
-            "dcim.view_device",
-            "dcim.view_interface",
-            "netbox_device_view.view_deviceview",
+        for name, constraints in (
+            ("dcim.view_device", None),
+            ("dcim.view_interface", {"device_id__in": [cls.device.pk, cls.near.pk]}),
+            ("dcim.view_cable", {"id": cls.far_cable.pk}),
+            ("netbox_device_view.view_deviceview", None),
         ):
             app_label, action_model = name.split(".")
             action, model = action_model.split("_", 1)
-            permission = ObjectPermission.objects.create(name=name, actions=[action])
+            permission = ObjectPermission.objects.create(
+                name=name, actions=[action], constraints=constraints
+            )
             permission.users.add(cls.user)
             permission.object_types.add(
                 ObjectType.objects.get_by_natural_key(app_label, model)
@@ -496,6 +510,22 @@ class HiddenObjectTests(ResolverTestBase):
                         if "data-href" in cell
                     },
                     {"gi-1": "enabled", "gi-2": "enabled"},
+                )
+
+    def test_a_hidden_far_end_does_not_connect_the_interface(self):
+        (hotspot,) = self._hotspots(self._api(self.near))
+        self.assertEqual(
+            (hotspot["connection_state"], hotspot["peer_labels"]), ("enabled", [])
+        )
+        for page, content in self._pages(self.near).items():
+            with self.subTest(page):
+                self.assertEqual(
+                    [
+                        cell["data-connection-state"]
+                        for cell in page_cells(content)
+                        if "data-href" in cell
+                    ],
+                    ["enabled"],
                 )
 
     def test_a_component_of_a_hidden_module_is_absent(self):
