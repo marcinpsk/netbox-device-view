@@ -460,6 +460,23 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
         self.assertContains(self.finish(*second), REVIEW_AGAIN, status_code=409)
         self.assertActivated()
 
+    def test_a_deadlock_with_a_netbox_writer_asks_to_review_again(self):
+        token = self.token()
+        with transaction.atomic():
+            # The activation locks the device, then waits for this component.
+            Interface.objects.filter(pk=self.eth1.pk).update(description="writer")
+            activation = self.activate_in_thread(token)
+            self.wait_for_a_waiter(activation[0])
+            # PostgreSQL stops the transaction that waited first: the activation.
+            Device.objects.filter(pk=self.device.pk).update(description="writer")
+
+        self.assertContains(
+            self.finish(*activation), review.CONCURRENT, status_code=409
+        )
+        self.assertUnchanged()
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.description, "writer")
+
 
 class PinRevisionTests(ConcurrentActivationTestCase):
     """A pin write holds the row of its revision until it commits, as an activation holds a candidate."""

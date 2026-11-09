@@ -30,12 +30,13 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from lxml import etree
+from rest_framework.test import APIClient
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.artwork.svg import transform_matrix
-from netbox_device_view.models import Association, DeviceView
+from netbox_device_view.models import Association, DefinitionRevision, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
 from .permissions import grant
@@ -217,6 +218,50 @@ class ArtworkTestCase(TestCase):
 
 
 class ArtworkTabTests(ArtworkTestCase):
+    def test_the_pages_and_the_api_embed_the_artwork_and_never_load_it_from_media(
+        self,
+    ):
+        self.activate()
+        grant(self.user, DefinitionRevision, "view")
+        api = APIClient()
+        api.force_authenticate(self.user)
+
+        def get(url, client=self.client):
+            response = client.get(url)
+            self.assertEqual(response.status_code, 200)
+            return response.content.decode()
+
+        files = self.revision.files.select_related("blob")
+        # {name: (content, a text that shows the artwork or its files)}
+        pages = {
+            "the tab": (self.tab(), "<svg"),
+            "the revision page": (
+                get(
+                    reverse(
+                        "plugins:netbox_device_view:definitionrevision",
+                        args=[self.revision.pk],
+                    )
+                ),
+                files[0].blob.digest,
+            ),
+            "the artwork API": (
+                get(
+                    reverse(
+                        "plugins-api:netbox_device_view-api:device_artwork",
+                        kwargs={"pk": self.device.pk},
+                    ),
+                    api,
+                ),
+                "<svg",
+            ),
+        }
+        for name, (content, shown) in pages.items():
+            with self.subTest(name):
+                self.assertIn(shown, content)
+                self.assertNotIn(settings.MEDIA_URL, content)
+                for file in files:
+                    self.assertNotIn(file.blob.name, content)
+
     def test_import_alone_changes_no_view(self):
         DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
         grant(self.user, DeviceView, "view")
