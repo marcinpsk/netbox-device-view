@@ -181,6 +181,30 @@ class SchematicTests(SchematicTestCase):
         psu = self.group(front, inventory.psu).find(f"{{{SVG_NS}}}a")
         self.assertEqual(geometry(psu.find(RECT)), (120, 2, 30, 40))
 
+    def test_a_schematic_module_body_shows_a_focus_ring_over_its_parts(self):
+        inventory = self.inventory
+        self.without_artwork(inventory.nm_type, inventory.sfp_type, inventory.psu_type)
+        front = self.front()
+        for modules in (
+            (inventory.nm1,),
+            (inventory.nm1, inventory.sfp),
+            # A turned bay: the schematic and its ring draw upright.
+            (inventory.psu,),
+        ):
+            body = self.group(front, *modules).find(f".//{{{SVG_NS}}}a")
+            # The ring comes after the parts and slots, so they do not cover it.
+            ring = body.getparent()[-1]
+            self.assertEqual(ring.get("class"), "dv-art-focus-ring dv-art-focus-frame")
+            # The stroke is inside the frame of the body.
+            half = float(ring.get("stroke-width")) / 2
+            x, y, width, height = geometry(body.find(RECT))
+            for value, expected in zip(
+                geometry(ring),
+                (x + half, y + half, width - 2 * half, height - 2 * half),
+                strict=True,
+            ):
+                self.assertAlmostEqual(value, expected, places=6)
+
     def test_a_schematic_module_has_a_focus_view_at_the_size_of_its_bay(self):
         inventory = self.inventory
         self.without_artwork(inventory.nm_type)
