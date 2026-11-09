@@ -33,7 +33,15 @@ from .module_samples import import_definitions
 from .permissions import grant
 from .test_api_artwork import ZERO_ROWS_YAML, ArtworkApiTestCase
 from .test_api_rendered_layout import SVG_YAML
-from .test_artwork_device_view import GRID, SVG_NS, TAB_URL, faces, ids, links
+from .test_artwork_device_view import (
+    GRID,
+    SVG_NS,
+    TAB_URL,
+    faces,
+    ids,
+    links,
+    references,
+)
 from .test_view_permissions import CARDS
 
 
@@ -408,6 +416,36 @@ class BrowserTests(MixedChassisTestCase):
                 )
                 [face] = self.get(self.sw5)["members"][-1]["artwork"]["faces"]
                 self.assertEqual(etree.fromstring(face["svg"]).get("viewBox"), view_box)
+
+
+class TwoSvgLayoutTests(MixedChassisTestCase):
+    """sw3 and sw6 have one SVG layout type, so one page shows two SVG layout panels."""
+
+    def setUp(self):
+        super().setUp()
+        self.sw6 = self.add_member("sw6", self.sw3.device_type, 6, 1)
+        Interface.objects.create(
+            device=self.sw6, name="GigabitEthernet1", type="1000base-t"
+        )
+
+    def test_each_svg_layout_panel_has_its_own_ids(self):
+        for page, content in (
+            ("tab", self.tab()),
+            ("device page panel", self.device_page_panel(self.sw1)),
+        ):
+            with self.subTest(page):
+                document = lxml.html.fromstring(content)
+                # NetBox repeats an id of its own page; the plugin ids start with "dv-".
+                counts = Counter(document.xpath("//@id[starts-with(., 'dv-')]"))
+                self.assertEqual([i for i, n in counts.items() if n > 1], [])
+                panels = document.xpath(
+                    "//div[contains(concat(' ', @class, ' '), ' dv-svg-wrapper ')]"
+                )
+                self.assertEqual(len(panels), 2)
+                for panel in panels:
+                    found = references(panel)
+                    self.assertTrue(found)
+                    self.assertLessEqual(set(found), set(panel.xpath(".//@id")))
 
 
 class HiddenMemberTests(MixedChassisTestCase):

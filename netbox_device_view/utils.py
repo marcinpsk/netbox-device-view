@@ -310,8 +310,9 @@ def prepare_svg(member, device_view, user, cable_colors=False):
     variant = _detect_variant(list(member.modules.restrict(user, "view")), layout)
     drawn = drawn_keys(layout, variant)
     states = device_components(member, user)
-    cells, details = _svg_cells(states, cable_colors, f"dv-s{member.pk}", drawn)
-    svg = render_svg(layout, variant_name=variant, cells=cells)
+    prefix = f"dv-s{member.pk}"
+    cells, details = _svg_cells(states, cable_colors, prefix, drawn)
+    svg = render_svg(layout, variant_name=variant, cells=cells, id_prefix=prefix)
     return (svg, tuple(details)) if states else (None, ())
 
 
