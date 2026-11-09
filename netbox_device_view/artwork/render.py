@@ -270,12 +270,10 @@ def _marks(connector) -> tuple[str | None, bool]:
     target = connector.target
     if target is None:
         return UNRESOLVED, False
-    if target.cable_status is not None:
-        outer = _CABLE_MARKS[target.cable_status]
-    elif target.marked_connected:
+    # A cable status that NetBox configuration adds has no mark.
+    outer = _CABLE_MARKS.get(target.cable_status)
+    if outer is None and target.marked_connected:
         outer = MARKED
-    else:
-        outer = None
     return outer, target.enabled is False
 
 

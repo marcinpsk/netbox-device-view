@@ -793,6 +793,16 @@ class ConnectivityFactsTests(ArtworkTestCase):
         )
         self.assertIsNotNone(found)
 
+    def test_a_cable_status_without_a_mark_still_draws_the_connector(self):
+        # NetBox can add cable statuses (FIELD_CHOICES); the legend has no mark for them.
+        self.activate()
+        self.cable()
+        Cable.objects.update(status="inspection")
+        Interface.objects.filter(pk=self.eth1.pk).update(mark_connected=True)
+        classes, _, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-marked")
+        self.assertIn("cable inspection", title)
+
     def test_path_completeness_is_separate_from_the_cable(self):
         self.activate()
         self.cable(
