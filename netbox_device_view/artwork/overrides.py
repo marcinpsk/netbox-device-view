@@ -33,6 +33,7 @@ def save_scoped(user, row, one_scope):
     with row.locked():
         # The lock holds the row of a device or module scope, so its visibility cannot change.
         check_scope(user, row.scope_field, row.scope)
+        row.lock_references()
         row.full_clean()
         row.save()
         if not type(row).objects.restrict(user, action).filter(pk=row.pk).exists():

@@ -11,8 +11,8 @@ from core.choices import ObjectChangeActionChoices
 from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceType, Module, ModuleBay, ModuleType
 from django.core import signing
-from django.core.exceptions import EmptyResultSet, PermissionDenied
-from django.db import IntegrityError, OperationalError, connections, router
+from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError, OperationalError, router
 from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
@@ -30,6 +30,7 @@ from ..models import (
     InstancePin,
     active_revisions,
     instance_scope,
+    share_rows,
     type_key,
     type_scope,
     write_transaction,
@@ -350,7 +351,7 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     candidates = functools.reduce(
         operator.or_, (Q(pk=p.revision.pk, digest=p.revision.digest) for p in pairs)
     )
-    shared = _share(
+    shared = share_rows(
         DefinitionRevision.objects.filter(candidates),
         router.db_for_write(DefinitionRevision),
     )
@@ -362,7 +363,7 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     _lock(Module.objects.filter(pk__in=affected.listed_module_ids))
     # The review reads the components and the module bays of each device that it names.
     for model in (*BINDABLE_MODELS, ModuleBay):
-        _share(model.objects.filter(device__in=affected.listed_device_ids), using)
+        share_rows(model.objects.filter(device__in=affected.listed_device_ids), using)
     review = _inspect(user, pairs)
     if (
         not review.ready
@@ -383,19 +384,6 @@ def _lock(queryset) -> None:
         .order_by("pk")
         .values_list("pk", flat=True)
     )
-
-
-def _share(queryset, using) -> set[int]:
-    """Lock the rows of a plain ``queryset`` FOR SHARE on ``using``, in primary key order; return their primary keys."""
-    query = queryset.using(using).order_by("pk").values_list("pk").query
-    try:
-        # Django has no FOR SHARE.
-        sql, params = query.get_compiler(using=using).as_sql()
-    except EmptyResultSet:
-        return set()
-    with connections[using].cursor() as cursor:
-        cursor.execute(f"{sql} FOR SHARE", params)
-        return {pk for (pk,) in cursor.fetchall()}
 
 
 def _write(user, target) -> Association | None:

@@ -5,8 +5,15 @@ from dataclasses import dataclass
 
 from core.signals import clear_events
 from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.db import DEFAULT_DB_ALIAS, OperationalError, models, router, transaction
+from django.core.exceptions import EmptyResultSet, ValidationError
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    OperationalError,
+    connections,
+    models,
+    router,
+    transaction,
+)
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
@@ -352,6 +359,19 @@ def write_transaction(model):
         raise
 
 
+def share_rows(queryset, using) -> set[int]:
+    """Lock the rows of a plain ``queryset`` FOR SHARE on ``using``, in primary key order; return their primary keys."""
+    query = queryset.using(using).order_by("pk").values_list("pk").query
+    try:
+        # Django has no FOR SHARE.
+        sql, params = query.get_compiler(using=using).as_sql()
+    except EmptyResultSet:
+        return set()
+    with connections[using].cursor() as cursor:
+        cursor.execute(f"{sql} FOR SHARE", params)
+        return {pk for (pk,) in cursor.fetchall()}
+
+
 def type_key(obj) -> tuple[str, int]:
     """Return (type field, type pk) of a device type or a module type, or of the type that ``obj`` names.
 
@@ -427,6 +447,9 @@ class ScopedRow:
             lock_types([hardware_type], using)
             self._lock_scope(hardware_type)
             yield
+
+    def lock_references(self):
+        """Lock the rows that a saved row refers to, after the lock of the scope."""
 
     def _lock_scope(self, hardware_type):
         """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
@@ -631,6 +654,16 @@ class InstancePin(ScopedRow, ChangeLoggedModel):
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:instancepin", args=[self.pk])
+
+    def lock_references(self):
+        if self.revision_id is None:
+            return
+        # The catalogue is on main; FOR SHARE keeps the revision from a delete until the commit.
+        revisions = DefinitionRevision.objects.filter(pk=self.revision_id)
+        if not share_rows(revisions, router.db_for_write(DefinitionRevision)):
+            raise ValidationError(
+                {"revision": _("The revision does not exist any more.")}
+            )
 
     def clean(self):
         super().clean()
