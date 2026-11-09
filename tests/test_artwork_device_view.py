@@ -255,12 +255,12 @@ class ArtworkTabTests(ArtworkTestCase):
             self.assertTrue(all(i.startswith(prefix) for i in ids(face)), ids(face))
             self.assertLessEqual(set(references(face)), set(ids(face)))
         front = faces(self.tab())[0]
+        # Each focus ring refers to its connector and to its filter.
+        locals_ = ("edge", "led", "metal", "con-eth1", "con-r1")
+        locals_ += ("-focus-con-eth1", "-focus-con-r1")
         self.assertEqual(
             sorted(set(references(front))),
-            [
-                f"dv-o-d{self.device.pk}-front-{local}"
-                for local in ("edge", "led", "metal")
-            ],
+            sorted(f"dv-o-d{self.device.pk}-front-{local}" for local in locals_),
         )
 
     def test_a_face_with_a_prefixed_svg_namespace_renders_as_svg(self):
@@ -382,6 +382,39 @@ class ArtworkTabTests(ArtworkTestCase):
         self.assertEqual(link.get("href"), self.eth1.get_absolute_url())
         self.assertEqual(link[0].text, "Interface eth1")
 
+    def test_a_connector_link_shows_a_focus_ring_around_the_connector(self):
+        self.activate()
+        front, rear = faces(self.tab())
+        prefix = f"dv-o-d{self.device.pk}"
+        filters = {
+            element.get("id"): element
+            for face in (front, rear)
+            for element in face.iter(f"{{{SVG_NS}}}filter")
+        }
+        rings = {}
+        for face in (front, rear):
+            for ident, link in links(face).items():
+                [ring] = link.findall(f"{{{SVG_NS}}}use[@class='dv-art-focus-ring']")
+                self.assertEqual(ring.get("href"), f"#{ident}")
+                self.assertEqual(ring.get("aria-hidden"), "true")
+                rings[ident] = filters[ring.get("filter")[5:-1]]
+        self.assertEqual(
+            set(rings),
+            {f"{prefix}-front-con-eth1", f"{prefix}-front-con-r1"}
+            | {f"{prefix}-rear-con-psu", f"{prefix}-rear-con-f1"},
+        )
+        ring = rings[f"{prefix}-rear-con-psu"]
+        # The ring is in the user space of con-psu, inside translate(400 0).
+        self.assertEqual(
+            [float(ring.get(name)) for name in ("x", "y", "width", "height")],
+            [-400, 0, 440, 44],
+        )
+        self.assertEqual(
+            ring.find(f"{{{SVG_NS}}}feFlood").get("class"), "dv-art-focus-flood"
+        )
+        # The ring draws only the outline; the link draws the connector.
+        self.assertNotIn("SourceGraphic", etree.tostring(ring, encoding="unicode"))
+
     def test_each_face_scrolls_with_the_keyboard(self):
         self.activate()
         viewports = re.findall(r'<div class="dv-art-viewport"[^>]*>', self.tab())
@@ -473,7 +506,9 @@ class CableOccupancyTests(ArtworkTestCase):
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector")
         self.assertIsNone(link.get("filter"))
-        self.assertEqual(list(front.iter(f"{{{SVG_NS}}}filter")), [])
+        rings = {ring.get("filter") for ring in front.iter(f"{{{SVG_NS}}}use")}
+        for element in front.iter(f"{{{SVG_NS}}}filter"):
+            self.assertIn(f"url(#{element.get('id')})", rings)
 
     def test_a_cable_that_the_user_cannot_view_is_no_occupancy(self):
         ObjectPermission.objects.filter(name__startswith="dcim.cable").delete()
