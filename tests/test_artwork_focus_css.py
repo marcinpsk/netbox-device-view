@@ -16,7 +16,12 @@ CSS = (
 # The focusable SVG elements: each shows an outline and its .dv-art-focus-ring child or later sibling.
 SVG_CLASSES = ("dv-art-connector", "dv-art-module-body")
 # The focusable HTML elements: an outline shows in every browser.
-HTML_CLASSES = ("dv-art-viewport",)
+HTML_CLASSES = (
+    "dv-art-viewport",
+    "dv-art-nav-item",
+    "dv-art-nav-record",
+    "dv-art-crumb",
+)
 _FOCUSED = re.compile(r"\.([\w-]+):focus-visible")
 
 
