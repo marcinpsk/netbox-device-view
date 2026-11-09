@@ -36,11 +36,13 @@
           </tbody>
         </table>
       </div>
+      {% if perms.netbox_device_view.view_bindingoverride %}
       <div class="card">
         <h2 class="card-header">{% trans "Binding overrides" %}</h2>
         {# The list view pages the overrides and shows only those that the user can view. #}
         {% htmx_table 'plugins:netbox_device_view:bindingoverride_list' definition_id=object.pk %}
       </div>
+      {% endif %}
     </div>
   </div>
 {% endblock %}
