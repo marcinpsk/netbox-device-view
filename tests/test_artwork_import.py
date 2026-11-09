@@ -460,6 +460,11 @@ class PermissionTests(ArtworkTestCase):
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
         self.assertContains(self.client.get(reverse(LIST_URL)), reverse(IMPORT_URL))
 
+    def test_an_importer_without_view_finds_the_import_in_the_menu(self):
+        self.grant(DefinitionRevision, "add")
+        self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
+        self.assertContains(self.client.get(reverse("home")), reverse(IMPORT_URL))
+
     def test_add_constraints_apply_to_the_imported_revisions(self):
         self.grant(DefinitionRevision, "view")
         self.grant(

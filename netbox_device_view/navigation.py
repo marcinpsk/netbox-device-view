@@ -36,4 +36,10 @@ menu_items = (
             ),
         ],
     ),
+    # An importer without the view permission reaches the import page here.
+    PluginMenuItem(
+        link="plugins:netbox_device_view:definitionrevision_import",
+        link_text="Import Artwork Bundle",
+        permissions=[PERMISSION],
+    ),
 )
