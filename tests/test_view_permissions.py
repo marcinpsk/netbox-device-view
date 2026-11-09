@@ -189,17 +189,17 @@ class ViewPermissionTests(TestCase):
 
     def test_a_hidden_cable_or_peer_does_not_connect_the_component(self):
         # Gi1 has a cable to peer1 eth-Gi1: it connects only when both are visible.
-        cable = ("dcim.view_cable", None)
-        peer = ("dcim.view_interface", {"device__name": "peer1"})
+        cable = (Cable, None)
+        peer = (Interface, {"device__name": "peer1"})
         gi1 = Interface.objects.get(device=self.sw1, name="Gi1")
+        granted = []
         for grants in ((), (cable,), (peer,), (cable, peer)):
-            ObjectPermission.objects.filter(
-                name__in=[
-                    f"{name} {constraints}" for name, constraints in (cable, peer)
-                ]
-            ).delete()
-            for name, constraints in grants:
-                self._grant(self.user, name, constraints)
+            for permission in granted:
+                permission.delete()
+            granted = [
+                grant(self.user, model, "view", constraints=constraints)
+                for model, constraints in grants
+            ]
             connected = len(grants) == 2
             with self.subTest(grants=grants):
                 self.assertEqual(
@@ -224,13 +224,12 @@ class ViewPermissionTests(TestCase):
         Cable(a_terminations=[rear], b_terminations=[cs0]).save()
         con0.refresh_from_db()
         self.assertEqual(list(con0.connected_endpoints), [cs0])
-        for name in ("dcim.view_consoleport", "dcim.view_consoleserverport"):
-            self._grant(self.user, name)
-        self._grant(self.user, "dcim.view_cable")
+        for model in (ConsolePort, ConsoleServerPort, Cable):
+            grant(self.user, model, "view")
 
         # The layout has no key of con0, so only the CSS grid draws it.
         self.assertEqual(self._page_state(RenderMode.CSS, con0), "enabled")
-        self._grant(self.user, "dcim.view_frontport")
+        grant(self.user, FrontPort, "view")
         self.assertEqual(self._page_state(RenderMode.CSS, con0), "connected")
 
     def test_api_ignores_a_module_that_the_user_cannot_view(self):
