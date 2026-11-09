@@ -327,8 +327,11 @@ class BrowserAgreementTests(ArtworkApiTestCase):
             ids(etree.fromstring(face["svg"]))
             for face in self.member()["artwork"]["faces"]
         ]
-        # The page adds an outline filter for the cabled connector.
-        page = [[i for i in face if "-occupied-" not in i] for face in page]
+        # The page adds the outline and the focus ring filters of its links.
+        page = [
+            [i for i in face if "-occupied-" not in i and "-focus-" not in i]
+            for face in page
+        ]
         self.assertEqual(
             [[i.replace("dv-o-", "dv-a-", 1) for i in face] for face in page], api
         )
