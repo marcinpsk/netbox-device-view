@@ -101,23 +101,20 @@
     pointer-events: all;
 }
 
-.dv-art-module-body:focus-visible {
+.dv-art-module-body:focus-visible,
+.dv-art-device-body:focus-visible {
     outline: 2px solid var(--bs-primary, #0d6efd);
     outline-offset: 1px;
 }
 
-/* The ring of a module body comes after the module artwork, so the artwork does not cover it. */
-.dv-art-module-body:focus-visible ~ .dv-art-focus-ring {
+/* The ring of a body comes after the artwork or the parts of the body, so they do not cover it. */
+.dv-art-module-body:focus-visible ~ .dv-art-focus-ring,
+.dv-art-device-body:focus-visible ~ .dv-art-focus-ring {
     display: inline;
 }
 
 .dv-art-focus-frame {
     stroke: var(--bs-primary, #0d6efd);
-}
-
-.dv-art-device-body:focus-visible {
-    outline: 2px solid var(--bs-primary, #0d6efd);
-    outline-offset: 1px;
 }
 
 /* A device or a module without artwork: a schematic of its components and slots. */

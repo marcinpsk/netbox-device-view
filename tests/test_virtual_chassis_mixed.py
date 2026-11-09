@@ -282,6 +282,24 @@ class BrowserTests(MixedChassisTestCase):
         texts = [text.text for text in face.iter(f"{{{SVG_NS}}}text")]
         self.assertIn("Slot 1", texts)
 
+    def test_the_schematic_member_body_shows_a_focus_ring_after_its_parts(self):
+        [face] = [
+            face
+            for face in faces(self.tab())
+            if face.get("viewBox") == "0 0 444.5 88.9"
+        ]
+        [body] = [
+            link
+            for link in face.iter(f"{{{SVG_NS}}}a")
+            if "dv-art-device-body" in classes(link)
+        ]
+        siblings = list(body.getparent())
+        # The page CSS shows the last sibling of the body when the body has the focus.
+        self.assertEqual(
+            classes(siblings[-1]), ["dv-art-focus-ring", "dv-art-focus-frame"]
+        )
+        self.assertLess(siblings.index(body), len(siblings) - 1)
+
     def test_a_slot_of_the_schematic_member_draws_a_module_with_its_artwork(self):
         admin = User.objects.get(username="admin")
         revision = import_definitions(admin)["acme/sfp-10g"]
@@ -561,8 +579,10 @@ class ApiTests(MixedChassisTestCase):
             page.update(
                 {ident: link.get("href") for ident, link in links(face).items()}
             )
-            # The page adds a mark filter for a connector with a fact to show.
-            page_ids.append([i for i in ids(face) if "-marks-" not in i])
+            # The page adds the mark and the focus ring filters of its connectors.
+            page_ids.append(
+                [i for i in ids(face) if "-marks-" not in i and "-focus-" not in i]
+            )
         api = {}
         api_ids = []
         for member in self.get()["members"]:
