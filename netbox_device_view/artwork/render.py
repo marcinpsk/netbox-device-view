@@ -50,6 +50,7 @@ _TITLE = f"{{{SVG_NS}}}title"
 _NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 # A generated local id starts with "-"; an author id starts with a letter.
 _OCCUPIED = "-occupied-"
+_FOCUS = "-focus-"
 # The outline width as a part of the larger face dimension.
 _OUTLINE = 1 / 300
 
@@ -178,14 +179,15 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
         element = elements.get(connector.key)
         if connector.target is None or element is None:
             continue
-        outline = None
-        if connector.target.occupied:
-            outline = _outline(
-                f"{prefix}{_OCCUPIED}{connector.key}", view_box, _user_space(element)
-            )
-        if outline is not None:
-            defs.append(outline)
-        _link(element, connector.target, outline)
+        outline = ring = None
+        space = _filter_space(view_box, _user_space(element))
+        if space is not None:
+            if connector.target.occupied:
+                outline = _outline(f"{prefix}{_OCCUPIED}{connector.key}", *space)
+                defs.append(outline)
+            ring = _focus_ring(f"{prefix}{_FOCUS}{connector.key}", *space)
+            defs.append(ring)
+        _link(element, connector.target, outline, ring)
     if len(defs):
         root.insert(0, defs)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
@@ -237,7 +239,7 @@ def _style_token(token, prefix: str) -> str:
     return tinycss2.serialize([token])
 
 
-def _link(element, state: ComponentState, outline):
+def _link(element, state: ComponentState, outline, ring):
     """Wrap the connector element in a link to its component."""
     component = state.component
     link = etree.Element(f"{{{SVG_NS}}}a")
@@ -256,6 +258,18 @@ def _link(element, state: ComponentState, outline):
     link.tail, element.tail = element.tail, None
     element.addprevious(link)
     link.append(element)
+    if ring is not None:
+        # WebKit paints no outline on an SVG element, so the page CSS shows this ring on focus.
+        etree.SubElement(
+            link,
+            f"{{{SVG_NS}}}use",
+            {
+                "class": "dv-art-focus-ring",
+                "href": f"#{element.get('id')}",
+                "filter": f"url(#{ring.get('id')})",
+                "aria-hidden": "true",
+            },
+        )
 
 
 def _xml_text(value: str) -> str:
@@ -273,10 +287,11 @@ def _user_space(element):
     return matrix
 
 
-def _outline(ident: str, view_box, matrix) -> etree._Element | None:
-    """Return the filter that outlines a connector, in the user space that ``matrix`` maps to the face.
+def _filter_space(view_box, matrix):
+    """Return (region, radii) of a filter in the user space that ``matrix`` maps to the face.
 
-    None when the matrix cannot be inverted: the connector is not drawn.
+    The region covers the face, and the radii are the outline width on each
+    local axis. None when the matrix cannot be inverted: the connector is not drawn.
     """
     a, b, c, d, e, f = matrix
     determinant = a * d - b * c
@@ -299,7 +314,12 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
     radii = (width_on_face / math.hypot(a, b), width_on_face / math.hypot(c, d))
     if not all(math.isfinite(value) for value in (*region, *radii)):
         return None
-    outline = etree.Element(
+    return region, radii
+
+
+def _grown(ident: str, region, radii, flood_class, flood_color) -> etree._Element:
+    """Return a filter whose result "outline" is the source grown by one outline width, in the flood colour."""
+    element = etree.Element(
         f"{{{SVG_NS}}}filter",
         id=ident,
         filterUnits="userSpaceOnUse",
@@ -308,7 +328,7 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
         ),
     )
     etree.SubElement(
-        outline,
+        element,
         f"{{{SVG_NS}}}feMorphology",
         {
             "in": "SourceAlpha",
@@ -317,17 +337,35 @@ def _outline(ident: str, view_box, matrix) -> etree._Element | None:
             "result": "grown",
         },
     )
+    # The page CSS gives the flood the colour of the theme.
     etree.SubElement(
-        outline,
+        element,
         f"{{{SVG_NS}}}feFlood",
-        {"class": "dv-art-occupied-flood", "flood-color": "#2fb344"},
+        {"class": flood_class, "flood-color": flood_color},
     )
     etree.SubElement(
-        outline,
+        element,
         f"{{{SVG_NS}}}feComposite",
         {"in2": "grown", "operator": "in", "result": "outline"},
     )
+    return element
+
+
+def _outline(ident: str, region, radii) -> etree._Element:
+    """Return the filter that draws a connector with its occupied outline."""
+    outline = _grown(ident, region, radii, "dv-art-occupied-flood", "#2fb344")
     merge = etree.SubElement(outline, f"{{{SVG_NS}}}feMerge")
     for source in ("outline", "SourceGraphic"):
         etree.SubElement(merge, f"{{{SVG_NS}}}feMergeNode", {"in": source})
     return outline
+
+
+def _focus_ring(ident: str, region, radii) -> etree._Element:
+    """Return the filter that draws only the ring around a connector, without the connector."""
+    ring = _grown(ident, region, radii, "dv-art-focus-flood", "#0d6efd")
+    etree.SubElement(
+        ring,
+        f"{{{SVG_NS}}}feComposite",
+        {"in": "outline", "in2": "SourceAlpha", "operator": "out"},
+    )
+    return ring
