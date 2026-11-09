@@ -47,7 +47,9 @@ _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
 _TITLE = f"{{{SVG_NS}}}title"
 # XML 1.0 does not allow these characters, and lxml refuses them; NetBox names can hold them.
-_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+_NOT_XML = dict.fromkeys(
+    [*range(0x9), 0xB, 0xC, *range(0xE, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF]
+)
 # A generated local id starts with "-"; an author id starts with a letter.
 _OCCUPIED = "-occupied-"
 _FOCUS = "-focus-"
@@ -274,7 +276,7 @@ def _link(element, state: ComponentState, outline, ring):
 
 def _xml_text(value: str) -> str:
     """Return ``value`` without the characters that XML 1.0 does not allow."""
-    return _NOT_XML.sub("", value)
+    return value.translate(_NOT_XML)
 
 
 def _user_space(element):
