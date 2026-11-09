@@ -254,6 +254,31 @@ class LinkTests(CompositionTestCase):
             # The artwork lets a click through to the body, except on a connector.
             self.assertEqual(art(group).get("class"), "dv-art-module-art")
 
+    def test_a_module_body_shows_a_focus_ring_over_its_artwork_in_its_bay(self):
+        front = self.front()
+        for path in (
+            (self.inventory.nm1,),
+            (self.inventory.nm1, self.inventory.sfp),
+            (self.inventory.fan,),
+        ):
+            group = self.group(front, *path)
+            [body] = group.findall(f"{{{SVG_NS}}}a")
+            # The ring comes after the artwork, so the artwork does not cover it.
+            ring = group[-1]
+            self.assertEqual(ring.get("class"), "dv-art-focus-ring dv-art-focus-frame")
+            self.assertLess(list(group).index(body), len(group) - 1)
+            self.assertEqual(ring.get("pointer-events"), "none")
+            self.assertEqual(ring.get("aria-hidden"), "true")
+            # The stroke is inside the bay, so the clip of the group keeps it.
+            half = float(ring.get("stroke-width")) / 2
+            x, y, width, height = map(float, clip_rect(front, group))
+            for name, value in zip(
+                ("x", "y", "width", "height"),
+                (x + half, y + half, width - 2 * half, height - 2 * half),
+                strict=True,
+            ):
+                self.assertAlmostEqual(float(ring.get(name)), value, places=6)
+
     def test_a_module_without_artwork_is_an_outline_with_its_name_and_link(self):
         group = self.group(self.front(), self.inventory.fan)
         [body] = group.findall(f"{{{SVG_NS}}}a")
