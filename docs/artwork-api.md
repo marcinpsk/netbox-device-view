@@ -74,7 +74,7 @@ The artwork needs no permission on the artwork association or the revision. Comp
             "placement": {"x": 300, "y": 5, "width": 100, "height": 30, "rotate": 0},
             "element_id": "dv-a-d12-m31",
             "connectors": [
-              {"key": "con-p1", "face": "installed", "label": null, "element_id": "dv-a-d12-m31-installed-con-p1", "bindings": […]}
+              {"key": "con-p1", "face": "installed", "label": null, "element_id": "dv-a-d12-m31-installed-con-p1", "bindings": []}
             ],
             "warnings": []
           }
