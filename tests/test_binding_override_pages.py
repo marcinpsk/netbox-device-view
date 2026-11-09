@@ -599,6 +599,20 @@ class ListAndDetailTests(OverridePageTestCase):
         self.assertIn(self.type_override.get_absolute_url(), table)
         self.assertNotIn(self.device_override.get_absolute_url(), table)
 
+    def test_the_definition_page_has_no_override_card_without_the_view_permission(
+        self,
+    ):
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.bindingoverride"
+        ).delete()
+        grant(self.user, VisualDefinition, "view")
+        page = self.client.get(
+            reverse(DEFINITION_URL, args=[self.revision.definition.pk])
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, "Binding overrides")
+        self.assertNotContains(page, reverse(LIST_URL))
+
     def test_the_definition_page_shows_the_overrides_one_page_at_a_time(self):
         overrides = [self.type_override, self.device_override]
         for scope, key in (
