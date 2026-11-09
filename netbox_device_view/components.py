@@ -267,17 +267,25 @@ def component_states(components, user):
 
     pks_by_model = defaultdict(set)
     for _component, link_peers, endpoints in links:
-        for peer in endpoints or link_peers:
+        for peer in (*endpoints, *link_peers):
             pks_by_model[type(peer)].add(peer.pk)
     visible_peers = _visible(pks_by_model, user)
 
+    def visible(peers):
+        return [peer for peer in peers if (type(peer), peer.pk) in visible_peers]
+
     return [
-        _state(*link, (Cable, link[0].cable_id) in visible_cables, visible_peers)
-        for link in links
+        _state(
+            component,
+            visible(link_peers),
+            visible(endpoints),
+            (Cable, component.cable_id) in visible_cables,
+        )
+        for component, link_peers, endpoints in links
     ]
 
 
-def _state(component, link_peers, endpoints, cable_visible, visible_peers):
+def _state(component, link_peers, endpoints, cable_visible):
     cable = component.cable if cable_visible else None
     # A hidden cable is no cable: it does not connect the component.
     linked = cable is not None or component.cable_id is None
@@ -307,11 +315,7 @@ def _state(component, link_peers, endpoints, cable_visible, visible_peers):
             if isinstance(component, PathEndpoint)
             else None
         ),
-        peers=[
-            peer
-            for peer in endpoints or link_peers
-            if (type(peer), peer.pk) in visible_peers
-        ],
+        peers=endpoints or link_peers,
         connection_state=connection_state,
     )
 
