@@ -1,6 +1,7 @@
 """Each text that the artwork renderer gives lxml goes through _xml_text, as lxml refuses characters that XML does not allow."""
 
 import ast
+import sys
 from pathlib import Path
 
 RENDER = Path(__file__).resolve().parent.parent / "netbox_device_view/artwork/render.py"
@@ -45,3 +46,19 @@ def test_the_guard_finds_a_text_without_xml_text():
         "SubElement(f, 'title').text = f'{name}'\n"
     )
     assert unfiltered_text(source) == [1, 2, 5]
+
+
+def test_xml_text_keeps_each_character_that_lxml_accepts_and_drops_the_others():
+    from lxml import etree
+
+    from netbox_device_view.artwork.render import _xml_text
+
+    element = etree.Element("text")
+    for code in range(sys.maxunicode + 1):
+        character = chr(code)
+        try:
+            element.text = character
+            accepted = True
+        except ValueError:
+            accepted = False
+        assert _xml_text(character) == (character if accepted else ""), hex(code)
