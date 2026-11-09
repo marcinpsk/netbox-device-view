@@ -302,7 +302,7 @@ class ValidationTests(OverridePageTestCase):
     def test_more_rows_than_a_manifest_connector_allows_are_rejected(self):
         response = self.add(*[(ETH, f"eth{n}") for n in range(17)], device=self.device)
 
-        self.assertContains(response, "16")
+        self.assertContains(response, "Please submit at most 16 forms.")
         self.assertFalse(BindingOverride.objects.exists())
 
     def test_a_scope_that_the_user_cannot_view_is_rejected(self):
