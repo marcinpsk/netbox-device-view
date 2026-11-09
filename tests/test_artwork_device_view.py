@@ -870,6 +870,17 @@ class ConnectivityFactsTests(ArtworkTestCase):
             wrapped.find(f"{{{SVG_NS}}}title").text, "No component: Power port PSU1"
         )
 
+    def test_an_unresolved_connector_button_shows_a_focus_ring(self):
+        self.psu.delete()
+        self.activate()
+        page = faces(self.tab())[1]
+        ident = f"dv-o-d{self.device.pk}-rear-con-psu"
+        [ring] = wrapper(page, ident).findall(
+            f"{{{SVG_NS}}}use[@class='dv-art-focus-ring']"
+        )
+        self.assertEqual(ring.get("href"), f"#{ident}")
+        self.assertIn(ring.get("filter")[5:-1], ids(page))
+
     def test_two_found_bindings_have_their_own_mark(self):
         activate_second_binding(self, "{component: consoleport, name: eth1}")
         classes, several, title = self.connector()

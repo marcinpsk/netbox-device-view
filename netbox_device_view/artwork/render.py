@@ -287,11 +287,8 @@ def _mark_connectors(root, prefix, connectors, elements):
                     outer, inner
                 )
                 defs.append(marks)
-            if connector.target is not None:
-                ring = _MarkFilter(
-                    f"{prefix}{_FOCUS}{connector.key}", *space
-                ).focus_ring()
-                defs.append(ring)
+            ring = _MarkFilter(f"{prefix}{_FOCUS}{connector.key}", *space).focus_ring()
+            defs.append(ring)
         _wrap(element, connector, prefix, outer, inner, marks, ring)
     if len(defs):
         root.insert(0, defs)
