@@ -1,5 +1,6 @@
 """The documentation states limits and versions that the code defines; keep them equal."""
 
+import json
 import re
 from pathlib import Path
 
@@ -184,3 +185,9 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         in text
     )
     assert f"differ by more than {placement.SIZE_TOLERANCE} mm" in text
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / "docs").glob("*.md")), ids=str)
+def test_each_json_example_parses(path):
+    for example in re.findall(r"```json\n(.*?)```", path.read_text(), re.DOTALL):
+        json.loads(example)
