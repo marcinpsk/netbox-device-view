@@ -185,6 +185,8 @@ class SchematicTests(SchematicTestCase):
         inventory = self.inventory
         self.without_artwork(inventory.nm_type, inventory.sfp_type, inventory.psu_type)
         front = self.front()
+        # A small body keeps the outline width of the chassis face, so its ring shows.
+        chassis_width = max(map(float, front.get("viewBox").split()[2:])) / 300
         for modules in (
             (inventory.nm1,),
             (inventory.nm1, inventory.sfp),
@@ -195,6 +197,10 @@ class SchematicTests(SchematicTestCase):
             # The ring comes after the parts and slots, so they do not cover it.
             ring = body.getparent()[-1]
             self.assertEqual(ring.get("class"), "dv-art-focus-ring dv-art-focus-frame")
+            if len(modules) == 1:
+                self.assertAlmostEqual(
+                    float(ring.get("stroke-width")), chassis_width, places=6
+                )
             # The stroke is inside the frame of the body.
             half = float(ring.get("stroke-width")) / 2
             x, y, width, height = geometry(body.find(RECT))

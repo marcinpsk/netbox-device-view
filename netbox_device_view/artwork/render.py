@@ -914,7 +914,9 @@ class _Composer:
             )
         target.append(parts)
         if not self.plain:
-            self.focus_ring(target, rect, width)
+            # The ring keeps the outline width of the parent face, so it shows on a small body.
+            scale = 1 if target is group else math.hypot(*scope.matrix[:2])
+            self.focus_ring(target, rect, scope.outline_width * scale)
         return prefix, frozenset(elements), connectors
 
     def not_recorded(self, target, rect, width, frame=True):
