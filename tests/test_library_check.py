@@ -273,6 +273,13 @@ class LibraryCheckTests(SimpleTestCase):
             ],
         )
 
+    def test_the_path_length_limit_counts_the_artwork_directory(self):
+        path = f"ACME/SW-24/{'d' * 200}/{'x' * 34}.svg"
+        self.assertEqual(len(path), 250)
+        write(self.library, {f"artwork/{path}": "<svg/>"})
+        _, problems = self.check(str(self.library))
+        self.assertEqual(problems, [f"artwork/{path}: not a safe relative path."])
+
     def test_a_community_type_that_is_not_a_type_file_is_an_error(self):
         write(
             self.community,
