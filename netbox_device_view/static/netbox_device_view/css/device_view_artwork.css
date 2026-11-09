@@ -104,6 +104,15 @@
     outline-offset: 1px;
 }
 
+/* The ring of a module body comes after the module artwork, so the artwork does not cover it. */
+.dv-art-module-body:focus-visible ~ .dv-art-focus-ring {
+    display: inline;
+}
+
+.dv-art-focus-frame {
+    stroke: var(--bs-primary, #0d6efd);
+}
+
 /* A module without artwork: an outline of its bay with the name of its type. */
 .dv-art-outline rect {
     fill: var(--tblr-bg-surface-secondary);

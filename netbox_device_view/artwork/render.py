@@ -497,6 +497,8 @@ class _Composer:
                 )
             if drawn is None:
                 self.outline(group, bay, module)
+            if not self.plain:
+                self.focus_ring(group, bay)
         prefix, ids = drawn or ("", frozenset())
         self.modules.insert(
             index,
@@ -606,6 +608,29 @@ class _Composer:
         )
         etree.SubElement(body, _TITLE).text = _xml_text(f"Module {part_label(module)}")
         return body
+
+    def focus_ring(self, group, bay):
+        """Draw the focus ring of the module body last in its group and inside its bay, so no artwork or clip hides it."""
+        half = self.outline_width / 2
+        inside = Rect(
+            bay.x + half,
+            bay.y + half,
+            max(bay.width - 2 * half, 0),
+            max(bay.height - 2 * half, 0),
+        )
+        etree.SubElement(
+            group,
+            _RECT,
+            {
+                **_rect_attributes(inside),
+                "class": "dv-art-focus-ring dv-art-focus-frame",
+                "fill": "none",
+                "stroke": "#0d6efd",
+                "stroke-width": _number(self.outline_width),
+                "pointer-events": "none",
+                "aria-hidden": "true",
+            },
+        )
 
     def outline(self, group, bay, module):
         """Draw the module as an outline of its bay with the name of its type."""
