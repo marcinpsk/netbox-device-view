@@ -23,7 +23,7 @@ from netbox_device_view.artwork.svg import IDENTITY, multiply, transform_matrix
 from netbox_device_view.details import details_id
 from netbox_device_view.models import Association
 
-from .module_samples import Inventory
+from .module_samples import CHASSIS_SVG, Inventory
 from .permissions import grant
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, ids, links, references
@@ -210,6 +210,25 @@ class SchematicTests(SchematicTestCase):
                 strict=True,
             ):
                 self.assertAlmostEqual(value, expected, places=6)
+
+    def test_the_focus_ring_of_a_schematic_in_a_flat_bay_has_an_area(self):
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace(
+                'x="40" y="4" width="20" height="36"',
+                'x="40" y="4" width="10" height="1"',
+            ),
+        )
+        body = self.group(self.front(), self.inventory.fan).find(f".//{{{SVG_NS}}}a")
+        ring = body.getparent()[-1]
+        width, height, stroke = (
+            float(ring.get(name)) for name in ("width", "height", "stroke-width")
+        )
+        self.assertGreater(width, 0)
+        self.assertGreater(height, 0)
+        # The stroke stays inside the bay.
+        self.assertAlmostEqual(height + stroke, 1, places=6)
 
     def test_a_schematic_module_has_a_focus_view_at_the_size_of_its_bay(self):
         inventory = self.inventory
