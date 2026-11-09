@@ -279,6 +279,21 @@ class LinkTests(CompositionTestCase):
             ):
                 self.assertAlmostEqual(float(ring.get(name)), value, places=6)
 
+    def test_the_focus_ring_of_a_module_in_a_narrow_bay_has_an_area(self):
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace('x="320" y="7" width="100"', 'x="320" y="7" width="1"'),
+        )
+        ring = self.group(self.front(), self.inventory.nm2)[-1]
+        width, height, stroke = (
+            float(ring.get(name)) for name in ("width", "height", "stroke-width")
+        )
+        self.assertGreater(width, 0)
+        self.assertGreater(height, 0)
+        # The stroke stays inside the bay.
+        self.assertAlmostEqual(width + stroke, 1, places=6)
+
     def test_a_module_without_artwork_is_an_outline_with_its_name_and_link(self):
         group = self.group(self.front(), self.inventory.fan)
         [body] = group.findall(f"{{{SVG_NS}}}a")

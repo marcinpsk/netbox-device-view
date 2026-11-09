@@ -611,12 +611,10 @@ class _Composer:
 
     def focus_ring(self, group, bay):
         """Draw the focus ring of the module body last in its group and inside its bay, so no artwork or clip hides it."""
-        half = self.outline_width / 2
+        # A narrow bay gets a thinner ring, so the ring rect keeps an area.
+        width = min(self.outline_width, bay.width / 3, bay.height / 3)
         inside = Rect(
-            bay.x + half,
-            bay.y + half,
-            max(bay.width - 2 * half, 0),
-            max(bay.height - 2 * half, 0),
+            bay.x + width / 2, bay.y + width / 2, bay.width - width, bay.height - width
         )
         etree.SubElement(
             group,
@@ -626,7 +624,7 @@ class _Composer:
                 "class": "dv-art-focus-ring dv-art-focus-frame",
                 "fill": "none",
                 "stroke": "#0d6efd",
-                "stroke-width": _number(self.outline_width),
+                "stroke-width": _number(width),
                 "pointer-events": "none",
                 "aria-hidden": "true",
             },
