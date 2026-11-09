@@ -94,7 +94,7 @@
 
 /* No-color (patch cable with no colour set) */
 .dv-port.nocolor .dv-port-rect {
-    fill: url(#dv-nocolor-pattern);
+    fill: var(--dv-nocolor-fill);
 }
 
 /* Partial connection dot overlay — small warning circle in the top-right corner.

@@ -12,7 +12,7 @@ Public API
   css = render_css(layout)
 
   # Render a NormalizedLayout → SVG string (SVG renderer)
-  svg = render_svg(layout)
+  svg = render_svg(layout, id_prefix="dv-s1")
 
   # Validate YAML and return a list of error strings (empty = valid)
   errors = validate_yaml(yaml_text)
@@ -21,7 +21,7 @@ Public API
   css = get_css_for_device_view(device_view_obj)
 
   # Get SVG from a DeviceView record (requires YAML layout)
-  svg = get_svg_for_device_view(device_view_obj)
+  svg = get_svg_for_device_view(device_view_obj, id_prefix="dv-s1")
 """
 
 from .legacy import wrap_legacy_css
@@ -93,7 +93,9 @@ def get_css_for_device_view(device_view) -> str:
     return css.replace("<", "\\3c ")
 
 
-def get_svg_for_device_view(device_view, variant_name=None, cells=None) -> str:
+def get_svg_for_device_view(
+    device_view, variant_name=None, cells=None, *, id_prefix
+) -> str:
     """
     Return an SVG string for a DeviceView record.
 
@@ -110,6 +112,8 @@ def get_svg_for_device_view(device_view, variant_name=None, cells=None) -> str:
     cells : dict | None
         ``{face: {key: PortCell}}``, the state markup of each port (see
         ``renderers.svg.render``).
+    id_prefix : str
+        The prefix of the panel ids on the page (see ``renderers.svg.render``).
 
     Returns
     -------
@@ -120,4 +124,6 @@ def get_svg_for_device_view(device_view, variant_name=None, cells=None) -> str:
     if not device_view.has_yaml_layout:
         return ""
     layout = parse(device_view.yaml_layout)
-    return _render_svg(layout, variant_name=variant_name, cells=cells)
+    return _render_svg(
+        layout, variant_name=variant_name, cells=cells, id_prefix=id_prefix
+    )
