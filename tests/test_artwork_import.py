@@ -212,6 +212,21 @@ class UploadTests(ArtworkTestCase):
         self.assertFalse(VisualDefinition.objects.exists())
         self.assertEqual(self.stored_files(), [])
 
+    def test_a_member_name_that_is_not_utf8_fails(self):
+        # zipfile decodes a name with the UTF-8 flag in the directory and again in the local header.
+        data = bundle({**definition(DEVICE_DIR, DEVICE_FILES), "é.svg": "x"})
+        local = data.replace("é".encode(), b"\xff\xfe", 1)
+        for damaged in (data.replace("é".encode(), b"\xff\xfe"), local):
+            with self.subTest(everywhere=damaged != local):
+                self.assertEqual(self.upload(damaged).status_code, 400)
+                response = self.api().post(
+                    reverse(API_UPLOAD),
+                    {"bundle": SimpleUploadedFile("api.zip", damaged)},
+                    format="multipart",
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(DefinitionRevision.objects.exists())
+
     def test_one_bad_definition_fails_the_whole_bundle(self):
         entries = {**UNSAFE, **definition("artwork/ACME/NM-2X", MODULE_FILES)}
         self.assertEqual(self.upload(bundle(entries)).status_code, 400)

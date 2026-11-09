@@ -180,6 +180,8 @@ def read_zip(fileobj) -> list[tuple[str, bytes]]:
         _raise([Issue(BUNDLE, None, "not a zip file.")])
     except NotImplementedError as exc:
         _raise([Issue(BUNDLE, None, f"unsupported zip feature ({exc}).")])
+    except UnicodeDecodeError:
+        _raise([Issue(BUNDLE, None, "an archive member name is not valid UTF-8.")])
     with archive:
         infos = archive.infolist()
         if issues := _archive_issues(infos):
@@ -196,7 +198,12 @@ def read_zip(fileobj) -> list[tuple[str, bytes]]:
                     if member.read(1):
                         raise zipfile.BadZipFile("more data than the declared size")
                 entries.append((info.filename, data))
-            except (zipfile.BadZipFile, zlib.error, EOFError) as exc:
+            except (
+                zipfile.BadZipFile,
+                zlib.error,
+                EOFError,
+                UnicodeDecodeError,
+            ) as exc:
                 _raise([Issue(info.filename, None, f"damaged archive member ({exc}).")])
             except NotImplementedError as exc:
                 _raise(
