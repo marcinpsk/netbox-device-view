@@ -29,12 +29,18 @@ from django.core.exceptions import ValidationError
 from django.db import connection, connections, transaction
 from django.db.models.signals import post_save
 from django.test import Client, TransactionTestCase, override_settings
+from django.urls import reverse
 from users.models import User
 
 from netbox_device_view.artwork import overrides, pins
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_key, lock_types
-from netbox_device_view.models import Association, BindingOverride, InstancePin
+from netbox_device_view.models import (
+    Association,
+    BindingOverride,
+    DefinitionRevision,
+    InstancePin,
+)
 
 from .artwork_samples import MODULE_FILES, bundle, definition
 from .test_artwork_activation import NEWER, REVIEW_AGAIN, review_url, token_of
@@ -173,16 +179,16 @@ class ConcurrentActivationTestCase(TransactionTestCase):
         self.assertNotIn("error", results)
         return results["value"]
 
-    def pause_activation(self, name="activate"):
-        """Hold the transaction of the named thread open after it writes the association."""
+    def pause_activation(self, name="activate", sender=Association):
+        """Hold the transaction of the named thread open after it writes a row of ``sender``."""
 
         def pause(sender, **kwargs):
             if threading.current_thread().name == name:
                 self.paused.set()
                 self.release.wait(WAIT_SECONDS)
 
-        post_save.connect(pause, sender=Association, weak=False)
-        self.addCleanup(post_save.disconnect, pause, sender=Association)
+        post_save.connect(pause, sender=sender, weak=False)
+        self.addCleanup(post_save.disconnect, pause, sender=sender)
 
     def assertUnchanged(self):
         self.association.refresh_from_db()
@@ -445,3 +451,44 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
         self.assertEqual(self.finish(*first).status_code, 302)
         self.assertContains(self.finish(*second), REVIEW_AGAIN, status_code=409)
         self.assertActivated()
+
+
+class PinRevisionTests(ConcurrentActivationTestCase):
+    """A pin write holds the row of its revision until it commits, as an activation holds a candidate."""
+
+    def pin_in_thread(self, revision):
+        data = {"device": self.device.pk, "revision": revision}
+        return self.start(
+            "pin",
+            lambda: self.clients[0].post(
+                reverse("plugins-api:netbox_device_view-api:instancepin-list"),
+                data,
+                content_type="application/json",
+            ),
+        )
+
+    def test_a_pin_write_that_waits_for_a_delete_of_its_revision_is_rejected(self):
+        revision = self.newer.pk
+        with transaction.atomic():
+            self.newer.delete()
+            pin = self.pin_in_thread(revision)
+            self.wait_for_a_waiter(pin[0])
+
+        response = self.finish(*pin)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("The revision does not exist any more.", str(response.json()))
+        self.assertFalse(InstancePin.objects.exists())
+
+    def test_a_delete_of_the_revision_waits_for_a_pin_write(self):
+        revision = self.newer.pk
+        self.pause_activation("pin", InstancePin)
+        pin = self.pin_in_thread(revision)
+        self.assertTrue(self.paused.wait(WAIT_SECONDS))
+        delete = self.start("delete", self.newer.delete)
+        self.wait_for_a_waiter(delete[0])
+        self.release.set()
+
+        self.assertEqual(self.finish(*pin).status_code, 201)
+        delete[0].join(WAIT_SECONDS)
+        self.assertEqual(InstancePin.objects.get().revision_id, revision)
+        self.assertTrue(DefinitionRevision.objects.filter(pk=revision).exists())
