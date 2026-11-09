@@ -98,7 +98,8 @@ def _source_issues(files: list[tuple[str, Path]]) -> list[Issue]:
         return [Issue(ARTWORK, None, message)]
     issues = []
     for path, size in sizes.items():
-        if not is_safe_path(path):
+        # The Data Source import checks the path below the prefix, with the artwork directory.
+        if not is_safe_path(f"{ARTWORK}/{path}"):
             issues.append(Issue(f"{ARTWORK}/{path}", None, "not a safe relative path."))
         elif size > MAX_SVG_BYTES:
             message = f"larger than {MAX_SVG_BYTES} bytes."
