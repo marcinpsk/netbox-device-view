@@ -38,7 +38,7 @@ from netbox_device_view.layout.renderers.svg import (
 
 
 def _render(yaml_text: str) -> str:
-    return render(parse(yaml_text))
+    return render(parse(yaml_text), id_prefix="dv-s1")
 
 
 def _lines(svg: str) -> list[str]:
@@ -534,13 +534,17 @@ variants:
 
     def test_variant_ports_shown_when_variant_active(self):
         # With variant_name passed, merged (base + variant) ports are rendered.
-        svg = render(parse(self.VARIANT_YAML), variant_name="MyModule")
+        svg = render(
+            parse(self.VARIANT_YAML), variant_name="MyModule", id_prefix="dv-s1"
+        )
         assert "gi0-" in svg
         assert "te1-" in svg
 
     def test_variant_active_no_hidden_layers(self):
         # Even with variant_name active, no hidden wrapper groups.
-        svg = render(parse(self.VARIANT_YAML), variant_name="MyModule")
+        svg = render(
+            parse(self.VARIANT_YAML), variant_name="MyModule", id_prefix="dv-s1"
+        )
         assert 'class="dv-base"' not in svg
         assert 'class="dv-variant' not in svg
         assert 'style="display:none"' not in svg
@@ -553,7 +557,7 @@ variants:
             "      - {key: p1, at: {col: 1}}\n      - {key: p1, at: {col: 2}}\n"
             "variants:\n  V:\n    elements: [{key: p2, at: {col: 3}}]\n"
         )
-        svg = render(layout, variant_name=variant_name)
+        svg = render(layout, variant_name=variant_name, id_prefix="dv-s1")
         assert svg.count('class="dv-port-rect"') == (2 if variant_name is None else 3)
 
 
@@ -582,7 +586,7 @@ views:
   rear:
     copy_from: front
 """)
-        svg = render_view_svg(layout, face="front")
+        svg = render_view_svg(layout, face="front", id_prefix="dv-s1")
         assert 'data-face="front"' in svg
         assert 'data-face="rear"' not in svg
 
@@ -605,7 +609,7 @@ views:
   rear:
     copy_from: front
 """)
-        svg = render_view_svg(layout, face="rear")
+        svg = render_view_svg(layout, face="rear", id_prefix="dv-s1")
         assert 'data-face="rear"' in svg
         assert 'data-face="front"' not in svg
 
@@ -626,7 +630,7 @@ views:
           count: 4
           pattern: all
 """)
-        svg = render_view_svg(layout, face="rear")
+        svg = render_view_svg(layout, face="rear", id_prefix="dv-s1")
         assert svg == ""
 
 
@@ -752,7 +756,7 @@ class TestYAMLExamplesRenderToSVG:
 
         repo_root = pathlib.Path(__file__).parent.parent
         yaml_text = (repo_root / example_path).read_text()
-        svg = render(parse(yaml_text))
+        svg = render(parse(yaml_text), id_prefix="dv-s1")
         assert "<svg" in svg
         assert "</svg>" in svg
         assert len(svg) > 100  # non-trivial output
@@ -809,7 +813,7 @@ views:
 """
         layout = parse(yaml)
         css = render_css(layout)
-        svg = render(layout)
+        svg = render(layout, id_prefix="dv-s1")
         # All 6 ports should appear in both outputs
         for i in range(1, 7):
             key = f"gi0-{i}"
@@ -837,7 +841,7 @@ class TestHTMLEscaping:
         )
         view = LayoutView(face=Face.FRONT, canvas=canvas, elements=[el])
         layout.views["front"] = view
-        svg = render(layout)
+        svg = render(layout, id_prefix="dv-s1")
         # Raw < > & must NOT appear in attribute values
         assert "<test>" not in svg
         assert '&"' not in svg or "&amp;" in svg or "&#" in svg
@@ -868,6 +872,6 @@ def test_css_classes_of_a_lenient_local_layout_are_escaped():
         "views:\n  front:\n    elements:\n"
         "      - {key: p1, css_classes: ['x\" onmouseover=\"alert(1)']}\n"
     )
-    svg = render(layout)
+    svg = render(layout, id_prefix="dv-s1")
     assert 'onmouseover="alert(1)' not in svg
     assert "x&quot; onmouseover=&quot;alert(1)" in svg

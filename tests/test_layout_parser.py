@@ -821,7 +821,7 @@ variants:
             return
         render_css(layout)
         for name in {None}.union(*(v.variants for v in layout.views.values())):
-            render_svg(layout, variant_name=name)
+            render_svg(layout, variant_name=name, id_prefix="dv-s1")
 
     @pytest.mark.parametrize(
         ("path", "error"),

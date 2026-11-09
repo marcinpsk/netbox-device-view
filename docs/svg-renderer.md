@@ -59,10 +59,10 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 ## SVG output structure
 
 ```xml
-<svg class="dv-svg" viewBox="0 0 W H" xmlns="...">
+<svg class="dv-svg" viewBox="0 0 W H" xmlns="..." style="--dv-nocolor-fill: url(#dv-s{device id}-{face}-nocolor)">
   <defs>
-    <!-- diagonal stripe pattern for cables with no colour set -->
-    <pattern id="dv-nocolor-pattern" .../>
+    <!-- diagonal stripe pattern for cables with no colour set; each panel has its own id -->
+    <pattern id="dv-s{device id}-{face}-nocolor" .../>
   </defs>
 
   <!-- canvas background -->
