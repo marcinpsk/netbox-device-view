@@ -162,6 +162,9 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
         names, bays = _community_names(community / type_path)
     except FileNotFoundError:
         return [Issue(path, None, f"The community {kind} type {type_path} is missing.")]
+    except OSError as exc:
+        message = f"The community type {type_path} cannot be read: {exc.strerror}."
+        return [Issue(path, None, message)]
     except (yaml.YAMLError, TypeError) as exc:
         return [Issue(path, None, f"The community type {type_path} is invalid: {exc}")]
     issues = [
