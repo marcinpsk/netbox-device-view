@@ -163,7 +163,7 @@ class SourceImportTests(SourceTestCase):
         )
         self.assertFalse(DefinitionRevision.objects.exists())
 
-    def test_the_next_sync_repairs_a_file_that_changed_while_a_sync_read_it(self):
+    def test_an_import_that_finds_a_torn_file_lets_the_next_sync_read_it_again(self):
         # The hash matches the file on disk, so NetBox's own sync skips the row.
         torn = {
             "data": {"data": FRONT_SVG.replace("#333", "#222").encode()},
@@ -172,11 +172,16 @@ class SourceImportTests(SourceTestCase):
         for name, fields in torn.items():
             with self.subTest(name):
                 self.sync()
+                hashes = dict(DataFile.objects.values_list("path", "hash"))
                 DataFile.objects.filter(path=f"{DEVICE_DIR}/front.svg").update(**fields)
                 self.assertContains(
                     self.import_source(),
                     f"{DEVICE_DIR}/front.svg: {capture.CHANGED_FILE}",
                     status_code=400,
+                )
+                self.assertEqual(
+                    dict(DataFile.objects.values_list("path", "hash")),
+                    {**hashes, f"{DEVICE_DIR}/front.svg": ""},
                 )
 
                 self.sync()
@@ -187,16 +192,22 @@ class SourceImportTests(SourceTestCase):
                 self.assertEqual(bytes(stored.data), FRONT_SVG.encode())
                 DefinitionRevision.objects.all().delete()
 
-    def test_a_sync_does_not_hash_files_too_large_to_import(self):
+    def test_a_sync_does_not_read_a_torn_file_again_that_no_import_found(self):
         large = f"{DEVICE_DIR}/large.svg"
         self.write({large: "x" * (MAX_SVG_BYTES + 1)})
         self.sync()
-        torn = b"y" * (MAX_SVG_BYTES + 1)
-        DataFile.objects.filter(path=large).update(data=torn)
+        torn = {
+            f"{DEVICE_DIR}/front.svg": FRONT_SVG.replace("#333", "#222").encode(),
+            large: b"y" * (MAX_SVG_BYTES + 1),
+        }
+        for path, data in torn.items():
+            DataFile.objects.filter(path=path).update(data=data)
 
         self.sync()
 
-        self.assertEqual(bytes(DataFile.objects.get(path=large).data), torn)
+        self.assertEqual(
+            {path: bytes(DataFile.objects.get(path=path).data) for path in torn}, torn
+        )
 
     def test_a_sync_leaves_consistent_files_alone(self):
         self.sync()

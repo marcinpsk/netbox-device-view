@@ -3,17 +3,14 @@
 import hashlib
 
 from core.exceptions import SyncError
-from core.models import DataFile, DataSource
+from core.models import DataSource
 from core.signals import job_end, post_sync, pre_sync
 from django.contrib.contenttypes.models import ContentType
 from django.db import connection
-from django.db.models import F, Q
 from django.dispatch import receiver
 from django.utils import timezone
 
 from ..models import SourceSyncRun
-from ..stored_data import stored_sha256, stored_size
-from .limits import MAX_SVG_BYTES
 
 # The first key of each two-key session lock; pg_locks shows it as an oid, so it stays positive.
 _LOCK_CLASS = (
@@ -50,16 +47,6 @@ def start_guarded_sync(sender, instance, **kwargs):
         source_id=instance.pk,
         defaults={"started": timezone.now(), "finished": None},
     )
-    _clear_hash_of_torn_files(instance.pk)
-
-
-def _clear_hash_of_torn_files(source_pk: int) -> None:
-    """Clear the hash of each importable file whose data the hash or size does not describe, so the sync reads it again."""
-    files = DataFile.objects.filter(source_id=source_pk).annotate(
-        stored_bytes=stored_size(), digest=stored_sha256(MAX_SVG_BYTES)
-    )
-    torn = ~Q(hash=F("digest")) | ~Q(size=F("stored_bytes"))
-    files.filter(torn, digest__isnull=False).update(hash="")
 
 
 @receiver(post_sync)

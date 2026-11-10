@@ -16,9 +16,10 @@ from users.models import ObjectPermission, User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
+from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.models import DefinitionRevision, DeviceView
 
-from .artwork_samples import DEVICE_FILES, bundle, definition
+from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_source_import import SOURCE_IMPORT_URL
@@ -164,24 +165,40 @@ class ArtworkImportInBranchTests(ArtworkBranchTestCase):
 
 
 class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
-    def test_a_data_source_import_in_a_branch_stores_the_revision_in_main(self):
+    def setUp(self):
+        super().setUp()
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root)
         for path, content in definition(DEVICE_DIR, DEVICE_FILES).items():
             (root / path).parent.mkdir(parents=True, exist_ok=True)
             (root / path).write_text(content)
-        source = DataSource.objects.create(
+        self.source = DataSource.objects.create(
             name="Artwork", type="local", source_url=f"file://{root}", enabled=True
         )
-        source.sync()
+        self.source.sync()
         self.grant(DataSource, "view")
         self.grant(DataFile, "view")
 
-        response = self.client.post(
-            reverse(SOURCE_IMPORT_URL), {"data_source": source.pk, "prefix": ""}
+    def import_source(self):
+        return self.client.post(
+            reverse(SOURCE_IMPORT_URL), {"data_source": self.source.pk, "prefix": ""}
         )
+
+    def test_a_data_source_import_in_a_branch_stores_the_revision_in_main(self):
+        response = self.import_source()
 
         self.assertContains(response, "Imported")
         revision = DefinitionRevision.objects.get()
-        self.assertEqual(revision.definition.key_owner, source)
-        self.assertEqual(revision.imports.get().data_source, source)
+        self.assertEqual(revision.definition.key_owner, self.source)
+        self.assertEqual(revision.imports.get().data_source, self.source)
+
+    def test_a_torn_file_found_in_a_branch_is_read_again_by_the_next_sync(self):
+        front = DataFile.objects.filter(path=f"{DEVICE_DIR}/front.svg")
+        front.update(data=FRONT_SVG.replace("#333", "#222").encode())
+
+        self.assertContains(self.import_source(), CHANGED_FILE, status_code=400)
+        self.assertEqual(front.get().hash, "")
+
+        self.source.sync()
+
+        self.assertContains(self.import_source(), "Imported")

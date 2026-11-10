@@ -6,6 +6,7 @@ from datetime import datetime
 
 from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
+from django.db import router, transaction
 from django.db.models import (
     BinaryField,
     Case,
@@ -126,6 +127,13 @@ def _file_issues(row) -> list[str]:
     return []
 
 
+def _read_again_at_next_sync(source: DataSource, paths: list[str]) -> None:
+    """Clear the hash of the torn files, so the next sync reads them again."""
+    # Durable: the change commits before the import fails, and nesting in a transaction is an error.
+    with transaction.atomic(using=router.db_for_write(DataFile), durable=True):
+        DataFile.objects.filter(source=source, path__in=paths).update(hash="")
+
+
 def read_source_files(user, source: DataSource, prefix: str) -> Capture:
     """Return the files below the prefix, or raise ArtworkError when they are not one coherent sync."""
     rows = list(_files(user, source, prefix))
@@ -144,6 +152,8 @@ def read_source_files(user, source: DataSource, prefix: str) -> Capture:
         for row in rows
         for message in _file_issues(row)
     ]
+    if torn := [issue.path for issue in issues if issue.message == CHANGED_FILE]:
+        _read_again_at_next_sync(source, torn)
     if issues:
         raise ArtworkError(issues)
     entries = [(row["path"], bytes(row["payload"])) for row in rows]

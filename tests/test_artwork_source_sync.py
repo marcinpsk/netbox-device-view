@@ -11,26 +11,31 @@ from unittest import skipUnless
 from core.choices import DataSourceStatusChoices, JobStatusChoices
 from core.exceptions import SyncError
 from core.jobs import SyncDataSourceJob
-from core.models import DataSource, Job
+from core.models import DataFile, DataSource, Job
 from core.signals import pre_sync
-from django.db import connection
+from django.db import connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
+from rest_framework.test import APIClient
 from rq import SimpleWorker
 from users.models import User
 
-from netbox_device_view.artwork import capture, sync_guard
+from netbox_device_view.artwork import capture, importing, sync_guard
 from netbox_device_view.artwork.errors import ArtworkError
 from netbox_device_view.models import DefinitionRevision, SourceSyncRun
 
-from .artwork_samples import DEVICE_FILES, definition
+from .artwork_samples import DEVICE_FILES, FRONT_SVG, definition
 from .test_artwork_import import DEVICE_DIR, expected_digest
-from .test_artwork_source_import import SOURCE_IMPORT_URL, private_sync_queue
+from .test_artwork_source_import import (
+    API_SOURCE_IMPORT,
+    SOURCE_IMPORT_URL,
+    private_sync_queue,
+)
 
 TIMEOUT = 30
 
 
-class SyncGuardTests(TransactionTestCase):
+class SourceSessionTestCase(TransactionTestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root)
@@ -53,6 +58,9 @@ class SyncGuardTests(TransactionTestCase):
         executor = ThreadPoolExecutor(max_workers=1)
         self.addCleanup(executor.shutdown)
         return executor.submit(run)
+
+
+class SyncGuardTests(SourceSessionTestCase):
 
     def test_an_overlapping_sync_fails_before_it_changes_the_source(self):
         inside, release = threading.Event(), threading.Event()
@@ -162,6 +170,64 @@ class SyncGuardTests(TransactionTestCase):
 
         self.source.refresh_from_db()
         self.assertEqual(self.source.status, DataSourceStatusChoices.COMPLETED)
+
+
+class TornFileTests(SourceSessionTestCase):
+    """An import that finds a torn file commits the cleared hash, although the import fails."""
+
+    def setUp(self):
+        super().setUp()
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        self.enterContext(override_settings(MEDIA_ROOT=media))
+        self.user = User.objects.create_superuser(username="admin")
+        self.source.sync()
+        self.front = DataFile.objects.filter(path=f"{DEVICE_DIR}/front.svg")
+        self.front.update(data=FRONT_SVG.replace("#333", "#222").encode())
+
+    def api_import(self):
+        client = APIClient()
+        client.force_authenticate(self.user)
+        return client.post(
+            reverse(API_SOURCE_IMPORT), {"data_source": self.source.pk}, format="json"
+        )
+
+    def test_the_next_sync_reads_the_torn_file_that_a_failed_api_import_found(self):
+        failed = self.api_import()
+
+        self.assertEqual(failed.status_code, 400, failed.content)
+        self.assertEqual(
+            failed.json()["errors"],
+            [
+                {
+                    "path": self.front.get().path,
+                    "line": None,
+                    "message": capture.CHANGED_FILE,
+                }
+            ],
+        )
+        stored = self.in_other_session(lambda: self.front.get().hash).result(TIMEOUT)
+        self.assertEqual(stored, "")
+
+        self.source.sync()
+
+        self.assertEqual(bytes(self.front.get().data), FRONT_SVG.encode())
+        imported = self.api_import()
+        self.assertEqual(imported.status_code, 201, imported.content)
+        self.assertEqual(
+            DefinitionRevision.objects.get().digest, expected_digest(DEVICE_FILES)
+        )
+
+    def test_an_import_inside_a_transaction_fails_before_it_clears_a_hash(self):
+        recorded = self.front.get().hash
+
+        with (
+            self.assertRaisesMessage(RuntimeError, "durable"),
+            transaction.atomic(),
+        ):
+            importing.import_from_source(self.user, self.source, "")
+
+        self.assertEqual(self.front.get().hash, recorded)
 
 
 @skipUnless(
