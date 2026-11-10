@@ -461,6 +461,7 @@ def _face_data(revision) -> dict[str, bytes]:
     for face in revision.face_names:
         path = revision.manifest["faces"][face]["file"]
         if path not in blobs:
+            # A concurrent delete of the revision removes its files.
             raise DamagedBlob(f"{path} is not a file of the revision.")
         data[face] = read_blob(blobs[path])
     return data
