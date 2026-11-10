@@ -174,9 +174,7 @@ def compose_rendered_layout(device: Device, user) -> dict:
     """
     members = panel_members(device, user)
 
-    # First pass: resolve every member's DeviceView. Any missing/CSS-only
-    # DeviceView fails the whole response (matches prepare_svg()'s
-    # all-or-nothing ObjectDoesNotExist behaviour for virtual chassis).
+    # Unlike the page, one member without a YAML layout fails the whole response.
     member_views: dict[int, DeviceView] = {}
     for member in members:
         try:

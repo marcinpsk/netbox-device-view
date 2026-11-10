@@ -130,5 +130,5 @@ Use `cell_size: 0` in the YAML canvas to enable auto sizing for patch panels.
 
 ## Limitations
 
-- Virtual Chassis SVG rendering requires every member's device type to have an SVG-capable DeviceView (see above) — one missing member falls the whole device back to CSS
+- The page resolves each Virtual Chassis member alone (see above). The [rendered-layout API](rendered-layout-api.md) does not: it needs a DeviceView with a YAML layout for every member that the user can view, and one member without it makes the whole response unavailable (`no_layout` or `svg_layout_required`)
 - `cell_size: 0` (patch-panel auto sizing) uses `DEFAULT_CELL = 32 px` in SVG mode since CSS `auto` sizing has no SVG equivalent
