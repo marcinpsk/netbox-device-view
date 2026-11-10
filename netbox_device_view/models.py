@@ -731,6 +731,17 @@ def active_revisions(parts, selection=None) -> dict[int, DefinitionRevision]:
     return {pk: revision for pk, revision in revisions.items() if revision}
 
 
+def newest_revisions(definition_ids) -> dict[int, DefinitionRevision]:
+    """Return {definition pk: its newest revision}, without the manifest."""
+    return {
+        revision.definition_id: revision
+        for revision in DefinitionRevision.objects.filter(definition__in=definition_ids)
+        .order_by("definition_id", "-created", "pk")
+        .distinct("definition_id")
+        .only("pk", "definition_id")
+    }
+
+
 class ArtworkBlob(ImmutableMixin, models.Model):
     """One content-addressed file in media storage."""
 
