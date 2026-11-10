@@ -2,6 +2,8 @@ from dcim.models import Device
 from django.conf import settings
 from netbox.plugins import PluginTemplateExtension
 
+from .artwork.updates import device_update_pairs
+from .forms import review_url
 from .utils import device_view_context
 
 
@@ -44,6 +46,18 @@ class DevicePorts(Ports):
         if self.context["request"].path != obj.get_absolute_url():
             return ""
         return self.page()
+
+    def buttons(self):
+        device = self.context["object"]
+        pairs = device_update_pairs(self.context["request"].user, device)
+        if not pairs:
+            return ""
+        return self.render(
+            "netbox_device_view/buttons/artwork_update.html",
+            extra_context={
+                "url": review_url(pairs, return_url=device.get_absolute_url())
+            },
+        )
 
 
 template_extensions = [DevicePorts]
