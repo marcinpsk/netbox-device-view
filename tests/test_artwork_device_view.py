@@ -452,6 +452,54 @@ class ArtworkTabTests(ArtworkTestCase):
             '<rect x="200" y="10" width="12" height="10" style="stroke-width:2"/></g>',
         )
 
+    def test_the_focus_ring_of_a_use_connector_refers_to_its_target_without_paint(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>',
+                '<defs><rect id="hit" x="200" y="10" width="12" height="10"'
+                ' fill="none" stroke="none"/></defs>'
+                '<use id="con-r1" x="2" y="1mm" transform="scale(1)" font-size="4"'
+                ' href="#hit"/>',
+            ),
+        )
+        self.activate()
+        page = faces(self.tab())[0]
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        [ring] = links(page)[f"{prefix}con-r1"].findall(
+            f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']"
+        )
+        # A use draws with the paint of its target, so the copy keeps the use and refers to a target without paint.
+        self.assertEqual(
+            etree.tostring(ring[0], encoding="unicode"),
+            f'<use xmlns="{SVG_NS}" x="2" y="1mm" transform="scale(1)" font-size="4"'
+            f' href="#{prefix}-shape-hit"/>',
+        )
+        [target] = page.iterfind(f".//*[@id='{prefix}-shape-hit']")
+        self.assertEqual(
+            etree.tostring(target, encoding="unicode", with_tail=False),
+            f'<rect xmlns="{SVG_NS}" x="200" y="10" width="12" height="10"'
+            f' id="{prefix}-shape-hit"/>',
+        )
+
+    def test_the_focus_ring_keeps_a_use_without_a_target(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>',
+                '<g id="con-r1"><rect x="200" y="10" width="12" height="10"/><use/></g>',
+            ),
+        )
+        self.activate()
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        [ring] = links(faces(self.tab())[0])[f"{prefix}con-r1"].findall(
+            f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']"
+        )
+        self.assertEqual(
+            etree.tostring(ring[0], encoding="unicode"),
+            f'<g xmlns="{SVG_NS}"><rect x="200" y="10" width="12" height="10"/><use/></g>',
+        )
+
     def test_each_face_scrolls_with_the_keyboard(self):
         self.activate()
         viewports = re.findall(r'<div class="dv-art-viewport"[^>]*>', self.tab())

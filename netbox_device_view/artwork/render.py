@@ -47,6 +47,7 @@ _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
 _TITLE = f"{{{SVG_NS}}}title"
+_USE = f"{{{SVG_NS}}}use"
 # XML 1.0 does not allow these characters, and lxml refuses them; NetBox names can hold them.
 _NOT_XML = dict.fromkeys(
     [*range(0x9), 0xB, 0xC, *range(0xE, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF]
@@ -54,6 +55,7 @@ _NOT_XML = dict.fromkeys(
 # A generated local id starts with "-"; an author id starts with a letter.
 _OCCUPIED = "-occupied-"
 _FOCUS = "-focus-"
+_SHAPE = "-shape-"
 # The properties that can hide paint; the focus ring copy drops them and paints black.
 _PAINT = frozenset(
     {"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "visibility"}
@@ -194,7 +196,7 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
                 defs.append(outline)
             ring = _focus_ring(f"{prefix}{_FOCUS}{connector.key}", *space)
             defs.append(ring)
-        _link(element, connector.target, outline, ring)
+        _link(element, connector.target, outline, ring, prefix)
     if len(defs):
         root.insert(0, defs)
     # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
@@ -246,7 +248,7 @@ def _style_token(token, prefix: str) -> str:
     return tinycss2.serialize([token])
 
 
-def _link(element, state: ComponentState, outline, ring):
+def _link(element, state: ComponentState, outline, ring, prefix):
     """Wrap the connector element in a link to its component."""
     component = state.component
     link = etree.Element(f"{{{SVG_NS}}}a")
@@ -277,10 +279,10 @@ def _link(element, state: ComponentState, outline, ring):
                 "stroke": "#000",
                 "aria-hidden": "true",
             },
-        ).append(_shape(element))
+        ).append(_shape(element, ring.getparent(), prefix))
 
 
-def _shape(element):
+def _shape(element, defs, prefix):
     """Return a copy of the connector without ids, titles and paint; the ring draws its shape."""
     shape = deepcopy(element)
     shape.tail = None
@@ -303,7 +305,24 @@ def _shape(element):
                 node.set("style", kept)
             else:
                 del node.attrib["style"]
+    # A use draws with the paint of its target, so the copy refers to a target without paint.
+    root = element.getroottree().getroot()
+    for use in shape.iter(_USE):
+        href = use.get("href")
+        if href is not None:
+            use.set("href", f"#{_paintless(root, href[1:], defs, prefix)}")
     return shape
+
+
+def _paintless(root, ident: str, defs, prefix: str) -> str:
+    """Return the id of the copy without paint of element ``ident`` in ``defs``; it makes one copy per element."""
+    copy_id = f"{prefix}{_SHAPE}{ident.removeprefix(prefix)}"
+    if not defs.xpath("*[@id=$ident]", ident=copy_id):
+        [target] = root.xpath("//*[@id=$ident]", ident=ident)
+        copy = _shape(target, defs, prefix)
+        copy.set("id", copy_id)
+        defs.append(copy)
+    return copy_id
 
 
 def _xml_text(value: str) -> str:
