@@ -54,6 +54,8 @@ from .test_artwork_activation import NEWER, REVIEW_AGAIN, review_url, token_of
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 
 WAIT_SECONDS = 20
+# The attempts of the deadlock test: PostgreSQL does not always stop the activation.
+DEADLOCK_ATTEMPTS = 3
 R1 = """\
   con-r1:
     face: front
@@ -467,21 +469,31 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
         self.assertActivated()
 
     def test_a_deadlock_with_a_netbox_writer_asks_to_review_again(self):
-        token = self.token()
-        try:
-            with transaction.atomic():
-                # The activation locks the device, then waits for this component.
-                Interface.objects.filter(pk=self.eth1.pk).update(description="writer")
-                activation = self.activate_in_thread(token)
-                self.wait_for_a_waiter(activation[0])
-                # PostgreSQL usually stops the transaction that waited first: the activation.
-                Device.objects.filter(pk=self.device.pk).update(description="writer")
-        except OperationalError as exc:
-            # A writer later than deadlock_timeout is the one that PostgreSQL stops.
-            if getattr(exc.__cause__, "sqlstate", None) != review.DEADLOCK:
-                raise
-            self.assertEqual(self.finish(*activation).status_code, 302)
-            self.skipTest("PostgreSQL stopped the writer, not the activation.")
+        for _attempt in range(DEADLOCK_ATTEMPTS):
+            Association.objects.filter(pk=self.association.pk).update(
+                revision=self.revision
+            )
+            token = self.token()
+            try:
+                with transaction.atomic():
+                    # The activation locks the device, then waits for this component.
+                    Interface.objects.filter(pk=self.eth1.pk).update(
+                        description="writer"
+                    )
+                    activation = self.activate_in_thread(token)
+                    self.wait_for_a_waiter(activation[0])
+                    # PostgreSQL usually stops the transaction that waited first: the activation.
+                    Device.objects.filter(pk=self.device.pk).update(
+                        description="writer"
+                    )
+                break
+            except OperationalError as exc:
+                # A writer later than deadlock_timeout is the one that PostgreSQL stops.
+                if getattr(exc.__cause__, "sqlstate", None) != review.DEADLOCK:
+                    raise
+                self.assertEqual(self.finish(*activation).status_code, 302)
+        else:
+            self.skipTest("PostgreSQL stopped the writer in each attempt.")
 
         self.assertContains(
             self.finish(*activation), review.CONCURRENT, status_code=409
