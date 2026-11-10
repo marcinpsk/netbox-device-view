@@ -32,6 +32,7 @@ from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork import pins, review
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.components import BINDABLE_MODELS
 from netbox_device_view.models import (
     Association,
     BindingOverride,
@@ -266,6 +267,18 @@ class SnapshotTests(ReviewTestCase):
         self.assertIsNone(token_of(response))
         self.assertFalse(reviewed.stable)
         self.assertContains(response, review.UNSTABLE)
+
+    def test_the_fingerprint_reads_the_components_without_a_join(self):
+        newer = self.import_files(NEWER)
+
+        with CaptureQueriesContext(connection) as queries:
+            self.reviewed((newer, self.device_type))
+
+        # The default order of a component joins its device: a slow plan with many devices.
+        reads = [q["sql"] for q in queries if 'AS "findable"' in q["sql"]]
+        self.assertEqual(len(reads), 2 * len(BINDABLE_MODELS))
+        for sql in reads:
+            self.assertNotIn("JOIN", sql)
 
 
 class BlockerTests(ReviewTestCase):

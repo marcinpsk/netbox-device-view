@@ -12,7 +12,7 @@ from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceType, Module, ModuleBay, ModuleType
 from django.core import signing
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError, OperationalError, router
+from django.db import IntegrityError, OperationalError, connections, router
 from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils.text import capfirst
 from django.utils.translation import gettext_lazy as _
@@ -53,6 +53,12 @@ REVIEW_MAX_AGE_SECONDS = 15 * 60
 MAX_PAIRS = 100
 # The SQLSTATE of a PostgreSQL deadlock.
 DEADLOCK = "40P01"
+# The SQLSTATE of a lock wait that reached lock_timeout.
+LOCK_NOT_AVAILABLE = "55P03"
+# The longest wait of the activation for one lock, in milliseconds.
+LOCK_TIMEOUT_MS = 10_000
+# The compositions of one activation: the second follows a composition that the locked state shows as stale.
+COMPOSITIONS = 2
 
 HIDDEN = _("Your permissions do not cover every affected object.")
 EXPIRED = _("The review has expired. Review the activation again.")
@@ -67,6 +73,11 @@ CONCURRENT = _(
     "Another change of the affected objects ran at the same time. Review the"
     " activation again."
 )
+LOCKED = _(
+    "Another change held a lock on the affected objects for too long. Try the"
+    " activation again."
+)
+_LOCK_ERRORS = {DEADLOCK: CONCURRENT, LOCK_NOT_AVAILABLE: LOCKED}
 NOT_VIEWABLE = _("Select a type and a revision that you can view.")
 NEEDS_ADD = _("A first activation needs the add permission on artwork associations.")
 NEEDS_CHANGE = _("An activation needs the change permission on this association.")
@@ -84,6 +95,10 @@ UNSTABLE = _(
 
 class ActivationRejected(Exception):
     """The activation did not apply; the message says why."""
+
+
+class _StaleReview(Exception):
+    """The locked impact set is the reviewed one, and the composition of the activation read another."""
 
 
 def can_activate(user) -> bool:
@@ -186,10 +201,7 @@ class Target:
 
     @property
     def unchanged(self) -> bool:
-        return (
-            self.association is not None
-            and self.association.revision_id == self.pair.revision.pk
-        )
+        return _unchanged(self.association, self.pair)
 
     @property
     def instance_label(self) -> str:
@@ -214,6 +226,11 @@ class Target:
 
 def _device(part) -> Device:
     return part.device if isinstance(part, Module) else part
+
+
+def _unchanged(association, pair) -> bool:
+    """Return True when ``association`` exists and has the revision of ``pair``."""
+    return association is not None and association.revision_id == pair.revision.pk
 
 
 @dataclass
@@ -281,18 +298,27 @@ def build(user, pairs) -> Review:
 def apply(user, token) -> list[Association]:
     """Activate the reviewed selection of ``token`` in one transaction; return the changed associations.
 
-    Raise ActivationRejected when the review is not valid any more, and
+    The activation composes the review before it takes any lock. Under the
+    locks it reads only the fingerprint again, checks the permissions and
+    writes. Raise ActivationRejected when the review is not valid any more, and
     PermissionDenied when the permissions of ``user`` do not cover a saved
     association. Nothing changes then.
     """
     pairs, fingerprint = _load(user, token)
-    try:
-        with write_transaction(Association):
-            return _apply(user, pairs, fingerprint)
-    except OperationalError as exc:
-        if getattr(exc.__cause__, "sqlstate", None) != DEADLOCK:
-            raise
-        raise ActivationRejected(CONCURRENT) from exc
+    for _composition in range(COMPOSITIONS):
+        # The composition is the slow part, so it runs before the locks.
+        reviewed = _inspect(user, pairs)
+        try:
+            with write_transaction(Association):
+                return _apply(user, pairs, fingerprint, reviewed)
+        except _StaleReview:
+            continue
+        except OperationalError as exc:
+            rejection = _LOCK_ERRORS.get(getattr(exc.__cause__, "sqlstate", None))
+            if rejection is None:
+                raise
+            raise ActivationRejected(rejection) from exc
+    raise ActivationRejected(CONCURRENT)
 
 
 def previous_revision(association) -> DefinitionRevision | None:
@@ -335,9 +361,12 @@ def _load(user, token) -> tuple[list[Pair], str]:
     return pairs, payload["fingerprint"]
 
 
-def _apply(user, pairs, fingerprint) -> list[Association]:
+def _apply(user, pairs, fingerprint, reviewed) -> list[Association]:
+    """Lock the impact set, check it against the token and the composition ``reviewed``, and write the associations."""
     using = router.db_for_write(Association)
-    locked = _Affected.read(pairs).dependency_types
+    catalogue = router.db_for_write(DefinitionRevision)
+    _bound_lock_waits({using, catalogue})
+    locked = reviewed.dependency_types
     # The writers of binding overrides and instance pins take the same locks.
     # A bulk writer takes its type locks in row order, so the activation first waits for it.
     lock_bulk_writes(using)
@@ -351,10 +380,7 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     candidates = functools.reduce(
         operator.or_, (Q(pk=p.revision.pk, digest=p.revision.digest) for p in pairs)
     )
-    shared = share_rows(
-        DefinitionRevision.objects.filter(candidates),
-        router.db_for_write(DefinitionRevision),
-    )
+    shared = share_rows(DefinitionRevision.objects.filter(candidates), catalogue)
     if shared != {pair.revision.pk for pair in pairs}:
         raise ActivationRejected(CHANGED)
     # A pin or an instance can change while the activation waits, so the row locks come from a new read.
@@ -364,16 +390,38 @@ def _apply(user, pairs, fingerprint) -> list[Association]:
     # The review reads the components and the module bays of each device that it names.
     for model in (*BINDABLE_MODELS, ModuleBay):
         share_rows(model.objects.filter(device__in=affected.listed_device_ids), using)
-    review = _inspect(user, pairs)
+    # The locks keep every input of the fingerprint until the commit, so one read is enough.
+    current, associations, current_fingerprint = _snapshot(pairs)
     if (
-        not review.ready
-        or review.fingerprint != fingerprint
-        or not review.dependency_types <= locked
-        or review.listed_rows != affected.listed_rows
+        current_fingerprint != fingerprint
+        or current.listed_rows != affected.listed_rows
     ):
         raise ActivationRejected(CHANGED)
-    changed = [_write(user, target) for target in review.targets]
+    if (
+        not reviewed.stable
+        or reviewed.fingerprint != current_fingerprint
+        or reviewed.dependency_types != current.dependency_types
+    ):
+        raise _StaleReview
+    if (
+        not reviewed.ready
+        or not _visible(user, pairs, current)
+        or any(_permission_error(user, p, associations.get(p.key)) for p in pairs)
+    ):
+        raise ActivationRejected(CHANGED)
+    # The write uses the associations that the locks hold, not those of the composition.
+    changed = [_write(user, pair, associations.get(pair.key)) for pair in pairs]
     return [association for association in changed if association is not None]
+
+
+def _bound_lock_waits(aliases) -> None:
+    """Stop each lock wait of the current transaction on ``aliases`` after LOCK_TIMEOUT_MS."""
+    for alias in aliases:
+        with connections[alias].cursor() as cursor:
+            # A transaction-local setting: it ends with the activation.
+            cursor.execute(
+                "SELECT set_config('lock_timeout', %s, true)", [f"{LOCK_TIMEOUT_MS}ms"]
+            )
 
 
 def _lock(queryset) -> None:
@@ -386,13 +434,12 @@ def _lock(queryset) -> None:
     )
 
 
-def _write(user, target) -> Association | None:
-    """Write the association of one pair; return it, or None when it keeps its revision."""
-    pair, association = target.pair, target.association
+def _write(user, pair, association) -> Association | None:
+    """Write the ``association`` of one pair, or a new one when it is None; return it, or None when it keeps its revision."""
     if association is None:
         association = Association(**{pair.scope.field: pair.hardware_type})
         action = "add"
-    elif target.unchanged:
+    elif _unchanged(association, pair):
         return None
     else:
         association.snapshot()
@@ -562,8 +609,12 @@ def _inspect(user, pairs) -> Review:
     affected, associations, fingerprint = _snapshot(pairs)
     types = affected.dependency_types
     if not _visible(user, pairs, affected):
+        # The activation compares the fingerprint; the page does not show it.
         return Review(
-            hidden=True, dependency_types=types, listed_rows=affected.listed_rows
+            hidden=True,
+            dependency_types=types,
+            fingerprint=fingerprint,
+            listed_rows=affected.listed_rows,
         )
     selection = {pair.key: pair.revision for pair in pairs}
     changes = _compare(user, affected, selection)
@@ -884,7 +935,9 @@ def _fingerprint(affected, associations) -> str:
         "components": sorted(
             [model._meta.model_name, *values]
             for model in BINDABLE_MODELS
+            # The default order of a component joins its device; sorted() orders the rows.
             for values in model.objects.filter(device__in=devices)
+            .order_by()
             .annotate(
                 findable=ExpressionWrapper(findable(model), output_field=BooleanField())
             )
