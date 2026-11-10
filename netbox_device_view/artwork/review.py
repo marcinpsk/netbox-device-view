@@ -928,10 +928,12 @@ def _fingerprint(affected, associations) -> str:
             for pinned in affected.pinned.values()
             for i in pinned
         ),
+        # Each row names its device: the composition reads the rows of each device separately.
         "modules": [
-            [m.pk, m.module_type_id, m.module_bay_id] for m in affected.modules
+            [m.pk, m.device_id, m.module_type_id, m.module_bay_id]
+            for m in affected.modules
         ],
-        # The name, the module and the fields that decide whether a binding can find the component.
+        # The device, the name, the module and the fields that decide whether a binding can find the component.
         "components": sorted(
             [model._meta.model_name, *values]
             for model in BINDABLE_MODELS
@@ -941,12 +943,12 @@ def _fingerprint(affected, associations) -> str:
             .annotate(
                 findable=ExpressionWrapper(findable(model), output_field=BooleanField())
             )
-            .values_list("pk", "name", "module_id", "findable")
+            .values_list("pk", "device_id", "name", "module_id", "findable")
         ),
         "bays": list(
             ModuleBay.objects.filter(device__in=devices)
             .order_by("pk")
-            .values_list("pk", "name", "position", "module_id")
+            .values_list("pk", "device_id", "name", "position", "module_id")
         ),
         "pins": list(
             InstancePin.objects.filter(pins)
