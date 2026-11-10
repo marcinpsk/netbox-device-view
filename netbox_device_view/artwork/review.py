@@ -522,6 +522,16 @@ def _pins_of(hardware_type) -> Q:
     return Q(**{f"{spec.field}__{spec.type_field}": hardware_type})
 
 
+def _read_pins(affected) -> Q:
+    """Return the filter of the pins that the review reads: the pins of the types and of the affected devices."""
+    devices = [device.pk for device in affected.devices]
+    return functools.reduce(
+        operator.or_,
+        (_pins_of(pair.hardware_type) for pair in affected.pairs),
+        Q(device__in=devices) | Q(module__device__in=devices),
+    )
+
+
 # The objects that the labels of a device and an installed module read.
 _RELATIONS = {
     Device: ("device_type__manufacturer",),
@@ -588,12 +598,7 @@ def _visible(user, pairs, affected) -> bool:
             for model in (Module, ModuleBay, *BINDABLE_MODELS)
         ),
         BindingOverride.objects.filter(_depending_on(p.hardware_type for p in pairs)),
-        # The review marks each pinned instance of the types.
-        InstancePin.objects.filter(
-            functools.reduce(
-                operator.or_, (_pins_of(p.hardware_type) for p in pairs), Q(pk__in=[])
-            )
-        ),
+        InstancePin.objects.filter(_read_pins(affected)),
     )
     return all(qs.restrict(user, "view").count() == qs.count() for qs in querysets)
 
@@ -841,11 +846,7 @@ def _fingerprint(affected, associations) -> str:
     """Return the SHA-256 of the impact set; cable state is not in it."""
     devices = [device.pk for device in affected.devices]
     types = affected.dependency_types
-    pins = functools.reduce(
-        operator.or_,
-        (_pins_of(pair.hardware_type) for pair in affected.pairs),
-        Q(device__in=devices) | Q(module__device__in=devices),
-    )
+    pins = _read_pins(affected)
     states = []
     for hardware_type in types:
         key = type_key(hardware_type)
