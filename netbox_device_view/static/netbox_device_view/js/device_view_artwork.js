@@ -39,7 +39,7 @@
 (function () {
   if (window.dvArtworkFocus) return;
   window.dvArtworkFocus = true;
-  // {view id: the element that had the focus when the view was left}
+  // {view id: the last element in the view that had the focus}
   var lastFocus = {};
 
   function shown(part) {
@@ -76,7 +76,6 @@
     var from = shown(part);
     var to = document.getElementById(ident);
     if (!from || !to || from === to || !part.contains(to)) return false;
-    lastFocus[from.id] = document.activeElement;
     keepScroll(from);
     from.hidden = true;
     to.hidden = false;
@@ -95,6 +94,12 @@
     if (!visible(previous)) previous = part.querySelector('.dv-art-nav [data-dv-focus="' + ident + '"]');
     if (visible(previous)) previous.focus();
   }
+
+  // A click on a navigation item takes the focus before the view changes, so record the focus inside each view.
+  document.addEventListener("focusin", function (event) {
+    var view = event.target.closest && event.target.closest("[data-dv-assembly] .dv-art-view");
+    if (view) lastFocus[view.id] = event.target;
+  });
 
   document.addEventListener("click", function (event) {
     var item = event.target.closest("[data-dv-focus]");
