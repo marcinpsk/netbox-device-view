@@ -339,9 +339,12 @@ class ApiTransferTests(TransferTestCase):
 
 
 def waiting_row_locks():
+    """Return the number of row lock waits that this connection blocks."""
     with connection.cursor() as cursor:
+        # pg_locks shows the whole server, so a wait in another database must not count.
         cursor.execute(
-            "SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted"
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid'"
+            " AND NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"
         )
         return cursor.fetchone()[0]
 
