@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("dcim", "0226_modulebay_rebuild_tree"),
+        ("dcim", "0225_gfk_indexes"),
         ("netbox_device_view", "0001_initial"),
     ]
 
