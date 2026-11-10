@@ -876,9 +876,13 @@ class ConnectivityFactsTests(ArtworkTestCase):
         page = faces(self.tab())[1]
         ident = f"dv-o-d{self.device.pk}-rear-con-psu"
         [ring] = wrapper(page, ident).findall(
-            f"{{{SVG_NS}}}use[@class='dv-art-focus-ring']"
+            f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']"
         )
-        self.assertEqual(ring.get("href"), f"#{ident}")
+        # The ring draws a copy of the connector shape without its id.
+        [connector] = page.iterfind(f".//*[@id='{ident}']")
+        [shape] = ring
+        self.assertEqual(shape.tag, connector.tag)
+        self.assertIsNone(shape.get("id"))
         self.assertIn(ring.get("filter")[5:-1], ids(page))
 
     def test_two_found_bindings_have_their_own_mark(self):
