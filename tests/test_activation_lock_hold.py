@@ -9,11 +9,17 @@ from django.db import connection, transaction
 
 from netbox_device_view.artwork import overrides, pins, review
 from netbox_device_view.artwork.type_lock import lock_bulk_writes
-from netbox_device_view.models import BindingOverride, InstancePin, RevisionFile
+from netbox_device_view.models import (
+    BindingOverride,
+    DefinitionRevision,
+    InstancePin,
+    RevisionFile,
+)
 
 from .test_activation_review_concurrency import (
     WAIT_SECONDS,
     ConcurrentActivationTestCase,
+    lock_table,
 )
 from .test_artwork_activation import REVIEW_AGAIN
 
@@ -63,10 +69,7 @@ class LockHoldTestCase(ConcurrentActivationTestCase):
         token = self.token()
         with transaction.atomic():
             # The composition reads the artwork files; nothing else of the activation reads them.
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"LOCK TABLE {RevisionFile._meta.db_table} IN ACCESS EXCLUSIVE MODE"
-                )
+            lock_table(RevisionFile)
             thread, results = self.activate_in_thread(token)
             yield thread, results, self.wait_until_blocked(thread)
 
@@ -110,6 +113,15 @@ class CompositionTests(LockHoldTestCase):
         self.assertActivated()
         self.eth1.refresh_from_db()
         self.assertEqual(self.eth1.description, "uplink")
+
+    def test_a_delete_of_the_candidate_while_the_activation_composes_rejects_it(self):
+        candidate = self.newer.pk
+        with self.composing() as activation:
+            # The composition then reads a candidate without its files.
+            self.newer.delete()
+
+        self.assertRejected(activation[:2], review.CHANGED)
+        self.assertFalse(DefinitionRevision.objects.filter(pk=candidate).exists())
 
 
 class ChangeAfterTheCompositionTests(LockHoldTestCase):
