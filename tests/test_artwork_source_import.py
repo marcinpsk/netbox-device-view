@@ -34,7 +34,13 @@ from netbox_device_view.views import ArtworkSourceImportView
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .permissions import grant
-from .test_artwork_import import API_LIST, DEVICE_DIR, ArtworkTestCase, expected_digest
+from .test_artwork_import import (
+    API_LIST,
+    DEVICE_DIR,
+    ArtworkTestCase,
+    expected_digest,
+    newer,
+)
 
 SOURCE_IMPORT_URL = "plugins:netbox_device_view:definitionrevision_source_import"
 API_SOURCE_IMPORT = "plugins-api:netbox_device_view-api:artwork_source_import"
@@ -356,6 +362,31 @@ class SourceImportTests(SourceTestCase):
         self.assertContains(page, DEVICE_DIR)
         self.assertContains(page, "Key owner")
         self.assertNotContains(page, "ommit")
+
+
+class ActiveArtworkTests(SourceTestCase):
+    def test_an_import_of_a_newer_revision_leaves_the_active_artwork_unchanged(self):
+        self.sync()
+        self.import_source()
+        association, drawn = self.activate_first_import()
+
+        self.write(definition(DEVICE_DIR, newer("#222")))
+        self.sync()
+        ui = self.import_source()
+
+        self.assertContains(ui, "Imported")
+        self.assertEqual(DefinitionRevision.objects.count(), 2)
+        self.assert_unchanged(association, drawn)
+
+        self.write(definition(DEVICE_DIR, newer("#444")))
+        self.sync()
+        api = self.api().post(
+            reverse(API_SOURCE_IMPORT), {"data_source": self.source.pk}, format="json"
+        )
+
+        self.assertEqual(api.status_code, 201, api.content)
+        self.assertEqual(DefinitionRevision.objects.count(), 3)
+        self.assert_unchanged(association, drawn)
 
 
 class SourceIdTests(SourceTestCase):
