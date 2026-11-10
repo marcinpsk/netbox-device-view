@@ -482,6 +482,25 @@ class ArtworkTabTests(ArtworkTestCase):
             f' id="{prefix}-shape-hit"/>',
         )
 
+    def test_the_focus_ring_keeps_the_text_after_a_title(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>',
+                '<text id="con-r1" x="200" y="20"><title>R1</title>PORT<desc>d</desc>'
+                " 1</text>",
+            ),
+        )
+        self.activate()
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        [ring] = links(faces(self.tab())[0])[f"{prefix}con-r1"].findall(
+            f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']"
+        )
+        self.assertEqual(
+            etree.tostring(ring[0], encoding="unicode"),
+            f'<text xmlns="{SVG_NS}" x="200" y="20">PORT 1</text>',
+        )
+
     def test_the_focus_ring_keeps_a_use_without_a_target(self):
         self.store_face(
             "front.svg",
