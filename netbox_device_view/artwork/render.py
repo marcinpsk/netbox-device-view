@@ -322,9 +322,9 @@ def _remove_keeping_tail(node) -> None:
     parent, previous = node.getparent(), node.getprevious()
     if node.tail:
         if previous is not None:
-            previous.tail = (previous.tail or "") + node.tail
+            previous.tail = _xml_text((previous.tail or "") + node.tail)
         else:
-            parent.text = (parent.text or "") + node.tail
+            parent.text = _xml_text((parent.text or "") + node.tail)
     parent.remove(node)
 
 
