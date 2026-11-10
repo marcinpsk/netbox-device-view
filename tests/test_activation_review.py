@@ -718,6 +718,19 @@ class VisibilityTests(ReviewTestCase):
 
         self.assertHidden(self.review((newer, self.module_type)))
 
+    def test_a_hidden_pin_of_a_module_in_a_device_type_review_hides_the_review(self):
+        self.activate_module_type()
+        InstancePin.objects.create(
+            module=Module.objects.get(device=self.device),
+            revision=self.module_revision,
+        )
+        # The reviewer can view the pin of sw2 but not the pin of the module.
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.instancepin view"
+        ).update(constraints={"module__isnull": True})
+
+        self.assertHidden(self.review((self.newer, self.device_type)))
+
     def test_an_activation_after_a_loss_of_visibility_is_refused(self):
         url = review_url((self.newer, self.device_type))
         token = token_of(self.client.get(url))
