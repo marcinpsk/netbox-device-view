@@ -16,11 +16,17 @@ from users.models import Token, User
 
 from netbox_device_view.details import details_id
 
-from .module_samples import Inventory
+from .module_samples import CHASSIS_SVG, Inventory
 from .permissions import grant
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, ids, links, references
-from .test_module_composition import CompositionTestCase, art, clip_rect
+from .test_module_composition import (
+    LOOP_SVG,
+    CompositionTestCase,
+    art,
+    clip_rect,
+    install_loop_chain,
+)
 
 G = f"{{{SVG_NS}}}g"
 VIEWS = "//*[contains(concat(' ', @class, ' '), ' dv-art-view ')]"
@@ -171,6 +177,37 @@ class NavigationTests(AssemblyTestCase):
                 self.view(1, inventory.nm1),
                 self.view(2, inventory.psu),
             ],
+        )
+
+    def test_a_module_in_a_parent_without_a_focus_view_has_no_focus_view(self):
+        outer, middle, inner = install_loop_chain(self, 3)
+        # The far edge of the middle bay overflows on the device face only.
+        self.store_face(
+            "acme/ch-4",
+            "front.svg",
+            CHASSIS_SVG.replace('id="bay-spare" x="70"', 'id="bay-spare" x="8.2e307"'),
+        )
+        self.store_face(
+            "acme/loop",
+            "installed.svg",
+            LOOP_SVG.replace('id="bay-sub" width="8"', 'id="bay-sub" width="1e308"'),
+        )
+        content = self.tab()
+        self.assertIsNotNone(self.group(faces(content)[0], outer, middle, inner))
+        page = lxml.html.fromstring(content)
+        self.assertEqual(page.xpath(VIEWS)[-1].get("id"), self.view(6, outer))
+        nav = self.nav(page)
+        self.assertEqual(
+            [
+                (text(b), b.get("data-dv-focus"))
+                for b in nav.xpath(".//button[@data-dv-focus]")
+                if "LOOP" in text(b)
+            ],
+            [("ACME LOOP in Spare", self.view(6, outer))],
+        )
+        self.assertEqual(
+            [text(note) for note in nav.xpath(".//*[@class='dv-art-nav-note']")],
+            ["no focus view", "no focus view"],
         )
 
     def test_the_device_page_panel_has_the_navigation_and_the_focus_views(self):

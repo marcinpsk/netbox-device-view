@@ -516,33 +516,43 @@ class DuplicateBayTests(CompositionTestCase):
         )
 
 
+LOOP_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+    '<rect id="bay-sub" width="8" height="8"/></svg>'
+)
+
+
+def install_loop_chain(test, length):
+    """Install ``length`` LOOP modules in the Spare bay, each in the bay Sub of the one before; return them outermost first."""
+    loop = Inventory.module_type(test.inventory.nm_type.manufacturer, "LOOP")
+    ModuleBayTemplate.objects.create(module_type=loop, name="Sub", position="1")
+    files = {
+        "manifest.yaml": manifest(
+            "acme/loop",
+            "module",
+            "  installed: {file: installed.svg}\n",
+            bays="  bay-sub: {face: installed, module_bay: Sub}",
+        ),
+        "installed.svg": LOOP_SVG,
+    }
+    [imported] = import_bundle(
+        test.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
+    )
+    activation.activate(test.admin, imported.revision, loop)
+    test.inventory.revisions["acme/loop"] = imported.revision
+    chain = []
+    bay = ModuleBay.objects.get(device=test.device, name="Spare")
+    for _level in range(length):
+        chain.append(test.inventory.install(bay, loop))
+        bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
+    return chain
+
+
 class DepthTests(CompositionTestCase):
     def test_a_module_deeper_than_the_limit_shows_as_a_schematic_with_a_warning(
         self,
     ):
-        loop = Inventory.module_type(self.inventory.nm_type.manufacturer, "LOOP")
-        ModuleBayTemplate.objects.create(module_type=loop, name="Sub", position="1")
-        files = {
-            "manifest.yaml": manifest(
-                "acme/loop",
-                "module",
-                "  installed: {file: installed.svg}\n",
-                bays="  bay-sub: {face: installed, module_bay: Sub}",
-            ),
-            "installed.svg": (
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
-                '<rect id="bay-sub" width="8" height="8"/></svg>'
-            ),
-        }
-        [imported] = import_bundle(
-            self.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
-        )
-        activation.activate(self.admin, imported.revision, loop)
-        chain = []
-        bay = ModuleBay.objects.get(device=self.device, name="Spare")
-        for _level in range(MAX_MODULE_DEPTH + 1):
-            chain.append(self.inventory.install(bay, loop))
-            bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
+        chain = install_loop_chain(self, MAX_MODULE_DEPTH + 1)
 
         content = self.tab()
 

@@ -505,6 +505,9 @@ class _Composer:
             # A module that is not drawn, or whose placement is not finite, has no view.
             if placed.element_id is None or placed.bay is None:
                 continue
+            # A module in a parent without a view has no view, because it has no breadcrumb.
+            if placed.parent is not None and placed.parent.pk not in views:
+                continue
             parent = None if placed.parent is None else views[placed.parent.pk]
             parents = () if parent is None else (*parent.parents, parent)
             path = [*(p.module.module for p in parents), placed.module]
