@@ -1,4 +1,3 @@
-from dcim.models import Device
 from django.conf import settings
 from netbox.plugins import PluginTemplateExtension
 
@@ -7,14 +6,14 @@ from .forms import review_url
 from .utils import device_view_context
 
 
-class Ports(PluginTemplateExtension):
+class DevicePorts(PluginTemplateExtension):
+    # NetBox reads only "models"; without it the extension renders on every object page.
+    models = ("dcim.device",)
+
     def page(self):
-        obj = self.context["object"]
-
-        if not isinstance(obj, Device):
-            return ""
-
-        context = device_view_context(obj, self.context["request"].user)
+        context = device_view_context(
+            self.context["object"], self.context["request"].user
+        )
         if context is None:
             return ""
 
@@ -22,10 +21,6 @@ class Ports(PluginTemplateExtension):
             "netbox_device_view/ports.html",
             extra_context=context,
         )
-
-
-class DevicePorts(Ports):
-    model = "dcim.device"
 
     def full_width_page(self):
         cfg = settings.PLUGINS_CONFIG["netbox_device_view"]

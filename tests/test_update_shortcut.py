@@ -1,6 +1,6 @@
 """The artwork-update shortcut on the device page opens the review of the newer revisions of the device and its installed modules."""
 
-from dcim.models import Module, ModuleBay, ModuleType
+from dcim.models import Module, ModuleBay, ModuleType, Site
 from django.utils.html import escape
 from netbox.registry import registry
 from users.models import ObjectPermission
@@ -8,6 +8,7 @@ from users.models import ObjectPermission
 from netbox_device_view.artwork import pins, review
 from netbox_device_view.models import Association, InstancePin
 
+from .permissions import grant
 from .test_activation_review import NEW_MODULE, ReviewTestCase
 from .test_artwork_activation import NEWER, review_url, token_of
 
@@ -159,6 +160,20 @@ class UpdateShortcutTests(ReviewTestCase):
         self.association.refresh_from_db()
         self.assertEqual(self.association.revision, newer)
         self.assertNotContains(self.page(), SHORTCUT)
+
+    def test_a_page_of_another_object_renders_without_plugin_content(self):
+        self.import_files(NEWER)
+        grant(self.user, Site, "view")
+
+        for page in (self.association, self.site):
+            with self.subTest(page=type(page).__name__):
+                response = self.client.get(page.get_absolute_url())
+
+                self.assertEqual(response.status_code, 200)
+                self.assertNotContains(
+                    response, "An error occurred when loading content"
+                )
+                self.assertNotContains(response, SHORTCUT)
 
     def test_the_plugin_adds_no_device_tab_for_updates(self):
         # A registered view is a class or a dotted path.
