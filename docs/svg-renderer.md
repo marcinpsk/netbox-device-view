@@ -14,7 +14,7 @@ If either condition is not met, the plugin silently falls back to CSS rendering.
 Set **Render Mode → SVG** on the DeviceView edit page. The field is available at *Plugins → Device Views → [edit]*.
 
 !!! note
-    Virtual Chassis devices render as one SVG panel per member (in rack order), each using that member's own device type's DeviceView — see [Virtual Chassis](virtual-chassis.md). SVG mode requires *every* member's device type to have a YAML-layout DeviceView; if any member is missing one, the whole device falls back to CSS.
+    Virtual Chassis devices show one panel per member, in rack order. Each member resolves alone: a member whose DeviceView is in SVG mode with a YAML layout shows an SVG panel, and another member can show a CSS grid, artwork or a schematic. See [Virtual Chassis](virtual-chassis.md).
 
 ---
 
