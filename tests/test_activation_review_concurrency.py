@@ -26,7 +26,13 @@ from dcim.models import (
     Site,
 )
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, connection, connections, transaction
+from django.db import (
+    IntegrityError,
+    OperationalError,
+    connection,
+    connections,
+    transaction,
+)
 from django.db.models.signals import post_save
 from django.test import Client, TransactionTestCase, override_settings
 from django.urls import reverse
@@ -462,13 +468,20 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
 
     def test_a_deadlock_with_a_netbox_writer_asks_to_review_again(self):
         token = self.token()
-        with transaction.atomic():
-            # The activation locks the device, then waits for this component.
-            Interface.objects.filter(pk=self.eth1.pk).update(description="writer")
-            activation = self.activate_in_thread(token)
-            self.wait_for_a_waiter(activation[0])
-            # PostgreSQL stops the transaction that waited first: the activation.
-            Device.objects.filter(pk=self.device.pk).update(description="writer")
+        try:
+            with transaction.atomic():
+                # The activation locks the device, then waits for this component.
+                Interface.objects.filter(pk=self.eth1.pk).update(description="writer")
+                activation = self.activate_in_thread(token)
+                self.wait_for_a_waiter(activation[0])
+                # PostgreSQL usually stops the transaction that waited first: the activation.
+                Device.objects.filter(pk=self.device.pk).update(description="writer")
+        except OperationalError as exc:
+            # A writer later than deadlock_timeout is the one that PostgreSQL stops.
+            if getattr(exc.__cause__, "sqlstate", None) != review.DEADLOCK:
+                raise
+            self.assertEqual(self.finish(*activation).status_code, 302)
+            self.skipTest("PostgreSQL stopped the writer, not the activation.")
 
         self.assertContains(
             self.finish(*activation), review.CONCURRENT, status_code=409
