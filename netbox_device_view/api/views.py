@@ -64,7 +64,7 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
 
     queryset = models.DefinitionRevision.objects.select_related(
         "definition"
-    ).prefetch_related("files__blob", "imports")
+    ).prefetch_related("files__blob", "imports__data_source")
     serializer_class = DefinitionRevisionSerializer
     filterset_class = DefinitionRevisionFilterSet
 

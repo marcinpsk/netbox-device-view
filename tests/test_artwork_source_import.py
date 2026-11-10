@@ -10,8 +10,10 @@ import django_rq
 from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
 from django.conf import settings
+from django.db import connection
 from django.db.models import ProtectedError
 from django.test import RequestFactory, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils.http import urlencode
 from users.models import User
@@ -29,7 +31,7 @@ from netbox_device_view.models import (
 from netbox_device_view.views import ArtworkSourceImportView
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
-from .test_artwork_import import DEVICE_DIR, ArtworkTestCase, expected_digest
+from .test_artwork_import import API_LIST, DEVICE_DIR, ArtworkTestCase, expected_digest
 
 SOURCE_IMPORT_URL = "plugins:netbox_device_view:definitionrevision_source_import"
 API_SOURCE_IMPORT = "plugins-api:netbox_device_view-api:artwork_source_import"
@@ -469,6 +471,34 @@ class SourceApiTests(SourceTestCase):
         self.assertEqual(event["data_source"]["id"], self.source.pk)
         self.assertEqual(event["path"], DEVICE_DIR)
         self.assertIsNotNone(event["last_synced"])
+
+    def test_the_revision_list_reads_the_data_sources_of_all_imports_at_once(self):
+        self.sync()
+        self.import_source()
+        revision = DefinitionRevision.objects.get()
+        api = self.api()
+        # The first request also reads what NetBox caches for later requests.
+        api.get(reverse(API_LIST))
+        with CaptureQueriesContext(connection) as one_import:
+            self.assertEqual(api.get(reverse(API_LIST)).status_code, 200)
+        for name in ("Second", "Third"):
+            RevisionImport.objects.create(
+                revision=revision,
+                user_name="admin",
+                source_name=name,
+                data_source=self.create_source(name, self.root),
+                path=DEVICE_DIR,
+            )
+
+        with CaptureQueriesContext(connection) as three_imports:
+            response = api.get(reverse(API_LIST))
+
+        [listed] = response.json()["results"]
+        self.assertEqual(
+            sorted(event["data_source"]["name"] for event in listed["imports"]),
+            ["Artwork", "Second", "Third"],
+        )
+        self.assertEqual(len(three_imports), len(one_import))
 
     def test_a_body_that_is_not_an_object_is_a_bad_request(self):
         response = self.api().post(reverse(API_SOURCE_IMPORT), [1], format="json")
