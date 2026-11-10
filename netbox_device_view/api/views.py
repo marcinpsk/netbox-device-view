@@ -62,7 +62,7 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
 
 REVISIONS = models.DefinitionRevision.objects.select_related(
     "definition"
-).prefetch_related("files__blob", "imports")
+).prefetch_related("files__blob", "imports__data_source")
 
 
 class DefinitionRevisionViewSet(NetBoxModelViewSet):
