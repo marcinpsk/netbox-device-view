@@ -1,5 +1,7 @@
 """Keep the artwork catalogue global when NetBox Branching is installed."""
 
+from django.conf import settings
+
 # Revision files and import records have no change log, so a branch merge cannot replay them.
 CATALOGUE = frozenset(
     {
@@ -18,8 +20,9 @@ def keep_catalogue_in_main(model):
 
 
 def register_with_netbox_branching():
-    try:
-        from netbox_branching.utilities import register_branching_resolver
-    except ImportError:
+    if "netbox_branching" not in settings.PLUGINS:
         return
+    # A release without the resolver hook would put the catalogue into branches, so fail at startup.
+    from netbox_branching.utilities import register_branching_resolver
+
     register_branching_resolver(keep_catalogue_in_main)
