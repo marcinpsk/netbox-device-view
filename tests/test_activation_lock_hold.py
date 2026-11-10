@@ -4,12 +4,13 @@ import time
 from contextlib import contextmanager
 from unittest import mock
 
-from dcim.models import ModuleBay, RearPort
+from dcim.models import Device, DeviceType, Module, ModuleBay, RearPort
 from django.db import connection, transaction
 
 from netbox_device_view.artwork import overrides, pins, review
 from netbox_device_view.artwork.type_lock import lock_bulk_writes
 from netbox_device_view.models import (
+    Association,
     BindingOverride,
     DefinitionRevision,
     InstancePin,
@@ -18,10 +19,20 @@ from netbox_device_view.models import (
 
 from .test_activation_review_concurrency import (
     WAIT_SECONDS,
+    WITHOUT_R1,
     ConcurrentActivationTestCase,
     lock_table,
 )
-from .test_artwork_activation import REVIEW_AGAIN
+from .test_artwork_activation import REVIEW_AGAIN, review_url, token_of
+from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
+
+BAY_NM = "  bay-nm:\n    face: front\n    module_bay: Network Module\n"
+assert MANIFEST.endswith(BAY_NM)
+WITHOUT_BAY = {
+    **FILES,
+    "manifest.yaml": MANIFEST.replace(BAY_NM, "").replace("bays:\n", "bays: {}\n"),
+    "front.svg": FRONT_SVG.replace('id="bay-nm" ', ""),
+}
 
 # A short lock timeout keeps the tests of the timeout fast.
 SHORT_LOCK_TIMEOUT_MS = 200
@@ -154,6 +165,54 @@ class ChangeAfterTheCompositionTests(LockHoldTestCase):
         )
 
         self.assertTrue(InstancePin.objects.filter(device=self.device).exists())
+
+    def second_affected_device(self, candidate):
+        """Return the device of a second selected type: it has the active revision, and ``candidate`` is selected."""
+        device_type = DeviceType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="SW-9", slug="sw-9"
+        )
+        device = Device.objects.create(
+            name="sw9", device_type=device_type, site=self.site, role=self.role
+        )
+        self.second = Association.objects.create(
+            device_type=device_type, revision=self.revision
+        )
+        self.url = review_url(
+            (self.newer, self.device_type), (self.import_files(candidate), device_type)
+        )
+        return device
+
+    def assertBlockedNow(self):
+        """Check that a new review of the moved state blocks, and that no association changed."""
+        self.assertIsNone(token_of(self.clients[0].get(self.url)))
+        self.second.refresh_from_db()
+        self.assertEqual(self.second.revision, self.revision)
+
+    def test_a_component_moved_to_another_affected_device(self):
+        # The candidate of sw1 keeps con-r1; the candidate of sw9 drops it.
+        sw9 = self.second_affected_device(WITHOUT_R1)
+        RearPort.objects.filter(pk=self.spare.pk).update(name="R1")
+
+        # NetBox refuses this move in clean(); a direct write keeps the pk, the name and the module.
+        self.activation_after_its_composition(
+            lambda: RearPort.objects.filter(pk=self.spare.pk).update(device=sw9)
+        )
+
+        self.assertBlockedNow()
+
+    def test_a_module_and_its_bay_moved_to_another_affected_device(self):
+        # The candidate of sw1 draws the module in its bay; the candidate of sw9 has no bay.
+        sw9 = self.second_affected_device(WITHOUT_BAY)
+        self.module_association()
+
+        def move():
+            # A move of a nested module changes only the device of its rows.
+            ModuleBay.objects.filter(pk=self.bay.pk).update(device=sw9)
+            Module.objects.filter(module_bay=self.bay).update(device=sw9)
+
+        self.activation_after_its_composition(move)
+
+        self.assertBlockedNow()
 
     def test_an_override(self):
         self.activation_after_its_composition(
