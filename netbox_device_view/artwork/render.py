@@ -8,6 +8,7 @@ bytes reach the page as they are. Every id gets the prefix of its occurrence,
 import logging
 import math
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 
 import tinycss2
@@ -53,6 +54,10 @@ _NOT_XML = dict.fromkeys(
 # A generated local id starts with "-"; an author id starts with a letter.
 _OCCUPIED = "-occupied-"
 _FOCUS = "-focus-"
+# The properties that can hide paint; the focus ring copy drops them and paints black.
+_PAINT = frozenset(
+    {"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "visibility"}
+)
 # The outline width as a part of the larger face dimension.
 _OUTLINE = 1 / 300
 
@@ -264,14 +269,41 @@ def _link(element, state: ComponentState, outline, ring):
         # WebKit paints no outline on an SVG element, so the page CSS shows this ring on focus.
         etree.SubElement(
             link,
-            f"{{{SVG_NS}}}use",
+            f"{{{SVG_NS}}}g",
             {
                 "class": "dv-art-focus-ring",
-                "href": f"#{element.get('id')}",
                 "filter": f"url(#{ring.get('id')})",
+                "fill": "#000",
+                "stroke": "#000",
                 "aria-hidden": "true",
             },
-        )
+        ).append(_shape(element))
+
+
+def _shape(element):
+    """Return a copy of the connector without ids, titles and paint; the ring draws its shape."""
+    shape = deepcopy(element)
+    shape.tail = None
+    for text in list(shape.iterdescendants(_TITLE, f"{{{SVG_NS}}}desc")):
+        text.getparent().remove(text)
+    for node in shape.iter(etree.Element):
+        for name in ("id", *_PAINT):
+            node.attrib.pop(name, None)
+        style = node.get("style")
+        if style is not None:
+            declarations = tinycss2.parse_declaration_list(
+                style, skip_comments=True, skip_whitespace=True
+            )
+            kept = ";".join(
+                f"{declaration.lower_name}:{tinycss2.serialize(declaration.value)}"
+                for declaration in declarations
+                if declaration.lower_name not in _PAINT
+            )
+            if kept:
+                node.set("style", kept)
+            else:
+                del node.attrib["style"]
+    return shape
 
 
 def _xml_text(value: str) -> str:

@@ -59,7 +59,7 @@ def test_each_focusable_svg_element_shows_its_focus_ring():
 
 
 def test_each_focusable_svg_element_has_an_outline():
-    # Blink and Gecko paint it also for a connector without paint, where the ring draws nothing.
+    # Blink and Gecko paint the outline; WebKit shows only the ring.
     found = dict(rules())
     for name in SVG_CLASSES:
         outline = found.get(f".{name}:focus-visible", {}).get("outline", "none")
