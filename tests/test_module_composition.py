@@ -499,6 +499,29 @@ def activate_alias_revision(test):
     activation.activate(test.admin, imported.revision, test.inventory.nm_type)
 
 
+def activate_unresolved_bay_revision(test):
+    """Activate a network module revision with two more bays whose {module} tokens do not fit the depth of a network module."""
+    bay = '  bay-slot: {face: installed, module_bay: "Slot {module}"}'
+    files = {
+        "manifest.yaml": NM_MANIFEST.replace(
+            bay,
+            bay
+            + '\n  bay-two: {face: installed, module_bay: "Slot {module}/{module}"}'
+            + '\n  bay-three: {face: installed, module_bay: "{module}/{module}/{module}"}',
+        ),
+        "installed.svg": NM_SVG.replace(
+            '<rect id="bay-slot"',
+            '<rect id="bay-two" x="60" y="10" width="14" height="10"/>\n'
+            '  <rect id="bay-three" x="76" y="10" width="14" height="10"/>\n'
+            '  <rect id="bay-slot"',
+        ),
+    }
+    [imported] = import_bundle(
+        test.admin, "unresolved.zip", io.BytesIO(bundle(definition("NM", files)))
+    )
+    activation.activate(test.admin, imported.revision, test.inventory.nm_type)
+
+
 class DuplicateBayTests(CompositionTestCase):
     def test_two_bays_that_resolve_to_one_module_bay_draw_the_module_once(self):
         activate_alias_revision(self)
@@ -546,6 +569,22 @@ def install_loop_chain(test, length):
         chain.append(test.inventory.install(bay, loop))
         bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
     return chain
+
+
+class UnresolvedBayTests(CompositionTestCase):
+    def test_a_bay_whose_module_tokens_do_not_fit_the_depth_is_not_drawn(self):
+        activate_unresolved_bay_revision(self)
+        content = self.tab()
+        front = faces(content)[0]
+        self.assertEqual(
+            [i for i in ids(front) if "--not-recorded-" in i],
+            [
+                f"{self.part_id(self.inventory.nm2)}-installed--not-recorded-bay-slot",
+                f"{self.part_id()}-front--not-recorded-bay-spare",
+            ],
+        )
+        self.assertIsNotNone(self.group(front, self.inventory.nm1, self.inventory.sfp))
+        self.assertEqual(warnings(content), [])
 
 
 class DepthTests(CompositionTestCase):
