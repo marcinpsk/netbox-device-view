@@ -287,7 +287,7 @@ def _shape(element, defs, prefix):
     shape = deepcopy(element)
     shape.tail = None
     for text in list(shape.iterdescendants(_TITLE, f"{{{SVG_NS}}}desc")):
-        text.getparent().remove(text)
+        _remove_keeping_tail(text)
     for node in shape.iter(etree.Element):
         for name in ("id", *_PAINT):
             node.attrib.pop(name, None)
@@ -312,6 +312,17 @@ def _shape(element, defs, prefix):
         if href is not None:
             use.set("href", f"#{_paintless(root, href[1:], defs, prefix)}")
     return shape
+
+
+def _remove_keeping_tail(node) -> None:
+    """Remove ``node``; lxml removes its tail too, and the tail is text that the parent draws."""
+    parent, previous = node.getparent(), node.getprevious()
+    if node.tail:
+        if previous is not None:
+            previous.tail = (previous.tail or "") + node.tail
+        else:
+            parent.text = (parent.text or "") + node.tail
+    parent.remove(node)
 
 
 def _paintless(root, ident: str, defs, prefix: str) -> str:
