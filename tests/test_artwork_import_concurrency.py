@@ -28,9 +28,12 @@ def faces_bundle(key, front, rear):
 
 
 def waiting_advisory_locks():
+    """Return the number of advisory lock requests in this database that wait."""
     with connection.cursor() as cursor:
+        # pg_locks shows the whole server, so a wait in another database must not count.
         cursor.execute(
             "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+            " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
         )
         return cursor.fetchone()[0]
 
