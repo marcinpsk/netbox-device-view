@@ -442,6 +442,9 @@ class ArtworkTabTests(ArtworkTestCase):
                 "filter": f"url(#{prefix}-focus-con-r1)",
                 "fill": "#000",
                 "stroke": "#000",
+                "fill-opacity": "1",
+                "stroke-opacity": "1",
+                "visibility": "visible",
                 "aria-hidden": "true",
             },
         )
@@ -480,6 +483,30 @@ class ArtworkTabTests(ArtworkTestCase):
             etree.tostring(target, encoding="unicode", with_tail=False),
             f'<rect xmlns="{SVG_NS}" x="200" y="10" width="12" height="10"'
             f' id="{prefix}-shape-hit"/>',
+        )
+
+    def test_the_focus_ring_paints_under_an_ancestor_without_paint(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>',
+                '<g fill-opacity="0" stroke-opacity="0" visibility="hidden">'
+                '<rect id="con-r1" x="200" y="10" width="12" height="10"'
+                ' fill-opacity="1" visibility="visible"/></g>',
+            ),
+        )
+        self.activate()
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        [ring] = links(faces(self.tab())[0])[f"{prefix}con-r1"].findall(
+            f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']"
+        )
+        # The ring sets each inherited paint property, so no ancestor value hides it.
+        self.assertEqual(
+            {
+                name: ring.get(name)
+                for name in ("fill-opacity", "stroke-opacity", "visibility")
+            },
+            {"fill-opacity": "1", "stroke-opacity": "1", "visibility": "visible"},
         )
 
     def test_the_focus_ring_keeps_the_text_after_a_title(self):
