@@ -2,7 +2,7 @@
 
 A read-only, versioned JSON endpoint that composes a device's SVG layout — structure, port colours, connection state, cable colour, and peer summaries — into a single response. It exists for API clients (e.g. the [netbox-companion](https://github.com/peterbaumert/netbox-companion) mobile app) that render the layout natively instead of embedding NetBox's own HTML/JavaScript device-view page.
 
-The existing [DeviceView CRUD API](configuration.md) (`/api/plugins/device_view/device-view/`) only exposes layout *configuration* (the raw YAML/CSS a device type uses). It does not compose that configuration against a specific device's real interfaces, cables, and connection state — that composition happens in the web UI via [`ports.html`'s inline JavaScript](how-it-works.md). This endpoint moves that composition server-side so API clients don't have to reimplement it.
+The existing [DeviceView CRUD API](configuration.md) (`/api/plugins/device_view/device-view/`) only exposes layout *configuration* (the raw YAML/CSS a device type uses). It does not compose that configuration against a specific device's real interfaces, cables, and connection state. This endpoint gives that composition to API clients, so they do not have to implement it again. The web UI and this endpoint use the same server module, `netbox_device_view.components` (see [How it works](how-it-works.md)).
 
 ---
 
