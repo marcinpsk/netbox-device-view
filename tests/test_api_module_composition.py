@@ -1,12 +1,16 @@
 """The artwork API lists each placed module from the same resolver as the Device View tab."""
 
+from dcim.models import Device, Interface, Module, ModuleBay, PowerPort
 from django.urls import reverse
 from lxml import etree
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
-from users.models import Token
+from users.models import Token, User
+
+from netbox_device_view.models import Association
 
 from .module_samples import CHASSIS_SVG
+from .permissions import grant
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, links
 from .test_module_composition import (
@@ -19,7 +23,10 @@ from .test_module_composition import (
 class ModuleApiTestCase(CompositionTestCase):
     def setUp(self):
         super().setUp()
-        token = Token.objects.create(user=self.user)
+        self.authenticate(self.user)
+
+    def authenticate(self, user):
+        token = Token.objects.create(user=user)
         self.api = APIClient()
         self.api.credentials(
             HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
@@ -154,6 +161,60 @@ class FaceAgreementTests(ModuleApiTestCase):
                 self.assertTrue(
                     page[page_id].get("href").endswith(f"/{binding['object_id']}/")
                 )
+
+
+class BayStateApiTests(ModuleApiTestCase):
+    def bay(self, parent):
+        [entry] = [
+            entry
+            for entry in self.artwork()["bays"]
+            if entry["parent_module_id"] == parent.pk
+        ]
+        return entry
+
+    def test_an_empty_schematic_slot_is_not_recorded_without_a_module_or_bay_key(
+        self,
+    ):
+        nm2 = self.inventory.nm2
+        Association.objects.filter(module_type=self.inventory.nm_type).delete()
+        slot = ModuleBay.objects.get(module=nm2)
+        self.assertEqual(
+            self.bay(nm2),
+            {
+                "parent_module_id": nm2.pk,
+                "bay_key": None,
+                "module_bay_id": slot.pk,
+                "face": "front",
+                "state": "not_recorded",
+                "module_id": None,
+                "element_id": (
+                    f"dv-a-d{self.device.pk}-m{nm2.pk}-schematic-slot-{slot.pk}"
+                ),
+            },
+        )
+
+    def test_an_installed_module_that_the_user_cannot_view_is_not_recorded(self):
+        nm1 = self.inventory.nm1
+        user = User.objects.create_user(username="partial")
+        for model in (Device, Interface, PowerPort, ModuleBay):
+            grant(user, model, "view")
+        grant(user, Module, "view", constraints={"id__in": [nm1.pk]})
+        self.authenticate(user)
+        self.assertEqual(list(self.modules()), [nm1.pk])
+        self.assertEqual(
+            self.bay(nm1),
+            {
+                "parent_module_id": nm1.pk,
+                "bay_key": "bay-slot",
+                "module_bay_id": self.inventory.sfp.module_bay_id,
+                "face": "front",
+                "state": "not_recorded",
+                "module_id": None,
+                "element_id": (
+                    f"dv-a-d{self.device.pk}-m{nm1.pk}-installed--not-recorded-bay-slot"
+                ),
+            },
+        )
 
 
 class ModuleWarningTests(ModuleApiTestCase):
