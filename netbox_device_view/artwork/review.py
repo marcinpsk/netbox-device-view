@@ -28,6 +28,7 @@ from ..models import (
     BindingOverride,
     DefinitionRevision,
     InstancePin,
+    RevisionFile,
     active_revisions,
     instance_scope,
     share_rows,
@@ -41,9 +42,11 @@ from .render import (
     DAMAGED,
     Part,
     part_label,
+    read_faces,
     resolve_device,
     resolve_schematic,
 )
+from .storage import lock_digest
 from .type_lock import lock_bulk_writes, lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
@@ -249,6 +252,8 @@ class Review:
     listed_rows: frozenset = frozenset()
     # False when the impact set changed while the review read it.
     stable: bool = True
+    # The revisions whose stored artwork the composition read as damaged.
+    damaged: frozenset = frozenset()
     token: str | None = field(default=None, compare=False)
 
     @property
@@ -401,6 +406,8 @@ def _apply(user, pairs, fingerprint, reviewed) -> list[Association]:
         not reviewed.stable
         or reviewed.fingerprint != current_fingerprint
         or reviewed.dependency_types != current.dependency_types
+        # A damaged face draws no modules, so a repair can make a blocker.
+        or _repaired(reviewed.damaged)
     ):
         raise _StaleReview
     if (
@@ -412,6 +419,20 @@ def _apply(user, pairs, fingerprint, reviewed) -> list[Association]:
     # The write uses the associations that the locks hold, not those of the composition.
     changed = [_write(user, pair, associations.get(pair.key)) for pair in pairs]
     return [association for association in changed if association is not None]
+
+
+def _repaired(revisions) -> bool:
+    """Return True when the stored artwork of one of ``revisions`` is readable now."""
+    # An import writes a stored file again under the lock of its digest; the lock keeps it until the commit.
+    for digest in sorted(
+        set(
+            RevisionFile.objects.filter(revision__in=revisions).values_list(
+                "blob__digest", flat=True
+            )
+        )
+    ):
+        lock_digest(digest)
+    return any(read_faces(revision) is not None for revision in revisions)
 
 
 def _bound_lock_waits(aliases) -> None:
@@ -643,6 +664,13 @@ def _inspect(user, pairs) -> Review:
         # The page shows the fingerprinted objects only when nothing changed while the review read them.
         stable=_snapshot(pairs)[2] == fingerprint,
         listed_rows=affected.listed_rows,
+        damaged=frozenset(
+            part.revision
+            for change in changes
+            for state in (change.active, change.candidate)
+            for part in (state, *state.modules)
+            if part.damaged
+        ),
     )
 
 

@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from dcim.models import Device, DeviceType, Module, ModuleBay, RearPort
+from django.core.files.storage import default_storage
 from django.db import connection, transaction
 
 from netbox_device_view.artwork import overrides, pins, review
@@ -100,6 +101,14 @@ class LockHoldTestCase(ConcurrentActivationTestCase):
         self.assertContains(response, "No association changed.", status_code=409)
         self.assertUnchanged()
 
+    def damaged_active_artwork(self):
+        """Select a candidate without the bay of the installed module, and remove the stored active face."""
+        # The damaged active face draws no module, so the review lets the candidate drop the bay.
+        self.module_association()
+        self.newer = self.import_files(WITHOUT_BAY)
+        self.url = review_url((self.newer, self.device_type))
+        default_storage.delete(self.revision.files.get(path="front.svg").blob.name)
+
 
 class CompositionTests(LockHoldTestCase):
     def test_the_activation_holds_no_lock_while_it_composes(self):
@@ -133,6 +142,13 @@ class CompositionTests(LockHoldTestCase):
 
         self.assertRejected(activation[:2], review.CHANGED)
         self.assertFalse(DefinitionRevision.objects.filter(pk=candidate).exists())
+
+    def test_an_activation_over_damaged_active_artwork(self):
+        self.damaged_active_artwork()
+        response = self.clients[0].post(self.url, {"token": self.token()})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertActivated()
 
 
 class ChangeAfterTheCompositionTests(LockHoldTestCase):
@@ -213,6 +229,16 @@ class ChangeAfterTheCompositionTests(LockHoldTestCase):
         self.activation_after_its_composition(move)
 
         self.assertBlockedNow()
+
+    def test_a_repair_of_the_damaged_active_artwork(self):
+        self.damaged_active_artwork()
+        with self.composed() as activation:
+            # Each import writes a missing stored file again; no fingerprinted row changes.
+            self.import_files(FILES)
+
+        # The second composition draws the module, and the candidate does not.
+        self.assertRejected(activation, review.CHANGED)
+        self.assertIsNone(token_of(self.clients[0].get(self.url)))
 
     def test_an_override(self):
         self.activation_after_its_composition(
