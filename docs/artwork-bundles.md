@@ -328,7 +328,7 @@ Press **Escape** or click the close button to close the details. The focus then 
 
 - A first activation for a type needs the **add** permission on **Artwork association**. A later activation, and a rollback, need the **change** permission on the association of the type. Constraints of these permissions apply to the association after the change.
 - You must be able to view the revision and the type.
-- The review needs the **view** permission on each affected device and on each installed module, module bay and component of those devices: interfaces, console ports, console server ports, front ports, rear ports, power ports and power outlets. It also needs the view permission on each binding override of the selected types. Without one of them, the review shows only "Your permissions do not cover every affected object.". It shows no names and no counts, and you cannot activate.
+- The review needs the **view** permission on each affected device and on each installed module, module bay and component of those devices: interfaces, console ports, console server ports, front ports, rear ports, power ports and power outlets. It also needs the view permission on each binding override of the selected types, and on the instance pin of each pinned device or module that the review lists. Without one of them, the review shows only "Your permissions do not cover every affected object.". It shows no names and no counts, and you cannot activate.
 - The permission to view a device gives no permission to activate.
 - The association pages need the **view** permission on **Artwork association**.
 - The artwork view needs no permission on the association or the revision. Components, cables, modules and module bays show only when you can view them.

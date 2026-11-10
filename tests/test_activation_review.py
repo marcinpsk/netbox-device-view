@@ -7,15 +7,18 @@ import time
 from unittest import mock
 
 from dcim.models import (
+    ConsolePort,
     ConsoleServerPort,
     Device,
     DeviceType,
+    FrontPort,
     Interface,
     Module,
     ModuleBay,
     ModuleType,
     PowerOutlet,
     PowerPort,
+    RearPort,
 )
 from django.contrib.messages import get_messages
 from django.core import signing
@@ -660,6 +663,7 @@ class VisibilityTests(ReviewTestCase):
         self.newer = self.import_files(NEWER)
         self.sw2 = self.make_device("sw2")
         self.install()
+        InstancePin.objects.create(device=self.sw2, revision=self.revision)
 
     def assertHidden(self, response):
         self.assertEqual(response.status_code, 200)
@@ -684,6 +688,11 @@ class VisibilityTests(ReviewTestCase):
             (Module, {"pk": 0}),
             (ModuleBay, {"pk": 0}),
             (PowerPort, {"name": "other"}),
+            (ConsolePort, {"pk": 0}),
+            (FrontPort, {"pk": 0}),
+            (RearPort, {"pk": 0}),
+            # The review shows the pin of sw2.
+            (InstancePin, {"pk": 0}),
         ):
             with self.subTest(model=model.__name__):
                 permission = ObjectPermission.objects.get(
@@ -696,6 +705,18 @@ class VisibilityTests(ReviewTestCase):
                 finally:
                     permission.constraints = None
                     permission.save()
+
+    def test_a_hidden_pin_of_an_installed_module_hides_the_review(self):
+        self.activate_module_type()
+        InstancePin.objects.create(
+            module=self.install(self.sw2), revision=self.module_revision
+        )
+        newer = self.import_files(NEW_MODULE, "ACME/NM-2X")
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.instancepin view"
+        ).update(constraints={"pk": 0})
+
+        self.assertHidden(self.review((newer, self.module_type)))
 
     def test_an_activation_after_a_loss_of_visibility_is_refused(self):
         url = review_url((self.newer, self.device_type))

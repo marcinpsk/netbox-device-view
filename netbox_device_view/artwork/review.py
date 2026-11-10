@@ -588,6 +588,12 @@ def _visible(user, pairs, affected) -> bool:
             for model in (Module, ModuleBay, *BINDABLE_MODELS)
         ),
         BindingOverride.objects.filter(_depending_on(p.hardware_type for p in pairs)),
+        # The review marks each pinned instance of the types.
+        InstancePin.objects.filter(
+            functools.reduce(
+                operator.or_, (_pins_of(p.hardware_type) for p in pairs), Q(pk__in=[])
+            )
+        ),
     )
     return all(qs.restrict(user, "view").count() == qs.count() for qs in querysets)
 
