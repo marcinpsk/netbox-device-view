@@ -246,7 +246,7 @@ A cable that you cannot view gives no cable mark. The path state is in the toolt
 
 Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link and has the mark for no component found. The plugin never selects one component for a connector with several bindings: a click opens its details instead. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
-A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
+Each member of a virtual chassis resolves alone, so members with artwork, layouts and schematics show together. See [Virtual chassis](virtual-chassis.md).
 
 ### Module bays
 
