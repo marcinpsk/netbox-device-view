@@ -9,7 +9,11 @@ from users.models import Token
 from .module_samples import CHASSIS_SVG
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, links
-from .test_module_composition import CompositionTestCase, activate_alias_revision
+from .test_module_composition import (
+    CompositionTestCase,
+    activate_alias_revision,
+    activate_unresolved_bay_revision,
+)
 
 
 class ModuleApiTestCase(CompositionTestCase):
@@ -231,4 +235,21 @@ class DuplicateBayApiTests(ModuleApiTestCase):
                 for entry in entries
             ],
             [("bay-alias", ["duplicate_bay"])],
+        )
+
+
+class UnresolvedBayApiTests(ModuleApiTestCase):
+    def test_a_bay_whose_module_tokens_do_not_fit_the_depth_has_no_entry(self):
+        activate_unresolved_bay_revision(self)
+        inventory = self.inventory
+        self.assertEqual(
+            [
+                (entry["parent_module_id"], entry["bay_key"], entry["state"])
+                for entry in self.artwork()["bays"]
+                if entry["parent_module_id"] is not None
+            ],
+            [
+                (inventory.nm1.pk, "bay-slot", "installed"),
+                (inventory.nm2.pk, "bay-slot", "not_recorded"),
+            ],
         )

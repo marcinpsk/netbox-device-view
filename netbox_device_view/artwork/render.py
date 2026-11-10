@@ -608,6 +608,9 @@ class _Composer:
             name = item["module_bay"]
             if scope.module is not None:
                 name = resolve_name(ModuleBay, name, scope.module)
+                # NetBox makes no module bay when the {module} tokens do not fit the depth.
+                if name is None:
+                    continue
             mapped.setdefault(name, []).append(key)
         owner = None if scope.module is None else scope.module.pk
         for name, (key, *others) in mapped.items():
