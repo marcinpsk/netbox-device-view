@@ -255,9 +255,8 @@ class ArtworkTabTests(ArtworkTestCase):
             self.assertTrue(all(i.startswith(prefix) for i in ids(face)), ids(face))
             self.assertLessEqual(set(references(face)), set(ids(face)))
         front = faces(self.tab())[0]
-        # Each focus ring refers to its connector and to its filter.
-        locals_ = ("edge", "led", "metal", "con-eth1", "con-r1")
-        locals_ += ("-focus-con-eth1", "-focus-con-r1")
+        # Each focus ring refers to its filter.
+        locals_ = ("edge", "led", "metal", "-focus-con-eth1", "-focus-con-r1")
         self.assertEqual(
             sorted(set(references(front))),
             sorted(f"dv-o-d{self.device.pk}-front-{local}" for local in locals_),
@@ -394,8 +393,13 @@ class ArtworkTabTests(ArtworkTestCase):
         rings = {}
         for face in (front, rear):
             for ident, link in links(face).items():
-                [ring] = link.findall(f"{{{SVG_NS}}}use[@class='dv-art-focus-ring']")
-                self.assertEqual(ring.get("href"), f"#{ident}")
+                [ring] = link.findall(f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']")
+                connector = next(child for child in link if child.get("id") == ident)
+                # The ring draws a copy of the connector.
+                self.assertEqual(
+                    (ring[0].tag, ring[0].get("width")),
+                    (connector.tag, connector.get("width")),
+                )
                 self.assertEqual(ring.get("aria-hidden"), "true")
                 rings[ident] = filters[ring.get("filter")[5:-1]]
         self.assertEqual(
@@ -414,6 +418,39 @@ class ArtworkTabTests(ArtworkTestCase):
         )
         # The ring draws only the outline; the link draws the connector.
         self.assertNotIn("SourceGraphic", etree.tostring(ring, encoding="unicode"))
+
+    def test_the_focus_ring_draws_a_connector_without_paint(self):
+        # WebKit paints no outline on an SVG element, so the ring must not depend on the paint.
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-r1" x="200" y="10" width="12" height="10" fill="#111"/>',
+                '<g id="con-r1" opacity="0" style="visibility:hidden;font-size:4px">'
+                '<title>R1</title><rect id="con-r1-area" x="200" y="10" width="12"'
+                ' height="10" fill="none" fill-opacity="0" stroke-opacity="0"'
+                ' style="stroke:none;stroke-width:2;fill:url(#metal)"/></g>',
+            ),
+        )
+        self.activate()
+        prefix = f"dv-o-d{self.device.pk}-front-"
+        link = links(faces(self.tab())[0])[f"{prefix}con-r1"]
+        [ring] = link.findall(f"{{{SVG_NS}}}g[@class='dv-art-focus-ring']")
+        self.assertEqual(
+            dict(ring.attrib),
+            {
+                "class": "dv-art-focus-ring",
+                "filter": f"url(#{prefix}-focus-con-r1)",
+                "fill": "#000",
+                "stroke": "#000",
+                "aria-hidden": "true",
+            },
+        )
+        # The copy keeps the shape and drops the paint, the ids and the titles.
+        self.assertEqual(
+            etree.tostring(ring[0], encoding="unicode"),
+            f'<g xmlns="{SVG_NS}" style="font-size:4px">'
+            '<rect x="200" y="10" width="12" height="10" style="stroke-width:2"/></g>',
+        )
 
     def test_each_face_scrolls_with_the_keyboard(self):
         self.activate()
@@ -506,7 +543,10 @@ class CableOccupancyTests(ArtworkTestCase):
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector")
         self.assertIsNone(link.get("filter"))
-        rings = {ring.get("filter") for ring in front.iter(f"{{{SVG_NS}}}use")}
+        rings = {
+            ring.get("filter")
+            for ring in front.iterfind(f".//{{{SVG_NS}}}g[@class='dv-art-focus-ring']")
+        }
         for element in front.iter(f"{{{SVG_NS}}}filter"):
             self.assertIn(f"url(#{element.get('id')})", rings)
 
