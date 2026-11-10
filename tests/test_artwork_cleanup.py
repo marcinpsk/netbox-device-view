@@ -1,4 +1,4 @@
-"""The system job that removes artwork blobs that no revision uses."""
+"""The artwork blob cleanup: what it removes, its daily system job, and its wait for an import that holds the digest lock."""
 
 import os
 import shutil
