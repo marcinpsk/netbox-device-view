@@ -12,6 +12,7 @@ from dcim.models import (
     PowerPort,
     VirtualChassis,
 )
+from django.apps import apps
 from django.urls import reverse
 from lxml import etree
 from rest_framework.test import APIClient
@@ -34,6 +35,87 @@ from .test_artwork_device_view import (
 
 API_URL = "plugins-api:netbox_device_view-api:device_artwork"
 LAYOUT_URL = "plugins-api:netbox_device_view-api:device_rendered_layout"
+# The outer mark class of a connector with one found binding, from its cable status.
+CABLE_CLASSES = {
+    status: f"dv-art-cable-{status}"
+    for status in ("connected", "planned", "decommissioning")
+}
+
+
+def device_members(test, device, user):
+    """Return the members of ``device`` that ``user`` gets from the artwork API."""
+    token = Token.objects.create(user=user)
+    api = APIClient()
+    api.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
+    )
+    response = api.get(reverse(API_URL, kwargs={"pk": device.pk}))
+    test.assertEqual(response.status_code, 200, response.content[:500])
+    return response.json()["members"]
+
+
+def member_artwork(test, device, user):
+    """Return the artwork of the one member of ``device`` that ``user`` gets from the API."""
+    [member] = device_members(test, device, user)
+    return member["artwork"]
+
+
+def page_agreement(content):
+    """Return the ids of each overview face and {connector id: (href, mark classes)}, with the ids of the API."""
+    drawn = faces(content)
+    # The page adds the mark and the focus ring filters of its connectors.
+    face_ids = [
+        [
+            i.replace("dv-o-", "dv-a-", 1)
+            for i in ids(face)
+            if "-marks-" not in i and "-focus-" not in i
+        ]
+        for face in drawn
+    ]
+    connectors = {}
+    for face in drawn:
+        for wrapper in face.iter():
+            classes = set((wrapper.get("class") or "").split())
+            if "dv-art-connector" not in classes:
+                continue
+            [element] = [child for child in wrapper if child.get("id")]
+            key = element.get("id").replace("dv-o-", "dv-a-", 1)
+            connectors[key] = (wrapper.get("href"), classes - {"dv-art-connector"})
+    return face_ids, connectors
+
+
+def api_agreement(artwork):
+    """Return the ids of each API face and {connector id: (href, mark classes)} that the bindings give."""
+    face_ids = [ids(etree.fromstring(face["svg"])) for face in artwork["faces"]]
+    connectors = {
+        connector["element_id"]: binding_state(connector["bindings"])
+        for connector in [
+            *artwork["connectors"],
+            *(c for module in artwork["modules"] for c in module["connectors"]),
+        ]
+        if connector["element_id"] is not None
+    }
+    return face_ids, connectors
+
+
+def binding_state(bindings):
+    """Return the link and the mark classes that the page shows for ``bindings``."""
+    if not bindings or any(b["status"] != "found" for b in bindings):
+        return None, {"dv-art-unresolved"}
+    if len(bindings) > 1:
+        return None, {"dv-art-several"}
+    [binding] = bindings
+    component = apps.get_model(binding["object_type"]).objects.get(
+        pk=binding["object_id"]
+    )
+    classes = set()
+    if binding["cable_status"] in CABLE_CLASSES:
+        classes.add(CABLE_CLASSES[binding["cable_status"]])
+    elif binding["marked_connected"]:
+        classes.add("dv-art-marked")
+    if binding["enabled"] is False:
+        classes.add("dv-art-disabled")
+    return component.get_absolute_url(), classes
 
 
 class ArtworkApiTestCase(ArtworkTestCase):

@@ -3,26 +3,31 @@
 import io
 import shutil
 import tempfile
+from collections import Counter
 
+import lxml.html
 from dcim.models import (
+    Cable,
     ConsolePort,
+    ConsoleServerPort,
     Device,
     DeviceRole,
+    DeviceType,
     Interface,
     Module,
     ModuleBay,
+    PowerPort,
     Site,
 )
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from lxml import etree
-from rest_framework.test import APIClient
-from users.constants import TOKEN_PREFIX
-from users.models import Token, User
+from users.models import User
 
 from netbox_device_view.artwork.importing import import_bundle
 
 from .activation import activate
+from .permissions import grant
 from .reference_samples import (
     ARTWORK,
     COMMUNITY,
@@ -30,8 +35,9 @@ from .reference_samples import (
     community_type,
     definition_bundle,
 )
-from .test_api_artwork import API_URL
-from .test_artwork_device_view import TAB_URL, faces, links
+from .test_api_artwork import api_agreement, member_artwork, page_agreement
+from .test_artwork_device_view import TAB_URL, faces, ids, links, references
+from .test_assembly_focus import VIEWS, focus_faces, text
 
 DIRECTORIES = ("Cisco/C8300-1N1S-6T", "Cisco/C-SM-16P4M2X", "Cisco/GLC-TE")
 CHASSIS = "device-types/Cisco/C8300-1N1S-6T.yaml"
@@ -75,21 +81,16 @@ class C8300TestCase(TestCase):
             device=device, module_bay=bay, module_type=module_type
         )
 
-    def tab_faces(self, device):
+    def tab(self, device):
         response = self.client.get(reverse(TAB_URL, kwargs={"pk": device.pk}))
         self.assertEqual(response.status_code, 200)
-        return faces(response.content.decode())
+        return response.content.decode()
 
-    def artwork(self, device):
-        token = Token.objects.create(user=self.admin)
-        api = APIClient()
-        api.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
-        )
-        response = api.get(reverse(API_URL, kwargs={"pk": device.pk}))
-        self.assertEqual(response.status_code, 200)
-        [member] = response.json()["members"]
-        return member["artwork"]
+    def tab_faces(self, device):
+        return faces(self.tab(device))
+
+    def artwork(self, device, user=None):
+        return member_artwork(self, device, user or self.admin)
 
 
 class DefinitionTests(C8300TestCase):
@@ -146,7 +147,7 @@ class DefinitionTests(C8300TestCase):
             self.assertEqual(bay(directory, face, key), size(optic, "installed"))
 
 
-class NestedTests(C8300TestCase):
+class NestedTestCase(C8300TestCase):
     """The modules of the lab device: transceivers in the chassis and in the service module."""
 
     def setUp(self):
@@ -177,6 +178,25 @@ class NestedTests(C8300TestCase):
     def interface(self, module, name):
         return Interface.objects.get(device=self.router, module=module, name=name)
 
+    def cable(self, interface):
+        peer_type = DeviceType.objects.create(
+            manufacturer=self.router.device_type.manufacturer, model="Peer", slug="peer"
+        )
+        peer = Device.objects.create(
+            name="peer",
+            device_type=peer_type,
+            site=self.router.site,
+            role=self.router.role,
+        )
+        Cable(
+            a_terminations=[interface],
+            b_terminations=[
+                Interface.objects.create(device=peer, name="eth0", type="1000base-t")
+            ],
+        ).save()
+
+
+class NestedTests(NestedTestCase):
     def test_the_composed_view_binds_each_connector_to_the_component_of_its_part(self):
         expected = {
             f"{self.part()}-front-con-con0": ConsolePort.objects.get(
@@ -257,6 +277,148 @@ class NestedTests(C8300TestCase):
                 self.psu0.pk: ("schematic", []),
                 self.psu1.pk: ("schematic", []),
             },
+        )
+
+
+class AgreementTests(NestedTestCase):
+    """The page and the artwork API give the same ids, links and binding states."""
+
+    def setUp(self):
+        super().setUp()
+        self.cable(self.interface(self.optic4, "GigabitEthernet0/0/4"))
+
+    def test_the_page_and_the_api_agree_for_a_superuser(self):
+        page = page_agreement(self.tab(self.router))
+        api = api_agreement(self.artwork(self.router))
+        self.assertEqual(page, api)
+        rj45 = f"dv-a-d{self.router.pk}-m{self.optic4.pk}-installed-con-rj45"
+        self.assertEqual(api[1][rj45][1], {"dv-art-cable-connected"})
+
+    def test_the_page_and_the_api_agree_for_a_user_who_cannot_view_a_module_or_a_component(
+        self,
+    ):
+        user = User.objects.create_user(username="viewer")
+        for model in (
+            Device,
+            ConsolePort,
+            ConsoleServerPort,
+            PowerPort,
+            Cable,
+            ModuleBay,
+        ):
+            grant(user, model, "view")
+        hidden = self.interface(None, "GigabitEthernet0/0/1")
+        grant(
+            user,
+            Interface,
+            "view",
+            constraints={
+                "id__in": list(
+                    Interface.objects.exclude(pk=hidden.pk).values_list("pk", flat=True)
+                )
+            },
+        )
+        grant(
+            user,
+            Module,
+            "view",
+            constraints={
+                "id__in": list(
+                    Module.objects.exclude(pk=self.optic5.pk).values_list(
+                        "pk", flat=True
+                    )
+                )
+            },
+        )
+        self.client.force_login(user)
+
+        artwork = self.artwork(self.router, user)
+
+        self.assertEqual(page_agreement(self.tab(self.router)), api_agreement(artwork))
+        self.assertNotIn(self.optic5.pk, [m["module_id"] for m in artwork["modules"]])
+        self.assertIn(
+            ("bay-sfp5", "not_recorded", None),
+            [(b["bay_key"], b["state"], b["module_id"]) for b in artwork["bays"]],
+        )
+        [gi1] = [c for c in artwork["connectors"] if c["key"] == "con-gi0-0-1"]
+        self.assertEqual([b["status"] for b in gi1["bindings"]], ["missing"])
+
+
+class FocusTests(NestedTestCase):
+    """The service module and its transceiver have focus views of their own."""
+
+    def view(self, *modules):
+        """Return the focus view of the module at the end of the placement path ``modules``."""
+        page = lxml.html.fromstring(self.tab(self.router))
+        path = f"-d{self.router.pk}" + "".join(f"-m{m.pk}" for m in modules)
+        [view] = [v for v in page.xpath(VIEWS) if v.get("id").endswith(path)]
+        return view
+
+    def test_the_ids_of_the_page_are_unique_and_each_reference_stays_in_its_view(self):
+        content = self.tab(self.router)
+        drawn = [*faces(content), *(face for _, face in focus_faces(content))]
+        # The overview and a view for each of the 7 modules.
+        self.assertEqual(len(drawn), 2 + 7)
+        counts = Counter(ident for face in drawn for ident in ids(face))
+        self.assertEqual([i for i, n in counts.items() if n > 1], [])
+        for face in drawn:
+            self.assertLessEqual(set(references(face)), set(ids(face)))
+
+    def test_the_transceiver_of_the_service_module_has_a_breadcrumb_to_the_module_and_the_chassis(
+        self,
+    ):
+        sm = self.view(self.sm)
+        optic = self.view(self.sm, self.sm_optic)
+        self.assertEqual(optic.get("data-dv-parent"), sm.get("id"))
+        [crumbs] = optic.xpath(".//ol[contains(@class, 'breadcrumb')]")
+        self.assertEqual(
+            [
+                (text(li), li.xpath("./button/@data-dv-focus"), li.get("aria-current"))
+                for li in crumbs.xpath("./li")
+            ],
+            [
+                ("rtr1", [self.part()], None),
+                ("Cisco C-SM-16P4M2X in SM 1", [sm.get("id")], None),
+                ("Cisco GLC-TE in Transceiver 1/0/20", [], "page"),
+            ],
+        )
+
+    def test_two_transceivers_of_one_type_keep_their_own_cable_state(self):
+        port4 = self.interface(self.optic4, "GigabitEthernet0/0/4")
+        port5 = self.interface(self.optic5, "GigabitEthernet0/0/5")
+        self.cable(port4)
+
+        content = self.tab(self.router)
+        drawn = [*faces(content), *(face for _, face in focus_faces(content))]
+        found = {key: link for face in drawn for key, link in links(face).items()}
+
+        for optic, port, classes in (
+            (self.optic4, port4, "dv-art-connector dv-art-cable-connected"),
+            (self.optic5, port5, "dv-art-connector"),
+        ):
+            with self.subTest(optic.module_bay.name):
+                rj45 = [
+                    link
+                    for key, link in found.items()
+                    if key.endswith(f"-m{optic.pk}-installed-con-rj45")
+                ]
+                # The overview and the focus view of the transceiver.
+                self.assertEqual(len(rj45), 2)
+                for link in rj45:
+                    self.assertEqual(
+                        (link.get("href"), link.get("class")),
+                        (port.get_absolute_url(), classes),
+                    )
+        modules = {m["module_id"]: m for m in self.artwork(self.router)["modules"]}
+        self.assertEqual(
+            [
+                [
+                    b["cable_status"]
+                    for b in modules[optic.pk]["connectors"][0]["bindings"]
+                ]
+                for optic in (self.optic4, self.optic5)
+            ],
+            [["connected"], [None]],
         )
 
 
