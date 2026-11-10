@@ -277,6 +277,9 @@ def _link(element, state: ComponentState, outline, ring, prefix):
                 "filter": f"url(#{ring.get('id')})",
                 "fill": "#000",
                 "stroke": "#000",
+                "fill-opacity": "1",
+                "stroke-opacity": "1",
+                "visibility": "visible",
                 "aria-hidden": "true",
             },
         ).append(_shape(element, ring.getparent(), prefix))
