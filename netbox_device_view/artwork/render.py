@@ -444,13 +444,17 @@ def resolve_schematic(device, user, view=OVERVIEW, plain=False, selection=None) 
 
 
 def _read_faces(revision) -> dict[str, bytes] | None:
-    """Return {face: SVG bytes} of a revision, or None when a stored file is damaged."""
+    """Return {face: SVG bytes} of a revision, or None when a stored file is damaged or missing."""
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
     try:
-        return {
-            face: read_blob(blobs[revision.manifest["faces"][face]["file"]])
-            for face in revision.face_names
-        }
+        faces = {}
+        for face in revision.face_names:
+            path = revision.manifest["faces"][face]["file"]
+            if path not in blobs:
+                # A concurrent delete of the revision removes its files.
+                raise DamagedBlob(f"{path} is not a file of the revision.")
+            faces[face] = read_blob(blobs[path])
+        return faces
     except DamagedBlob as exc:
         logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
         return None

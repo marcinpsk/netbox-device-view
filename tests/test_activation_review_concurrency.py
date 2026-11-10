@@ -32,7 +32,7 @@ from django.test import Client, TransactionTestCase, override_settings
 from django.urls import reverse
 from users.models import User
 
-from netbox_device_view.artwork import overrides, pins
+from netbox_device_view.artwork import overrides, pins, review
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_key, lock_types
 from netbox_device_view.models import (
@@ -40,6 +40,7 @@ from netbox_device_view.models import (
     BindingOverride,
     DefinitionRevision,
     InstancePin,
+    RevisionFile,
 )
 
 from .artwork_samples import MODULE_FILES, bundle, definition
@@ -60,6 +61,13 @@ WITHOUT_R1 = {
     "manifest.yaml": MANIFEST.replace(R1, ""),
     "front.svg": FRONT_SVG.replace('id="con-r1" ', ""),
 }
+
+
+def lock_table(model):
+    """Lock the table of ``model`` against each read until the transaction ends."""
+    with connection.cursor() as cursor:
+        table = connection.ops.quote_name(model._meta.db_table)
+        cursor.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
 
 
 def waiting_locks():
@@ -492,3 +500,22 @@ class PinRevisionTests(ConcurrentActivationTestCase):
         delete[0].join(WAIT_SECONDS)
         self.assertEqual(InstancePin.objects.get().revision_id, revision)
         self.assertTrue(DefinitionRevision.objects.filter(pk=revision).exists())
+
+
+class CandidateDeleteTests(ConcurrentActivationTestCase):
+    """A delete of the candidate after the review reads it and before the review reads its files."""
+
+    def test_the_review_shows_a_deleted_candidate_as_damaged(self):
+        with transaction.atomic():
+            # The review waits at its first read of revision files: the active revision.
+            lock_table(RevisionFile)
+            page = self.start("review", lambda: self.clients[0].get(self.url))
+            self.wait_for_a_waiter(page[0])
+            self.newer.delete()
+
+        response = self.finish(*page)
+        self.assertContains(response, review.DAMAGED_CANDIDATE)
+        # The permission check reads the revision after the composition.
+        self.assertContains(response, review.NOT_VIEWABLE)
+        self.assertIsNone(token_of(response))
+        self.assertUnchanged()
