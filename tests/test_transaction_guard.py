@@ -3,11 +3,15 @@
 import ast
 from pathlib import Path
 
+from django.apps import apps
+
 from netbox_device_view.artwork.branching import CATALOGUE
 
 PACKAGE = Path(__file__).resolve().parent.parent / "netbox_device_view"
-# Catalogue models always route to main, so one transaction covers them.
-MAIN_ONLY = {label.split(".")[1] for label in CATALOGUE}
+# Catalogue models always route to main, so one transaction covers them. NetBox Branching exempts core models too.
+MAIN_ONLY = {label.split(".")[1] for label in CATALOGUE} | {
+    model._meta.model_name for model in apps.get_app_config("core").get_models()
+}
 
 
 def _using(call):
@@ -76,3 +80,5 @@ def test_the_guard_finds_a_branch_transaction_without_main():
     assert unpaired_branch_transactions(paired) == []
     catalogue = "with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):\n    pass\n"
     assert unpaired_branch_transactions(catalogue) == []
+    core = "with transaction.atomic(using=router.db_for_write(DataFile)):\n    pass\n"
+    assert unpaired_branch_transactions(core) == []
