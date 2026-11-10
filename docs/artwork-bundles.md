@@ -270,7 +270,23 @@ The review compares each affected device in two states. The active state uses th
 - A device or an installed module whose type is selected, and that has no revision in the active state, compares from an empty state. Nothing on it or below it blocks. Thus a first activation over a schematic does not block on a module that the artwork does not draw.
 - The components of a schematic are not bindings of a revision. The review compares only the connectors of the parts that artwork draws, and of the parts whose stored artwork is damaged: their bindings come from the manifest. The modules in the bays of a damaged face do not show, as on the Device View.
 
-The review writes nothing. When the affected objects change while the review reads them, the review has no **Activate** button: review the activation again. Otherwise its **Activate** button holds a signed token. The token is valid for 15 minutes, for your user, and in the branch of the review only. It holds the selection and a fingerprint of the affected objects: the associations, the affected devices, their installed modules, components and module bays, the pinned devices and modules that the review names, the instance pins and the binding overrides. Cable state is not in it. On activation, the plugin makes the review again before it locks these objects, so changes of these objects do not wait while it compares the devices. Then it locks these objects, reads the fingerprint again and checks your permissions again. It also reads again each stored artwork file that the review found damaged: an import can repair the file, and the repaired face can draw more modules. When the fingerprint, the blockers or your permissions differ, or a concurrent change locks the same objects, the activation stops with **Review the activation again**. When another change holds a lock on these objects for more than 10 seconds, the activation stops and tells you to try again. No association changes then. A change of these objects that starts while the activation holds its locks, for example the delete of an association or of a candidate revision, waits until the activation ends.
+The review writes nothing. When the affected objects change while the review reads them, the review has no **Activate** button: review the activation again. Otherwise its **Activate** button holds a signed token. The token is valid for 15 minutes, for your user, and in the branch of the review only. It holds the selection and a fingerprint of the affected objects: the associations, the affected devices, their installed modules, components and module bays, the pinned devices and modules that the review names, the instance pins and the binding overrides. Cable state is not in it.
+
+On activation, the plugin does these steps:
+
+1. It makes the review again before it locks the affected objects. Thus changes of these objects do not wait while it compares the devices.
+2. It locks these objects.
+3. It reads the fingerprint and checks your permissions.
+4. It reads each stored artwork file that the review found damaged. An import can repair the file, and the repaired face can draw more modules.
+5. It writes the associations.
+
+The activation stops, and no association changes, in these cases:
+
+- The fingerprint, the blockers or your permissions differ from the review. The message is **The affected objects, the associations or your permissions changed after the review. Review the activation again.**
+- Another change of the affected objects runs at the same time, for example a first activation of the same type. The message is **Another change of the affected objects ran at the same time. Review the activation again.**
+- Another change holds a lock on these objects for more than 10 seconds. The message tells you to try the activation again.
+
+A change of these objects that starts while the activation holds its locks, for example the delete of an association or of a candidate revision, waits until the activation ends.
 
 ### Module bays
 
