@@ -240,6 +240,21 @@ class LibraryCheckTests(SimpleTestCase):
             ],
         )
 
+    def test_a_community_type_that_cannot_be_read_is_a_problem(self):
+        type_file = self.community / "device-types/ACME/SW-24.yaml"
+        type_file.unlink()
+        type_file.mkdir()
+        _, problems = self.check_names()
+        self.assertEqual(
+            problems,
+            [
+                (
+                    "artwork/ACME/SW-24/manifest.yaml: The community type"
+                    " device-types/ACME/SW-24.yaml cannot be read: Is a directory."
+                )
+            ],
+        )
+
     def test_without_device_types_the_names_are_not_checked(self):
         (self.community / "device-types/ACME/SW-24.yaml").unlink()
         summary, problems = self.check(str(self.library))
