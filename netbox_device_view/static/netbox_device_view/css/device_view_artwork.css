@@ -99,6 +99,10 @@
     flood-color: var(--tblr-secondary);
 }
 
+.dv-art-flood-cable-other {
+    flood-color: var(--tblr-purple);
+}
+
 .dv-art-flood-marked {
     flood-color: var(--tblr-info);
 }
