@@ -1,5 +1,6 @@
 """Artwork import from a synchronized native Data Source, through the UI and the API."""
 
+import hashlib
 import io
 import shutil
 import tempfile
@@ -15,12 +16,13 @@ from django.db.models import ProtectedError
 from django.test import RequestFactory, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import urlencode
 from users.models import User
 
 from netbox_device_view.artwork import capture
 from netbox_device_view.artwork.bundle import read_bundle
-from netbox_device_view.artwork.limits import MAX_SVG_BYTES
+from netbox_device_view.artwork.limits import MAX_MEMBERS, MAX_SVG_BYTES
 from netbox_device_view.artwork.storage import read_blob
 from netbox_device_view.models import (
     DefinitionRevision,
@@ -438,8 +440,82 @@ class SourcePermissionTests(SourceTestCase):
 
         response = self.import_source()
 
-        self.assertContains(response, capture.HIDDEN_FILES, status_code=400)
+        self.assertContains(
+            response, capture.UNAVAILABLE_FILES.format(prefix="/"), status_code=400
+        )
         self.assertFalse(DefinitionRevision.objects.exists())
+
+    def limited_to_yaml_files(self):
+        self.user = User.objects.create_user(username="limited")
+        self.grant(DefinitionRevision, "add")
+        self.grant(DataSource, "view")
+        self.grant(DataFile, "view", constraints={"path__endswith": ".yaml"})
+
+    def api_import(self, prefix):
+        return self.api().post(
+            reverse(API_SOURCE_IMPORT),
+            {"data_source": self.source.pk, "prefix": prefix},
+            format="json",
+        )
+
+    def test_a_hidden_file_and_an_empty_prefix_give_the_same_response(self):
+        self.limited_to_yaml_files()
+        self.sync()
+        prefix = DEVICE_DIR
+
+        hidden = self.api_import(prefix)
+        DataFile.objects.filter(path__startswith=prefix).delete()
+        empty = self.api_import(prefix)
+
+        self.assertEqual(hidden.status_code, 400)
+        self.assertEqual(
+            (hidden.status_code, hidden.json()), (empty.status_code, empty.json())
+        )
+
+    def test_an_empty_prefix_reports_the_source_state_like_a_hidden_file(self):
+        self.limited_to_yaml_files()
+        self.sync()
+        SourceSyncRun.objects.filter(source=self.source).update(finished=None)
+
+        for prefix in (DEVICE_DIR, "nothing/"):
+            with self.subTest(prefix=prefix):
+                response = self.api_import(prefix)
+                self.assertEqual(response.status_code, 400)
+                [error] = response.json()["errors"]
+                self.assertEqual(error["message"], capture.SYNC_RUNNING)
+
+    def test_a_hidden_file_beyond_the_limits_gives_the_unavailable_files_message(self):
+        self.limited_to_yaml_files()
+        self.sync()
+        now = timezone.now()
+        files = [(f"bulk/{n:05}.yaml", b"x") for n in range(MAX_MEMBERS)]
+        # Sorted last, so it is not one of the rows that the capture reads.
+        files.append(("bulk/zz.svg", b"x"))
+        DataFile.objects.bulk_create(
+            DataFile(
+                source=self.source,
+                path=path,
+                last_updated=now,
+                size=len(data),
+                hash=hashlib.sha256(data).hexdigest(),
+                data=data,
+            )
+            for path, data in files
+        )
+
+        response = self.api_import("bulk/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["errors"],
+            [
+                {
+                    "path": capture.SOURCE,
+                    "line": None,
+                    "message": capture.UNAVAILABLE_FILES.format(prefix="bulk/"),
+                }
+            ],
+        )
 
     def test_a_source_the_user_cannot_view_is_not_offered(self):
         self.user = User.objects.create_user(username="limited")
