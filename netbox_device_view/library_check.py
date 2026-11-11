@@ -49,10 +49,18 @@ def _unreadable(path: str, error: OSError) -> Issue:
     return Issue(path, None, f"cannot be read: {error.strerror}.")
 
 
+def _is_directory(path: Path) -> bool:
+    """Return whether path is a directory; unlike Path.is_dir, raise each OSError except a missing path."""
+    try:
+        return stat.S_ISDIR(path.stat().st_mode)
+    except FileNotFoundError:
+        return False
+
+
 def _files(
     root: Path, name: str
-) -> tuple[list[tuple[str, Path]], list[Issue], list[Issue]]:
-    """Return (posix path below root/name, file) of each regular file, the link issues and the read issues."""
+) -> tuple[list[tuple[str, Path, int]], list[Issue], list[Issue]]:
+    """Return (posix path below root/name, file, size) of each regular file, the link issues and the read issues."""
     directory = root / name
     try:
         mode = directory.lstat().st_mode
@@ -74,16 +82,19 @@ def _files(
         for entry in [Path(parent, item) for item in directories + names]:
             # A directory without search permission lists its entries, but lstat fails.
             try:
-                mode = entry.lstat().st_mode
+                status = entry.lstat()
             except OSError as exc:
                 errors.append(_unreadable(entry.relative_to(root).as_posix(), exc))
                 continue
-            if stat.S_ISLNK(mode):
+            if stat.S_ISLNK(status.st_mode):
                 links.append(entry)
-            elif stat.S_ISREG(mode):
-                files.append(entry)
+            elif stat.S_ISREG(status.st_mode):
+                files.append((entry, status.st_size))
     return (
-        [(file.relative_to(directory).as_posix(), file) for file in sorted(files)],
+        [
+            (file.relative_to(directory).as_posix(), file, size)
+            for file, size in sorted(files)
+        ],
         [
             Issue(f"{name}/{link.relative_to(directory).as_posix()}", None, NOT_REGULAR)
             for link in sorted(links)
@@ -97,7 +108,7 @@ def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
     issues = links + errors
     layouts = [
         (f"{LAYOUTS}/{path}", file)
-        for path, file in files
+        for path, file, _ in files
         if path.endswith(tuple(FORMAT_SUFFIXES))
     ]
     for path, file in layouts:
@@ -115,13 +126,13 @@ def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
     return len(layouts), issues
 
 
-def _source_issues(files: list[tuple[str, Path]]) -> list[Issue]:
+def _source_issues(files: list[tuple[str, Path, int]]) -> list[Issue]:
     """Return the issues of the Data Source artwork import that come before it reads a file."""
     if len(files) > MAX_MEMBERS:
         return [
             Issue(ARTWORK, None, f"more than {MAX_MEMBERS} files below the prefix.")
         ]
-    sizes = {path: file.stat().st_size for path, file in files}
+    sizes = {path: size for path, _, size in files}
     if sum(sizes.values()) > MAX_EXPANDED_BYTES:
         message = (
             f"the files below the prefix have more than {MAX_EXPANDED_BYTES} bytes."
@@ -148,7 +159,7 @@ def _artwork(root: Path) -> tuple[list[Definition], list[Issue]]:
     if issues := _source_issues(files):
         return [], links + issues
     contents = []
-    for path, file in files:
+    for path, file, _ in files:
         try:
             contents.append((path, file.read_bytes()))
         except OSError as exc:
@@ -234,7 +245,11 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
 
 def check_library(root: Path, community: Path | None = None) -> Report:
     """Check the layouts and the artwork below root; with community, check the names too."""
-    if not (root / LAYOUTS).is_dir() and not (root / ARTWORK).is_dir():
+    try:
+        found = _is_directory(root / LAYOUTS) or _is_directory(root / ARTWORK)
+    except OSError as exc:
+        return Report(0, 0, [_unreadable(".", exc)])
+    if not found:
         issue = Issue(".", None, f"no {LAYOUTS}/ or {ARTWORK}/ directory.")
         return Report(0, 0, [issue])
     layouts, issues = _layout_issues(root)

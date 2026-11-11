@@ -55,17 +55,25 @@ def write(root: Path, files: dict):
 
 
 # The system calls of each kind of access; a directory without search permission denies "stat".
-CALLS = {"list": ("os.scandir",), "open": ("io.open",), "stat": ("os.stat", "os.lstat")}
+# "follow" denies only a stat that follows links, so the lstat of the listing still works.
+CALLS = {
+    "list": ("os.scandir",),
+    "open": ("io.open",),
+    "stat": ("os.stat", "os.lstat"),
+    "follow": ("os.stat",),
+}
 
 
 @contextlib.contextmanager
 def unreadable(*paths: Path, calls=("list", "open")):
     """Make the system calls fail with a permission error for paths; the tests run as root, which reads all."""
     blocked = {str(path) for path in paths}
+    follow_only = "follow" in calls and "stat" not in calls
 
     def deny(call):
         def checked(path, *args, **kwargs):
-            if os.fspath(path) in blocked:
+            lstat = call is os.lstat or kwargs.get("follow_symlinks") is False
+            if os.fspath(path) in blocked and not (follow_only and lstat):
                 raise PermissionError(
                     errno.EACCES, os.strerror(errno.EACCES), os.fspath(path)
                 )
@@ -73,8 +81,9 @@ def unreadable(*paths: Path, calls=("list", "open")):
 
         return checked
 
+    targets = {target for kind in calls for target in CALLS[kind]}
     with contextlib.ExitStack() as stack:
-        for target in (target for kind in calls for target in CALLS[kind]):
+        for target in sorted(targets):
             module, name = target.split(".")
             stack.enter_context(
                 mock.patch(target, deny(getattr({"os": os, "io": io}[module], name)))
@@ -337,6 +346,23 @@ class LibraryCheckTests(SimpleTestCase):
                 )
             ],
         )
+
+    def test_a_file_that_becomes_unreadable_after_the_listing_is_a_problem(self):
+        manifest = self.library / "artwork/ACME/SW-24/manifest.yaml"
+        with unreadable(manifest, calls=("follow", "open")):
+            _, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            ["artwork/ACME/SW-24/manifest.yaml: cannot be read: Permission denied."],
+        )
+
+    def test_a_library_directory_without_search_permission_is_a_problem(self):
+        with unreadable(
+            self.library / "device-types", self.library / "artwork", calls=("stat",)
+        ):
+            summary, problems = self.check(str(self.library))
+        self.assertEqual(problems, [".: cannot be read: Permission denied."])
+        self.assertIn("1 problem found", summary)
 
     def test_without_device_types_the_names_are_not_checked(self):
         (self.community / "device-types/ACME/SW-24.yaml").unlink()
