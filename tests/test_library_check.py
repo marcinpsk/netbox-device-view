@@ -1,10 +1,15 @@
 """The device_view_check command checks a library directory as the imports do, without a database."""
 
+import errno
+import io
+import os
 import shutil
 import tempfile
 import tracemalloc
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 import yaml
 from django.core.management import CommandError, call_command
@@ -47,6 +52,26 @@ def write(root: Path, files: dict):
         if isinstance(content, dict):
             content = yaml.safe_dump(content)
         file.write_bytes(content if isinstance(content, bytes) else content.encode())
+
+
+@contextmanager
+def unreadable(*paths: Path):
+    """Make the system calls fail with a permission error for paths; the tests run as root, which reads all."""
+    blocked = {str(path) for path in paths}
+    scandir, open_ = os.scandir, io.open
+
+    def deny(call):
+        def checked(path, *args, **kwargs):
+            if os.fspath(path) in blocked:
+                raise PermissionError(
+                    errno.EACCES, os.strerror(errno.EACCES), os.fspath(path)
+                )
+            return call(path, *args, **kwargs)
+
+        return checked
+
+    with mock.patch("os.scandir", deny(scandir)), mock.patch("io.open", deny(open_)):
+        yield
 
 
 def artwork(directory, files):
@@ -254,6 +279,32 @@ class LibraryCheckTests(SimpleTestCase):
                 )
             ],
         )
+
+    def test_a_layout_that_cannot_be_read_is_a_problem(self):
+        with unreadable(self.library / "device-types/ACME/SW-24.yaml"):
+            summary, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            ["device-types/ACME/SW-24.yaml: cannot be read: Permission denied."],
+        )
+        self.assertIn("1 problem found", summary)
+
+    def test_an_artwork_file_that_cannot_be_read_is_a_problem(self):
+        with unreadable(self.library / "artwork/ACME/SW-24/manifest.yaml"):
+            summary, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            ["artwork/ACME/SW-24/manifest.yaml: cannot be read: Permission denied."],
+        )
+        self.assertIn("0 artwork definitions", summary)
+
+    def test_a_directory_that_cannot_be_listed_is_a_problem(self):
+        with unreadable(self.library / "artwork/ACME/SW-24"):
+            summary, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems, ["artwork/ACME/SW-24: cannot be read: Permission denied."]
+        )
+        self.assertIn("1 problem found", summary)
 
     def test_without_device_types_the_names_are_not_checked(self):
         (self.community / "device-types/ACME/SW-24.yaml").unlink()
