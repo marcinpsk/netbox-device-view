@@ -44,14 +44,26 @@ class Report:
     issues: list[Issue]
 
 
+def _unreadable(path: str, error: OSError) -> Issue:
+    return Issue(path, None, f"cannot be read: {error.strerror}.")
+
+
 def _files(root: Path, name: str) -> tuple[list[tuple[str, Path]], list[Issue]]:
-    """Return (posix path below root/name, file) for each regular file, and an issue for each link."""
+    """Return (posix path below root/name, file) for each regular file, and the link and read issues."""
     directory = root / name
     if directory.is_symlink():
         return [], [Issue(name, None, NOT_REGULAR)]
-    files, links = [], []
+    if not directory.exists():
+        return [], []
+    files, links, errors = [], [], []
+
+    def unreadable(error: OSError):
+        errors.append(
+            _unreadable(Path(error.filename).relative_to(root).as_posix(), error)
+        )
+
     # os.walk does not follow a link to a directory; it lists the link in the directory names.
-    for parent, directories, names in os.walk(directory):
+    for parent, directories, names in os.walk(directory, onerror=unreadable):
         for entry in [Path(parent, item) for item in directories + names]:
             if entry.is_symlink():
                 links.append(entry)
@@ -62,7 +74,8 @@ def _files(root: Path, name: str) -> tuple[list[tuple[str, Path]], list[Issue]]:
         [
             Issue(f"{name}/{link.relative_to(directory).as_posix()}", None, NOT_REGULAR)
             for link in sorted(links)
-        ],
+        ]
+        + errors,
     )
 
 
@@ -74,9 +87,13 @@ def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
         if path.endswith(tuple(FORMAT_SUFFIXES))
     ]
     for path, file in layouts:
-        # Read one byte more than the limit, so the import check reports a larger file.
-        with file.open("rb") as handle:
-            content = handle.read(MAX_FILE_BYTES + 1)
+        try:
+            # Read one byte more than the limit, so the import check reports a larger file.
+            with file.open("rb") as handle:
+                content = handle.read(MAX_FILE_BYTES + 1)
+        except OSError as exc:
+            issues.append(_unreadable(path, exc))
+            continue
         try:
             validate_layout_file(path, content)
         except ValidationError as exc:
@@ -113,10 +130,16 @@ def _artwork(root: Path) -> tuple[list[Definition], list[Issue]]:
         return [], links
     if issues := _source_issues(files):
         return [], links + issues
+    contents = []
+    for path, file in files:
+        try:
+            contents.append((path, file.read_bytes()))
+        except OSError as exc:
+            issues.append(_unreadable(f"{ARTWORK}/{path}", exc))
+    if issues:
+        return [], links + issues
     try:
-        definitions = read_definitions(
-            (path, file.read_bytes()) for path, file in files
-        )
+        definitions = read_definitions(contents)
     except ArtworkError as exc:
         return [], links + [
             Issue(f"{ARTWORK}/{issue.path}", issue.line, issue.message)
