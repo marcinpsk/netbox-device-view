@@ -9,6 +9,7 @@ from core.models import DataFile, DataSource
 from django.db import router, transaction
 from django.db.models import (
     BinaryField,
+    BooleanField,
     Case,
     Count,
     Exists,
@@ -17,12 +18,13 @@ from django.db.models import (
     Q,
     Subquery,
     Sum,
+    Value,
     When,
     Window,
 )
 
 from ..models import SourceSyncRun
-from ..stored_data import stored_size
+from ..stored_data import stored_sha256, stored_size
 from .bundle import is_safe_path
 from .errors import ArtworkError, Issue
 from .limits import MAX_EXPANDED_BYTES, MAX_MEMBERS, MAX_SVG_BYTES
@@ -129,9 +131,18 @@ def _file_issues(row) -> list[str]:
 
 def _read_again_at_next_sync(source: DataSource, paths: list[str]) -> None:
     """Clear the hash of the torn files, so the next sync reads them again."""
+    consistent = Q(size=stored_size(), hash=stored_sha256(MAX_SVG_BYTES))
+    # After a row lock wait, PostgreSQL checks this on the newest row: a repaired file keeps its hash.
+    still_torn = Case(
+        When(consistent, then=Value(False)),
+        default=Value(True),
+        output_field=BooleanField(),
+    )
     # Durable: the change commits before the import fails, and nesting in a transaction is an error.
     with transaction.atomic(using=router.db_for_write(DataFile), durable=True):
-        DataFile.objects.filter(source=source, path__in=paths).update(hash="")
+        DataFile.objects.filter(still_torn, source=source, path__in=paths).update(
+            hash=""
+        )
 
 
 def read_source_files(user, source: DataSource, prefix: str) -> Capture:
