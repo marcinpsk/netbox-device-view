@@ -55,8 +55,9 @@
     cursor: pointer;
 }
 
+/* A connector can be hidden artwork, so its shapes take clicks also when hidden. */
 .dv-art-connector * {
-    pointer-events: visible;
+    pointer-events: all;
 }
 
 /* WebKit paints no outline on an SVG element, so a focused link also shows its focus ring. */
@@ -67,6 +68,11 @@
 
 .dv-art-focus-ring {
     display: none;
+    pointer-events: none;
+}
+
+.dv-art-focus-ring * {
+    pointer-events: none;
 }
 
 .dv-art-connector:focus-visible > .dv-art-focus-ring {
