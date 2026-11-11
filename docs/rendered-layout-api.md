@@ -67,7 +67,8 @@ The Device View tab and the device page panel use the same rule.
           "peer_labels": ["dev1 | GigabitEthernet0/2"],
           "trace_supported": true
         }
-      ]
+      ],
+      "ambiguous": []
     }
   ]
 }
@@ -77,7 +78,7 @@ The Device View tab and the device page panel use the same rule.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | int | Always `1` for this version. A future breaking change bumps this rather than mutating the shape in place. |
+| `schema_version` | int | Always `1` for this version. A future breaking change bumps this rather than mutating the shape in place. Schema 1 can get new fields. Clients must ignore the fields that they do not know. |
 | `available` | bool | `false` for any of the reasons above. |
 | `reason` | string \| null | `"no_layout"` \| `"svg_layout_required"` \| `"invalid_layout"` \| `null` (only meaningful when `available` is `false`). |
 | `device_id` | int | Echoes the requested device's primary key. |
@@ -92,7 +93,8 @@ The Device View tab and the device page panel use the same rule.
 | `label` | string | Human-readable panel label, e.g. `"Front"`, `"Rear (member-2)"`. |
 | `width`, `height` | int | The SVG's pixel dimensions — matches the `viewBox`/`width`/`height` on the embedded `<svg>`. |
 | `svg` | string | Self-contained SVG markup (see [SVG output](#svg-output) below). |
-| `hotspots` | array | One entry per port-like element whose key matches a real NetBox component. A front port binds only on the front face and a rear port only on the rear face (see [Shared stylenames](how-it-works.md#shared-stylenames)). |
+| `hotspots` | array | One entry per port-like element whose key matches exactly one real NetBox component. A front port binds only on the front face and a rear port only on the rear face (see [Shared stylenames](how-it-works.md#shared-stylenames)). |
+| `ambiguous` | array | One entry per port-like element whose key matches two or more components (see [Ambiguous elements](#ambiguous-elements)). Empty when there is none. |
 
 ### Hotspot
 
@@ -103,23 +105,20 @@ The Device View tab and the device page panel use the same rule.
 | `name` | string | The component's real name, e.g. `"GigabitEthernet0/1"`. |
 | `x`, `y`, `width`, `height` | int | Hotspot geometry in the same coordinate space as the panel's `svg`/`viewBox` — apply one transform to both. |
 | `enabled` | bool | Always `true` for port-type components (they have no enabled flag); reflects `Interface.enabled` for interfaces. |
-| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`, or `"ambiguous"` (see [Ambiguous hotspot](#ambiguous-hotspot)). `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device); see [SVG Renderer](svg-renderer.md#states). |
+| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`. `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device); see [SVG Renderer](svg-renderer.md#states). |
 | `cable_color` | string \| null | `null` = no cable attached, or a cable that the user cannot view. `""` = cable attached, no colour set (rendered with a diagonal no-colour pattern). `"rrggbb"` = the cable's configured colour. |
 | `peer_labels` | array of string | `"{device} \| {name}"` per resolved peer that the user can view: the traced endpoints when the component has them, otherwise the direct cable peers. Empty when unconnected. |
 | `trace_supported` | bool | Whether NetBox's REST trace endpoint (`GET /api/dcim/{type}s/{id}/trace/`) exists for this object type. `true` for interfaces, console ports and console-server ports; `false` for front/rear ports, which use `PassThroughPortMixin` and have no `/trace/` action. |
 
-### Ambiguous hotspot
+### Ambiguous elements
 
-When two or more components have the key of an element, the element gets one hotspot that names no single object. Its SVG element has the default port fill.
+When two or more components have the key of an element, the element names no single object. It has no hotspot. It gets one entry in the panel's `ambiguous` array instead. Its SVG element has the default port fill.
 
-| Field | Value |
-|---|---|
-| `object_type`, `object_id`, `enabled`, `cable_color` | `null` |
-| `name` | The element key |
-| `connection_state` | `"ambiguous"` |
-| `peer_labels` | `[]` |
-| `trace_supported` | `false` |
-| `candidates` | One `{"object_type", "object_id", "name"}` per component with the key. Only an ambiguous hotspot has this field. |
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | The element key. |
+| `x`, `y`, `width`, `height` | int | The element geometry, in the same coordinate space as a hotspot. |
+| `candidates` | array | One `{"object_type", "object_id", "name"}` per component with the key. The fields have the same types as in a hotspot. |
 
 ---
 

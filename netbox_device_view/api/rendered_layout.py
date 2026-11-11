@@ -73,30 +73,27 @@ def _reference(state) -> dict:
     }
 
 
-def _hotspot(cell: dict, binding) -> dict:
-    geometry = {name: cell[name] for name in ("x", "y", "width", "height")}
-    state = binding.state
-    if state is None:
-        return {
-            "object_type": None,
-            "object_id": None,
-            "name": binding.key,
-            **geometry,
-            "enabled": None,
-            "connection_state": binding.connection_state,
-            "cable_color": None,
-            "peer_labels": [],
-            "trace_supported": False,
-            "candidates": [_reference(candidate) for candidate in binding.candidates],
-        }
+def _geometry(cell: dict) -> dict:
+    return {name: cell[name] for name in ("x", "y", "width", "height")}
+
+
+def _hotspot(cell: dict, state) -> dict:
     return {
         **_reference(state),
-        **geometry,
+        **_geometry(cell),
         "enabled": state.enabled is not False,
-        "connection_state": binding.connection_state,
+        "connection_state": state.connection_state,
         "cable_color": state.cable_color,
         "peer_labels": state.peer_labels,
         "trace_supported": state.trace_supported,
+    }
+
+
+def _ambiguous(cell: dict, binding) -> dict:
+    return {
+        "name": binding.key,
+        **_geometry(cell),
+        "candidates": [_reference(candidate) for candidate in binding.candidates],
     }
 
 
@@ -163,11 +160,15 @@ def compose_rendered_layout(device: Device, user) -> dict:
                     },
                     variant_name=variant,
                 )
-                hotspots = [
-                    _hotspot(cell, bindings[cell["key"]])
-                    for cell in geometry
-                    if cell["key"] in bindings
-                ]
+                hotspots, ambiguous = [], []
+                for cell in geometry:
+                    binding = bindings.get(cell["key"])
+                    if binding is None:
+                        continue
+                    if binding.state is None:
+                        ambiguous.append(_ambiguous(cell, binding))
+                    else:
+                        hotspots.append(_hotspot(cell, binding.state))
                 width, height = svg_dims(view.canvas)
                 panels.append(
                     {
@@ -177,6 +178,7 @@ def compose_rendered_layout(device: Device, user) -> dict:
                         "height": height,
                         "svg": svg,
                         "hotspots": hotspots,
+                        "ambiguous": ambiguous,
                     }
                 )
     except LayoutParseError:

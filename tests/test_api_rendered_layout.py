@@ -292,8 +292,10 @@ class RenderedPanelTests(RenderedLayoutTestBase):
         self.assertEqual(len(data["panels"]), 1)
         panel = data["panels"][0]
         self.assertEqual(
-            set(panel.keys()), {"key", "label", "width", "height", "svg", "hotspots"}
+            set(panel.keys()),
+            {"key", "label", "width", "height", "svg", "hotspots", "ambiguous"},
         )
+        self.assertEqual(panel["ambiguous"], [])
         self.assertGreater(panel["width"], 0)
         self.assertGreater(panel["height"], 0)
         self.assertIn("<svg", panel["svg"])
