@@ -44,6 +44,16 @@ views:
   front:
     elements: [{key: gi-1}, {key: gi-2}, {key: gi-3}, {key: console}, {key: port-1}]
 """
+ONE_ROW_SWITCH = """
+version: 1
+views:
+  front:
+    elements:
+      - {key: gi-1, at: {row: 1, col: 1}}
+      - {key: gi-2, at: {row: 1, col: 2}}
+      - {key: gi-3, at: {row: 1, col: 3}}
+      - {key: console, at: {row: 1, col: 4}}
+"""
 PATCH_PANEL = """
 version: 1
 views:
@@ -249,6 +259,8 @@ class PageMatchesApiTests(ResolverTestBase):
 
 
 class AmbiguousKeyTests(ResolverTestBase):
+    layout = ONE_ROW_SWITCH
+
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
@@ -256,13 +268,29 @@ class AmbiguousKeyTests(ResolverTestBase):
             device=cls.device, name="Console", type="1000base-t"
         )
         cls.console_port = ConsolePort.objects.create(device=cls.device, name="Console")
+        gi1, gi2, gi3 = (
+            Interface.objects.create(device=cls.device, name=name, type="1000base-t")
+            for name in ("Gi1", "Gi2", "Gi3")
+        )
+        gi3.enabled = False
+        gi3.save()
+        Cable(a_terminations=[gi1], b_terminations=[gi2]).save()
 
-    def test_api_gives_one_ambiguous_hotspot_with_both_candidates(self):
-        (hotspot,) = self._hotspots(self._api())
-        self.assertIsNone(hotspot["object_id"])
-        self.assertEqual(hotspot["connection_state"], "ambiguous")
+    def test_api_lists_the_key_as_ambiguous_with_both_candidates(self):
+        (panel,) = self._api()["panels"]
         self.assertEqual(
-            hotspot["candidates"],
+            [hotspot["name"] for hotspot in panel["hotspots"]], ["Gi1", "Gi2", "Gi3"]
+        )
+        (entry,) = panel["ambiguous"]
+        self.assertEqual(entry["name"], "console")
+        # The console element is the next cell after Gi3 in the same row.
+        gi2, gi3 = panel["hotspots"][1:]
+        self.assertEqual(
+            (entry["x"], entry["y"], entry["width"], entry["height"]),
+            (2 * gi3["x"] - gi2["x"], gi3["y"], gi3["width"], gi3["height"]),
+        )
+        self.assertEqual(
+            entry["candidates"],
             [
                 {
                     "object_type": "dcim.interface",
@@ -276,6 +304,36 @@ class AmbiguousKeyTests(ResolverTestBase):
                 },
             ],
         )
+        self.assertEqual(
+            set(entry), {"name", "x", "y", "width", "height", "candidates"}
+        )
+
+    def test_api_hotspots_keep_the_schema_1_types(self):
+        hotspots = self._hotspots(self._api())
+        self.assertEqual(
+            {hotspot["connection_state"] for hotspot in hotspots},
+            {"connected", "disabled"},
+        )
+        for hotspot in hotspots:
+            with self.subTest(hotspot["name"]):
+                self.assertIn(
+                    hotspot["object_type"],
+                    {
+                        "dcim.interface",
+                        "dcim.consoleport",
+                        "dcim.consoleserverport",
+                        "dcim.frontport",
+                        "dcim.rearport",
+                    },
+                )
+                self.assertIs(type(hotspot["object_id"]), int)
+                self.assertIs(type(hotspot["enabled"]), bool)
+                self.assertIn(
+                    hotspot["connection_state"],
+                    {"connected", "partially_connected", "enabled", "disabled"},
+                )
+                self.assertIsInstance(hotspot["cable_color"], (str, type(None)))
+                self.assertNotIn("candidates", hotspot)
 
     def test_page_shows_one_neutral_cell_that_lists_both_components(self):
         for page, content in self._pages().items():

@@ -43,7 +43,7 @@ Two components can derive the same stylename, for example an interface `Console`
 
 - The element shows a neutral, dashed cell. It links to no component.
 - Its popover lists each component with a link.
-- The [rendered-layout API](rendered-layout-api.md#ambiguous-hotspot) gives one hotspot with `connection_state: "ambiguous"` and a `candidates` list.
+- The [rendered-layout API](rendered-layout-api.md#ambiguous-elements) gives no hotspot for the element. It lists the element in the panel's `ambiguous` array, with a `candidates` list.
 
 A front port binds only on the front face, and a rear port only on the rear face. Thus the front port `Port 1` and the rear port `Port 1` of a patch panel do not share a stylename when the layout has separate `front` and `rear` views. A layout with only a `rear` view draws the rear face; any other layout with one view draws the front face.
 
