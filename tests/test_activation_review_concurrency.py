@@ -27,6 +27,7 @@ from dcim.models import (
 )
 from django.core.exceptions import ValidationError
 from django.db import connection, connections, transaction
+from django.db.models import ProtectedError
 from django.db.models.signals import post_save
 from django.test import Client, TransactionTestCase, override_settings
 from django.urls import reverse
@@ -498,6 +499,10 @@ class PinRevisionTests(ConcurrentActivationTestCase):
 
         self.assertEqual(self.finish(*pin).status_code, 201)
         delete[0].join(WAIT_SECONDS)
+        self.assertFalse(delete[0].is_alive())
+        # The delete locks the revision first, so its collector sees the committed pin.
+        self.assertIsInstance(delete[1].get("error"), ProtectedError)
+        self.assertIn("InstancePin.revision", str(delete[1]["error"]))
         self.assertEqual(InstancePin.objects.get().revision_id, revision)
         self.assertTrue(DefinitionRevision.objects.filter(pk=revision).exists())
 
