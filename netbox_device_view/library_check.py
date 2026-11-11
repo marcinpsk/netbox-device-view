@@ -1,6 +1,7 @@
 """Check a layout library directory with the validation of the layout and artwork imports."""
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,13 +49,19 @@ def _unreadable(path: str, error: OSError) -> Issue:
     return Issue(path, None, f"cannot be read: {error.strerror}.")
 
 
-def _files(root: Path, name: str) -> tuple[list[tuple[str, Path]], list[Issue]]:
-    """Return (posix path below root/name, file) for each regular file, and the link and read issues."""
+def _files(
+    root: Path, name: str
+) -> tuple[list[tuple[str, Path]], list[Issue], list[Issue]]:
+    """Return (posix path below root/name, file) of each regular file, the link issues and the read issues."""
     directory = root / name
-    if directory.is_symlink():
-        return [], [Issue(name, None, NOT_REGULAR)]
-    if not directory.exists():
-        return [], []
+    try:
+        mode = directory.lstat().st_mode
+    except FileNotFoundError:
+        return [], [], []
+    except OSError as exc:
+        return [], [], [_unreadable(name, exc)]
+    if stat.S_ISLNK(mode):
+        return [], [Issue(name, None, NOT_REGULAR)], []
     files, links, errors = [], [], []
 
     def unreadable(error: OSError):
@@ -65,22 +72,29 @@ def _files(root: Path, name: str) -> tuple[list[tuple[str, Path]], list[Issue]]:
     # os.walk does not follow a link to a directory; it lists the link in the directory names.
     for parent, directories, names in os.walk(directory, onerror=unreadable):
         for entry in [Path(parent, item) for item in directories + names]:
-            if entry.is_symlink():
+            # A directory without search permission lists its entries, but lstat fails.
+            try:
+                mode = entry.lstat().st_mode
+            except OSError as exc:
+                errors.append(_unreadable(entry.relative_to(root).as_posix(), exc))
+                continue
+            if stat.S_ISLNK(mode):
                 links.append(entry)
-            elif entry.is_file():
+            elif stat.S_ISREG(mode):
                 files.append(entry)
     return (
         [(file.relative_to(directory).as_posix(), file) for file in sorted(files)],
         [
             Issue(f"{name}/{link.relative_to(directory).as_posix()}", None, NOT_REGULAR)
             for link in sorted(links)
-        ]
-        + errors,
+        ],
+        errors,
     )
 
 
 def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
-    files, issues = _files(root, LAYOUTS)
+    files, links, errors = _files(root, LAYOUTS)
+    issues = links + errors
     layouts = [
         (f"{LAYOUTS}/{path}", file)
         for path, file in files
@@ -125,7 +139,10 @@ def _source_issues(files: list[tuple[str, Path]]) -> list[Issue]:
 
 
 def _artwork(root: Path) -> tuple[list[Definition], list[Issue]]:
-    files, links = _files(root, ARTWORK)
+    files, links, errors = _files(root, ARTWORK)
+    # A definition with a file that the check cannot list or read is not complete.
+    if errors:
+        return [], links + errors
     if not files:
         return [], links
     if issues := _source_issues(files):
@@ -177,11 +194,13 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
     type_path = f"{COMMUNITY_DIRECTORIES[kind]}/{definition.directory}.yaml"
     # The community root can be a link; a link below it is a problem, as in the library.
     parts = Path(type_path).parts
-    if any(
-        community.joinpath(*parts[:n]).is_symlink() for n in range(1, len(parts) + 1)
-    ):
-        return [Issue(path, None, f"The community type {type_path} is {NOT_REGULAR}")]
     try:
+        if any(
+            community.joinpath(*parts[:n]).is_symlink()
+            for n in range(1, len(parts) + 1)
+        ):
+            message = f"The community type {type_path} is {NOT_REGULAR}"
+            return [Issue(path, None, message)]
         names, bays = _community_names(community / type_path)
     except FileNotFoundError:
         return [Issue(path, None, f"The community {kind} type {type_path} is missing.")]
