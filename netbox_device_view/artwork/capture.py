@@ -6,6 +6,7 @@ from datetime import datetime
 
 from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
+from django.contrib.postgres.aggregates import BoolAnd
 from django.db import router, transaction
 from django.db.models import (
     BinaryField,
@@ -39,7 +40,10 @@ NO_GUARDED_SYNC = (
     " once, then import."
 )
 SYNC_RUNNING = "a sync of the Data Source has not finished. Import after it completes."
-HIDDEN_FILES = "you cannot view every file below this prefix."
+UNAVAILABLE_FILES = (
+    "no files below {prefix} that you can import: the prefix has no files, or you"
+    " cannot view every file below it."
+)
 CHANGED_FILE = (
     "the stored file does not match its recorded size and SHA-256: the file changed"
     " while a sync read it. Check for updates, then import again."
@@ -72,6 +76,10 @@ def _files(user, source: DataSource, prefix: str):
             has_run=Exists(newest_run),
             run_finished=Subquery(newest_run.values("finished")[:1]),
             viewable=Exists(viewable),
+        )
+        # The window covers every file below the prefix, also those after the row limit.
+        .annotate(
+            all_viewable=Window(BoolAnd("viewable")),
             file_count=Window(Count("pk")),
             total_size=Window(Sum("data_size")),
         )
@@ -94,20 +102,31 @@ def _files(user, source: DataSource, prefix: str):
             "synced",
             "has_run",
             "run_finished",
-            "viewable",
+            "all_viewable",
             "file_count",
             "total_size",
         )[: MAX_MEMBERS + 1]
     )
 
 
-def _source_issues(row) -> list[Issue]:
+def _state_issues(row) -> list[Issue]:
     if row["status"] != DataSourceStatusChoices.COMPLETED:
         return [Issue(SOURCE, None, NOT_SYNCED.format(status=row["status"]))]
     if not row["has_run"]:
         return [Issue(SOURCE, None, NO_GUARDED_SYNC)]
     if row["run_finished"] is None:
         return [Issue(SOURCE, None, SYNC_RUNNING)]
+    return []
+
+
+def _unavailable(prefix: str) -> ArtworkError:
+    """Return one error for no files and for hidden files, so the reply does not show hidden paths."""
+    return ArtworkError(
+        [Issue(SOURCE, None, UNAVAILABLE_FILES.format(prefix=prefix or "/"))]
+    )
+
+
+def _limit_issues(row) -> list[Issue]:
     if row["file_count"] > MAX_MEMBERS:
         return [Issue(SOURCE, None, f"more than {MAX_MEMBERS} files below the prefix.")]
     if row["total_size"] > MAX_EXPANDED_BYTES:
@@ -150,14 +169,21 @@ def read_source_files(user, source: DataSource, prefix: str) -> Capture:
     rows = list(_files(user, source, prefix))
     if not rows:
         source.refresh_from_db(fields=["status"])
-        if source.status != DataSourceStatusChoices.COMPLETED:
-            message = NOT_SYNCED.format(status=source.status)
-            raise ArtworkError([Issue(SOURCE, None, message)])
-        raise ArtworkError([Issue(SOURCE, None, f"no files below {prefix or '/'}.")])
-    if issues := _source_issues(rows[0]):
+        run = SourceSyncRun.objects.filter(source=source).values("finished").first()
+        state = {
+            "status": source.status,
+            "has_run": run is not None,
+            "run_finished": run and run["finished"],
+        }
+        if issues := _state_issues(state):
+            raise ArtworkError(issues)
+        raise _unavailable(prefix)
+    if issues := _state_issues(rows[0]):
         raise ArtworkError(issues)
-    if not all(row["viewable"] for row in rows):
-        raise ArtworkError([Issue(SOURCE, None, HIDDEN_FILES)])
+    if not rows[0]["all_viewable"]:
+        raise _unavailable(prefix)
+    if issues := _limit_issues(rows[0]):
+        raise ArtworkError(issues)
     issues = [
         Issue(row["path"], None, message)
         for row in rows
