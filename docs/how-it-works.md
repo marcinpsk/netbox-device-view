@@ -1,6 +1,6 @@
 # How It Works
 
-For each **Device Type** you create a **DeviceView** object (at *Plugins → Device Views → Add*) with either a [YAML layout](layout-yaml.md) or a legacy [CSS layout](layout-css.md).
+To show a layout for a **Device Type**, create a **DeviceView** object (at *Plugins → Device Views → Add*) with either a [YAML layout](layout-yaml.md) or a legacy [CSS layout](layout-css.md). A device type with active artwork needs no DeviceView (see [Activate a revision](artwork-bundles.md#activate-a-revision)).
 
 When you visit a device of that type, the plugin:
 
@@ -87,7 +87,7 @@ The Device View tab and the device page panel show only the objects that you can
 
 - The Device View tab of a device that you cannot view is not found (`404`).
 - A virtual chassis member that you cannot view has no panel. The panel title shows the virtual chassis name only when you can view the virtual chassis.
-- A DeviceView that you cannot view counts as missing. The device page then has no Device View tab.
+- A DeviceView that you cannot view counts as missing. Without active artwork, the device page then has no Device View tab. A device type with active artwork shows the tab without a DeviceView.
 - A port that you cannot view is not in the panel. A peer that you cannot view is not in the port's popover.
 - A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the popover.
 - A module that you cannot view does not select a module variant, and its ports are not in the panel.
