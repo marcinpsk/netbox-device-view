@@ -793,14 +793,14 @@ class ConnectivityFactsTests(ArtworkTestCase):
         )
         self.assertIsNotNone(found)
 
-    def test_a_cable_status_without_a_mark_still_draws_the_connector(self):
-        # NetBox can add cable statuses (FIELD_CHOICES); the legend has no mark for them.
+    def test_a_cable_status_that_netbox_configuration_adds_shows_a_cable(self):
+        # NetBox can add cable statuses (FIELD_CHOICES).
         self.activate()
         self.cable()
         Cable.objects.update(status="inspection")
-        Interface.objects.filter(pk=self.eth1.pk).update(mark_connected=True)
-        classes, _, title = self.connector()
-        self.assertEqual(classes, "dv-art-connector dv-art-marked")
+        classes, found, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-cable-other")
+        self.assertIsNotNone(found)
         self.assertIn("cable inspection", title)
 
     def test_path_completeness_is_separate_from_the_cable(self):
@@ -818,6 +818,7 @@ class ConnectivityFactsTests(ArtworkTestCase):
             "cable connected": lambda: self.cable("connected"),
             "cable planned": lambda: self.cable("planned"),
             "cable decommissioning": lambda: self.cable("decommissioning"),
+            "cable inspection": lambda: self.cable("inspection"),
             "marked connected": lambda: Interface.objects.filter(
                 pk=self.eth1.pk
             ).update(mark_connected=True),
@@ -891,12 +892,13 @@ class ConnectivityFactsTests(ArtworkTestCase):
             "Cable connected",
             "Cable planned",
             "Cable decommissioning",
+            "Cable with another status",
             "Marked connected",
             "Disabled",
             "No component found",
         ):
             self.assertIn(label, legend)
-        self.assertEqual(legend.count("<svg"), 6)
+        self.assertEqual(legend.count("<svg"), 7)
 
 
 def page_face(index):

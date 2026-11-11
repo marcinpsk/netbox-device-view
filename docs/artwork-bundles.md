@@ -231,6 +231,7 @@ The artwork view shows:
 | Solid outer ring | A cable with status **Connected**. |
 | Dashed outer ring | A cable with status **Planned**. |
 | Dotted outer ring | A cable with status **Decommissioning**. |
+| Long-dashed outer ring | A cable with a status that NetBox configuration adds. |
 | Double thin ring | **Mark connected**, with no cable. |
 | Dashed inner ring | A disabled interface. |
 | Dashed thin ring with a gap | No component found: the binding finds no component, or two or more. |

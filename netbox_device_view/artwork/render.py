@@ -71,6 +71,8 @@ _CABLE_MARKS = {
     "planned": "cable-planned",
     "decommissioning": "cable-decommissioning",
 }
+# A cable status that NetBox configuration adds.
+CABLE_OTHER = "cable-other"
 MARKED = "marked"
 UNRESOLVED = "unresolved"
 # The inner mark of a connector.
@@ -81,6 +83,7 @@ LEGEND = (
     ("cable-connected", "Cable connected"),
     ("cable-planned", "Cable planned"),
     ("cable-decommissioning", "Cable decommissioning"),
+    (CABLE_OTHER, "Cable with another status"),
     (MARKED, "Marked connected"),
     (DISABLED, "Disabled"),
     (UNRESOLVED, "No component found"),
@@ -270,10 +273,10 @@ def _marks(connector) -> tuple[str | None, bool]:
     target = connector.target
     if target is None:
         return UNRESOLVED, False
-    # A cable status that NetBox configuration adds has no mark.
-    outer = _CABLE_MARKS.get(target.cable_status)
-    if outer is None and target.marked_connected:
-        outer = MARKED
+    if target.cable_status:
+        outer = _CABLE_MARKS.get(target.cable_status, CABLE_OTHER)
+    else:
+        outer = MARKED if target.marked_connected else None
     return outer, target.enabled is False
 
 
@@ -527,6 +530,8 @@ class _MarkFilter:
             return self.keep(edge, self.checker(2))
         if mark == "cable-decommissioning":
             return self.keep(edge, self.checker(1))
+        if mark == CABLE_OTHER:
+            return self.keep(edge, self.checker(4))
         far = self.cut(self.grow(2.25), self.grow(1.5))
         if mark == MARKED:
             near = self.cut(self.grow(0.75), "SourceAlpha")
