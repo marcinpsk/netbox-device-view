@@ -35,7 +35,7 @@ from ..models import (
     type_scope,
     write_transaction,
 )
-from .overrides import depending_on
+from .overrides import depending_on, of_parts
 from .render import (
     ARTWORK,
     DAMAGED,
@@ -532,6 +532,13 @@ def _read_pins(affected) -> Q:
     )
 
 
+def _read_overrides(affected) -> Q:
+    """Return the filter of the overrides that the review reads: those of the types and of the composed parts."""
+    return _depending_on(pair.hardware_type for pair in affected.pairs) | of_parts(
+        [*affected.devices, *affected.modules]
+    )
+
+
 # The objects that the labels of a device and an installed module read.
 _RELATIONS = {
     Device: ("device_type__manufacturer",),
@@ -597,7 +604,7 @@ def _visible(user, pairs, affected) -> bool:
             model.objects.filter(device__in=devices)
             for model in (Module, ModuleBay, *BINDABLE_MODELS)
         ),
-        BindingOverride.objects.filter(_depending_on(p.hardware_type for p in pairs)),
+        BindingOverride.objects.filter(_read_overrides(affected)),
         InstancePin.objects.filter(_read_pins(affected)),
     )
     return all(qs.restrict(user, "view").count() == qs.count() for qs in querysets)
@@ -894,7 +901,7 @@ def _fingerprint(affected, associations) -> str:
             .values_list("pk", "device_id", "module_id", "revision_id")
         ),
         "overrides": list(
-            BindingOverride.objects.filter(_depending_on(types))
+            BindingOverride.objects.filter(_read_overrides(affected))
             .order_by("pk")
             .values_list(
                 "pk",

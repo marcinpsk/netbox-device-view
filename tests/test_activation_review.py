@@ -731,6 +731,29 @@ class VisibilityTests(ReviewTestCase):
 
         self.assertHidden(self.review((self.newer, self.device_type)))
 
+    def test_a_hidden_override_of_a_module_in_a_device_type_review_hides_the_review(
+        self,
+    ):
+        self.activate_module_type()
+        module = Module.objects.get(device=self.device)
+        for scope in ({"module_type": self.module_type}, {"module": module}):
+            field = next(iter(scope))
+            with self.subTest(scope=field):
+                override = BindingOverride.objects.create(
+                    **scope,
+                    definition=self.module_revision.definition,
+                    connector_key="con-p1",
+                    bindings=[{"component": "interface", "name": "eth9"}],
+                )
+                # The reviewer can view the other overrides but not the override of the module.
+                ObjectPermission.objects.filter(
+                    name__startswith="netbox_device_view.bindingoverride view"
+                ).update(constraints={f"{field}__isnull": True})
+                try:
+                    self.assertHidden(self.review((self.newer, self.device_type)))
+                finally:
+                    override.delete()
+
     def test_an_activation_after_a_loss_of_visibility_is_refused(self):
         url = review_url((self.newer, self.device_type))
         token = token_of(self.client.get(url))
