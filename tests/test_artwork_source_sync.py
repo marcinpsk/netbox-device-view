@@ -218,6 +218,43 @@ class TornFileTests(SourceSessionTestCase):
             DefinitionRevision.objects.get().digest, expected_digest(DEVICE_FILES)
         )
 
+    def test_a_sync_that_repairs_the_file_after_capture_keeps_its_hash(self):
+        recorded = self.front.get().hash
+        holding, release = threading.Event(), threading.Event()
+
+        def repair():
+            with transaction.atomic():
+                self.front.update(data=FRONT_SVG.encode())
+                holding.set()
+                release.wait(TIMEOUT)
+
+        repaired = self.in_other_session(repair)
+        self.assertTrue(holding.wait(TIMEOUT))
+        try:
+            failed = self.in_other_session(self.api_import)
+            # The import captured the torn row and now waits for the row lock of the repair.
+            for _ in range(TIMEOUT * 10):
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                        " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                        " AND query LIKE 'UPDATE%%')"
+                    )
+                    if cursor.fetchone()[0]:
+                        break
+                threading.Event().wait(0.1)
+            else:
+                self.fail("The import did not wait for the row lock.")
+        finally:
+            release.set()
+        repaired.result(TIMEOUT)
+
+        self.assertContains(
+            failed.result(TIMEOUT), capture.CHANGED_FILE, status_code=400
+        )
+        self.assertEqual(self.front.get().hash, recorded)
+        self.assertEqual(bytes(self.front.get().data), FRONT_SVG.encode())
+
     def test_an_import_inside_a_transaction_fails_before_it_clears_a_hash(self):
         recorded = self.front.get().hash
 
