@@ -60,15 +60,19 @@ def check_scope(user, field, scope) -> None:
 
 def part_overrides(parts) -> list[BindingOverride]:
     """Return the overrides of the devices and installed modules ``parts`` and of their types, in one query."""
+    return list(BindingOverride.objects.filter(of_parts(parts)))
+
+
+def of_parts(parts) -> Q:
+    """Return the filter of the overrides of the devices and installed modules ``parts`` and of their types."""
     ids = defaultdict(set)
     for part in parts:
         spec = instance_scope(type(part))
         ids[SCOPES[spec.type_field]].add(SCOPES[spec.type_field].id_of(part))
         ids[spec].add(part.pk)
-    condition = functools.reduce(
-        operator.or_, (spec.among(values) for spec, values in ids.items())
+    return functools.reduce(
+        operator.or_, (spec.among(values) for spec, values in ids.items()), Q(pk__in=[])
     )
-    return list(BindingOverride.objects.filter(condition))
 
 
 def connector_bindings(revision, part, overrides) -> dict[str, list]:
