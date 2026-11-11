@@ -1,12 +1,12 @@
 """The device_view_check command checks a library directory as the imports do, without a database."""
 
+import contextlib
 import errno
 import io
 import os
 import shutil
 import tempfile
 import tracemalloc
-from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -54,11 +54,14 @@ def write(root: Path, files: dict):
         file.write_bytes(content if isinstance(content, bytes) else content.encode())
 
 
-@contextmanager
-def unreadable(*paths: Path):
+# The system calls of each kind of access; a directory without search permission denies "stat".
+CALLS = {"list": ("os.scandir",), "open": ("io.open",), "stat": ("os.stat", "os.lstat")}
+
+
+@contextlib.contextmanager
+def unreadable(*paths: Path, calls=("list", "open")):
     """Make the system calls fail with a permission error for paths; the tests run as root, which reads all."""
     blocked = {str(path) for path in paths}
-    scandir, open_ = os.scandir, io.open
 
     def deny(call):
         def checked(path, *args, **kwargs):
@@ -70,7 +73,12 @@ def unreadable(*paths: Path):
 
         return checked
 
-    with mock.patch("os.scandir", deny(scandir)), mock.patch("io.open", deny(open_)):
+    with contextlib.ExitStack() as stack:
+        for target in (target for kind in calls for target in CALLS[kind]):
+            module, name = target.split(".")
+            stack.enter_context(
+                mock.patch(target, deny(getattr({"os": os, "io": io}[module], name)))
+            )
         yield
 
 
@@ -305,6 +313,30 @@ class LibraryCheckTests(SimpleTestCase):
             problems, ["artwork/ACME/SW-24: cannot be read: Permission denied."]
         )
         self.assertIn("1 problem found", summary)
+
+    def test_a_file_that_cannot_be_inspected_is_a_problem(self):
+        manifest = self.library / "artwork/ACME/SW-24/manifest.yaml"
+        with unreadable(manifest, calls=("stat", "open")):
+            summary, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            ["artwork/ACME/SW-24/manifest.yaml: cannot be read: Permission denied."],
+        )
+        self.assertIn("0 artwork definitions", summary)
+
+    def test_a_community_type_that_cannot_be_inspected_is_a_problem(self):
+        type_file = self.community / "device-types/ACME/SW-24.yaml"
+        with unreadable(type_file, calls=("stat", "open")):
+            _, problems = self.check_names()
+        self.assertEqual(
+            problems,
+            [
+                (
+                    "artwork/ACME/SW-24/manifest.yaml: The community type"
+                    " device-types/ACME/SW-24.yaml cannot be read: Permission denied."
+                )
+            ],
+        )
 
     def test_without_device_types_the_names_are_not_checked(self):
         (self.community / "device-types/ACME/SW-24.yaml").unlink()
