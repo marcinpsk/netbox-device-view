@@ -129,7 +129,7 @@ Unlike the web UI's SVG (documented in [SVG Renderer](svg-renderer.md)), this en
 - **No CSS classes.** Every port's fill colour is baked in as an explicit `fill` attribute at composition time — nothing depends on a stylesheet or JavaScript running after the SVG is parsed.
 - **No `<text>` elements.** Port/interface labels are not rendered into the SVG at all — they're returned as `hotspot.name` instead. Renderers that can't reliably centre SVG text (a real, documented `flutter_svg` limitation) render labels as native text overlays positioned from hotspot geometry instead.
 - **No interactivity attributes** (`<title>`, `tabindex`, `role`, `data-bs-*`) — those are a browser/Bootstrap concern with no equivalent here.
-- The same `dv-nocolor-pattern` diagonal-stripe `<defs>` pattern the web renderer uses is included, for cables with no colour set.
+- A diagonal-stripe `<defs>` pattern with the id `dv-nocolor-pattern` is included, for cables with no colour set. The web renderer gives each panel its own pattern id.
 
 If you need to render this SVG in a browser-based tool for debugging, it will look structurally identical to the web UI's SVG but with colours already applied and no labels.
 
