@@ -18,6 +18,14 @@
     viewport.scrollTop = cy * viewport.scrollHeight - viewport.clientHeight / 2;
   }
 
+  // A face at zoom 1 is as wide as the panel, but not taller than the panel's maximum height.
+  document.querySelectorAll(".dv-art-face").forEach(function (face) {
+    var box = face.viewBox.baseVal;
+    if (box && box.width > 0 && box.height > 0) {
+      face.style.setProperty("--dv-fit", "min(100%, var(--dv-max-height) * " + box.width / box.height + ")");
+    }
+  });
+
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-dv-zoom]");
     if (!button) return;
