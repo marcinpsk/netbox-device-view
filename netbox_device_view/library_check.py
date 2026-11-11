@@ -60,7 +60,7 @@ def _is_directory(path: Path) -> bool:
 def _files(
     root: Path, name: str
 ) -> tuple[list[tuple[str, Path, int]], list[Issue], list[Issue]]:
-    """Return (posix path below root/name, file, size) of each regular file, the link issues and the read issues."""
+    """Return (posix path below root/name, file, size) of each regular file, the NOT_REGULAR issues and the read issues."""
     directory = root / name
     try:
         mode = directory.lstat().st_mode
@@ -70,7 +70,7 @@ def _files(
         return [], [], [_unreadable(name, exc)]
     if stat.S_ISLNK(mode):
         return [], [Issue(name, None, NOT_REGULAR)], []
-    files, links, errors = [], [], []
+    files, irregular, errors = [], [], []
 
     def unreadable(error: OSError):
         errors.append(
@@ -86,18 +86,18 @@ def _files(
             except OSError as exc:
                 errors.append(_unreadable(entry.relative_to(root).as_posix(), exc))
                 continue
-            if stat.S_ISLNK(status.st_mode):
-                links.append(entry)
-            elif stat.S_ISREG(status.st_mode):
+            if stat.S_ISREG(status.st_mode):
                 files.append((entry, status.st_size))
+            elif not stat.S_ISDIR(status.st_mode):
+                irregular.append(entry)
     return (
         [
             (file.relative_to(directory).as_posix(), file, size)
             for file, size in sorted(files)
         ],
         [
-            Issue(f"{name}/{link.relative_to(directory).as_posix()}", None, NOT_REGULAR)
-            for link in sorted(links)
+            Issue(f"{name}/{item.relative_to(directory).as_posix()}", None, NOT_REGULAR)
+            for item in sorted(irregular)
         ],
         errors,
     )
