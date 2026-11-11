@@ -836,8 +836,10 @@ class ConnectivityFactsTests(ArtworkTestCase):
             _, found, title = self.connector()
             self.assertIn(name, title)
             shapes[name] = repr(shape(found))
-        self.psu.delete()
-        _, found, _ = self.connector("con-psu", face=1)
+        # The filter id and region are per connector, so the unresolved case uses the same connector.
+        Cable.objects.all().delete()
+        self.eth1.delete()
+        _, found, _ = self.connector()
         shapes["unresolved"] = repr(shape(found))
         self.assertEqual(len(set(shapes.values())), len(shapes), shapes)
 
