@@ -1,6 +1,6 @@
 # Check a Layout Library
 
-The `device_view_check` management command checks the files of a layout library, for example a Git repository that you use as a Data Source. It uses the validation code of the imports, so a file that passes the check passes the import validation of the same plugin version. Run it before you commit, or in the CI of the library.
+The `device_view_check` management command checks the files of a layout library, for example a Git repository that you use as a Data Source. It uses the validation code of the imports, so a file that passes the check passes the content and size checks of the import of the same plugin version. Run it before you commit, or in the CI of the library.
 
 The command reads only files. It needs a NetBox installation with the plugin, but no database connection.
 
