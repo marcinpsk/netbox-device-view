@@ -3,6 +3,7 @@
 import hashlib
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
@@ -11,12 +12,14 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
+from lxml import etree
 from rest_framework.test import APIClient
 from users.models import User
 
 from netbox_device_view.artwork.storage import DamagedBlob, read_blob
 from netbox_device_view.models import (
     ArtworkBlob,
+    Association,
     DefinitionRevision,
     DeviceView,
     ImmutableModelError,
@@ -25,6 +28,7 @@ from netbox_device_view.models import (
     VisualDefinition,
 )
 
+from .activation import activate
 from .artwork_samples import (
     DEVICE_FILES,
     FRONT_SVG,
@@ -33,6 +37,7 @@ from .artwork_samples import (
     definition,
 )
 from .permissions import grant
+from .test_artwork_device_view import TAB_URL, faces
 
 IMPORT_URL = "plugins:netbox_device_view:definitionrevision_import"
 LIST_URL = "plugins:netbox_device_view:definitionrevision_list"
@@ -80,6 +85,42 @@ class ArtworkTestCase(TestCase):
             for path in Path(self.media).rglob("*")
             if path.is_file()
         )
+
+    def activate_first_import(self):
+        """Activate the one revision for a device of type SW-24; return the association and the drawn faces."""
+        manufacturer = Manufacturer.objects.create(name="ACME", slug="acme")
+        device_type = DeviceType.objects.create(
+            manufacturer=manufacturer, model="SW-24", slug="sw-24"
+        )
+        self.device = Device.objects.create(
+            name="sw1",
+            device_type=device_type,
+            site=Site.objects.create(name="Site", slug="site"),
+            role=DeviceRole.objects.create(name="Role", slug="role"),
+        )
+        self.admin = User.objects.create_user(username="admin", is_superuser=True)
+        activate(self.admin, (DefinitionRevision.objects.get(), device_type))
+        return Association.objects.get(device_type=device_type), self.drawn_faces()
+
+    def drawn_faces(self):
+        """Return the faces of the Device View tab as a superuser sees them."""
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse(TAB_URL, kwargs={"pk": self.device.pk}))
+        self.client.force_login(self.user)
+        self.assertEqual(response.status_code, 200)
+        drawn = [etree.tostring(face) for face in faces(response.content.decode())]
+        self.assertEqual(len(drawn), 2)
+        return drawn
+
+    def assert_unchanged(self, association, drawn):
+        revision = Association.objects.get(pk=association.pk).revision_id
+        self.assertEqual(revision, association.revision_id)
+        self.assertEqual(self.drawn_faces(), drawn)
+
+
+def newer(colour):
+    """Return the files of a newer acme/sw-24 revision with another front colour."""
+    return dict(DEVICE_FILES, **{"front.svg": FRONT_SVG.replace("#333", colour)})
 
 
 class UploadTests(ArtworkTestCase):
@@ -203,6 +244,51 @@ class UploadTests(ArtworkTestCase):
         self.assertFalse(VisualDefinition.objects.exists())
         self.assertEqual(self.stored_files(), [])
 
+    def test_an_unsafe_archive_is_rejected_through_the_ui_and_the_api(self):
+        link = zipfile.ZipInfo(f"{DEVICE_DIR}/front.svg")
+        link.create_system = 3
+        link.external_attr = 0o120777 << 16
+        # A comment of spaces deflates to far less than a hundredth of its size.
+        bomb = FRONT_SVG.replace("</svg>", f"<!--{' ' * 500_000}--></svg>")
+        archives = {
+            "a ../ path": (
+                {**definition(DEVICE_DIR, DEVICE_FILES), "../evil.svg": FRONT_SVG},
+                "bundle",
+                "'../evil.svg' is not a safe relative path.",
+            ),
+            "a symlink": (
+                {
+                    **definition(DEVICE_DIR, DEVICE_FILES),
+                    f"{DEVICE_DIR}/front.svg": link,
+                },
+                f"{DEVICE_DIR}/front.svg",
+                "not a regular file or directory.",
+            ),
+            "a compression bomb": (
+                definition(DEVICE_DIR, dict(DEVICE_FILES, **{"front.svg": bomb})),
+                f"{DEVICE_DIR}/front.svg",
+                "compression ratio above 100:1.",
+            ),
+        }
+        for name, (entries, path, message) in archives.items():
+            data = bundle(entries)
+            with self.subTest(name):
+                ui = self.upload(data)
+                self.assertContains(ui, escape(f"{path}: {message}"), status_code=400)
+                api = self.api().post(
+                    reverse(API_UPLOAD),
+                    {"bundle": SimpleUploadedFile("api.zip", data)},
+                    format="multipart",
+                )
+                self.assertEqual(api.status_code, 400, api.content)
+                self.assertIn(
+                    {"path": path, "line": None, "message": message},
+                    api.json()["errors"],
+                )
+                self.assertFalse(DefinitionRevision.objects.exists())
+                self.assertFalse(ArtworkBlob.objects.exists())
+                self.assertEqual(self.stored_files(), [])
+
     def test_a_member_name_that_is_not_utf8_fails(self):
         # zipfile decodes a name with the UTF-8 flag in the directory and again in the local header.
         data = bundle({**definition(DEVICE_DIR, DEVICE_FILES), "é.svg": "x"})
@@ -275,6 +361,36 @@ class UploadTests(ArtworkTestCase):
         start = content.index('<div class="card-body htmx-container">')
         # End before the footer: its clock changes between the two requests.
         return content[start : content.index("<footer", start)]
+
+
+class ActiveArtworkTests(ArtworkTestCase):
+    def setUp(self):
+        super().setUp()
+        grant(self.user, DefinitionRevision, "view", "add")
+
+    def test_an_upload_of_a_newer_revision_leaves_the_active_artwork_unchanged(self):
+        self.upload()
+        association, drawn = self.activate_first_import()
+
+        ui = self.upload(bundle(definition(DEVICE_DIR, newer("#222"))), "newer.zip")
+
+        self.assertContains(ui, "Imported")
+        self.assertEqual(DefinitionRevision.objects.count(), 2)
+        self.assert_unchanged(association, drawn)
+
+        api = self.api().post(
+            reverse(API_UPLOAD),
+            {
+                "bundle": SimpleUploadedFile(
+                    "api.zip", bundle(definition(DEVICE_DIR, newer("#444")))
+                )
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(api.status_code, 201, api.content)
+        self.assertEqual(DefinitionRevision.objects.count(), 3)
+        self.assert_unchanged(association, drawn)
 
 
 class ApiTests(ArtworkTestCase):
