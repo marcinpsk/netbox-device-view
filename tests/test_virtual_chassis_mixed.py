@@ -539,6 +539,37 @@ class ApiTests(MixedChassisTestCase):
             ],
         )
 
+    def test_an_unreadable_module_artwork_file_makes_only_its_schematic_member_unavailable(
+        self,
+    ):
+        admin = User.objects.get(username="admin")
+        revision = import_definitions(admin)["acme/sfp-10g"]
+        sfp_type = ModuleType.objects.create(
+            manufacturer=self.manufacturer, model="SFP-10G"
+        )
+        activation.activate(admin, revision, sfp_type)
+        ModuleBay.objects.filter(pk=self.slot2.pk).update(position="2")
+        Module.objects.create(
+            device=self.sw5, module_bay=self.slot2, module_type=sfp_type
+        )
+        # Storage cannot read a directory, as it cannot read a file without permission.
+        for file in revision.files.select_related("blob"):
+            stored = self.media / file.blob.name
+            stored.unlink()
+            stored.mkdir()
+        with self.assertLogs("netbox_device_view.api.device_artwork", "ERROR"):
+            members = self.get()["members"]
+        self.assertEqual(
+            [(m["device_id"], m["representation"], m["reason"]) for m in members],
+            [
+                (self.sw2.pk, "artwork", None),
+                (self.sw4.pk, "unavailable", "svg_layout_required"),
+                (self.sw3.pk, "layout", None),
+                (self.sw1.pk, "artwork", None),
+                (self.sw5.pk, "unavailable", "artwork_error"),
+            ],
+        )
+
     def test_the_schematic_member_gives_its_artwork_without_a_revision(self):
         [member] = [m for m in self.get()["members"] if m["device_id"] == self.sw5.pk]
         self.assertEqual(member["panels"], [])

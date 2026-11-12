@@ -118,9 +118,9 @@ def test_artwork_api_page_states_the_values_of_the_code():
     *others, last = (
         f'`"{value}"`'
         for value in (
-            device_artwork.ARTWORK,
+            render.ARTWORK,
             device_artwork.LAYOUT,
-            device_artwork.SCHEMATIC,
+            render.SCHEMATIC,
             device_artwork.UNAVAILABLE,
         )
     )
