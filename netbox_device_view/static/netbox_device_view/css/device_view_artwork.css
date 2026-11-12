@@ -63,7 +63,7 @@
     pointer-events: all;
 }
 
-/* WebKit paints no outline on an SVG element, so a focused link also shows its focus ring. */
+/* WebKit paints no outline on an SVG element, so a focused connector also shows its focus ring. */
 .dv-art-connector:focus-visible {
     outline: 2px solid var(--bs-primary, #0d6efd);
     outline-offset: 1px;
@@ -105,6 +105,10 @@
 
 .dv-art-flood-marked {
     flood-color: var(--tblr-info);
+}
+
+.dv-art-flood-several {
+    flood-color: var(--tblr-purple);
 }
 
 .dv-art-flood-unresolved {

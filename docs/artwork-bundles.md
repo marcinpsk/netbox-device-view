@@ -224,7 +224,8 @@ In the UI, go to **Plugins → Artwork Revisions**, open the revision and click 
 The artwork view shows:
 
 - The front face above the rear face, each at the full width of the view. Each face zooms and scrolls in its own panel.
-- A link on each connector where exactly one binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component. A connector where two or more bindings find a component has no link.
+- A link on each connector that has one binding, when the binding finds a component. The binding uses the component type and the exact name, and finds only components of the device itself, not of its modules. A click on the connector opens the component.
+- The [details](#connector-details) of each connector.
 - Marks for the connectivity facts of each connector, and a legend below the faces. Each fact has its own mark, so a disabled interface with a cable shows both. A mark changes only the outline, and each mark has its own pattern, so no fact depends on colour alone.
 - A tooltip on each connector that names every fact: enabled or disabled, the cable status or no cable, marked connected, path complete or incomplete, and the peers that you can view. When the connector has its own title, the tooltip shows that title first.
 
@@ -236,13 +237,26 @@ The artwork view shows:
 | Long-dashed outer ring | A cable with a status that NetBox configuration adds. |
 | Double thin ring | **Mark connected**, with no cable. |
 | Dashed inner ring | A disabled interface. |
-| Dashed thin ring with a gap | No component found: the binding finds no component, or two or more. |
+| Thin ring with a gap | Several components: two or more bindings, and each finds its component. |
+| Dashed thin ring with a gap | No component found: at least one binding finds no component. |
 
 A cable that you cannot view gives no cable mark. The path state is in the tooltip only, because a cable mark does not show where the path ends. The [artwork API](artwork-api.md#binding) gives each fact as its own field.
 
-Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link and has the mark for no component found. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
+Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link and has the mark for no component found. The plugin never selects one component for a connector with several bindings: a click opens its details instead. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
 A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
+
+### Connector details
+
+The details of a connector show each binding. For a component that the binding finds, the details show the component, its module, enabled or disabled, the cable and its status, marked connected, the path state and the peers, each with a link, and a link to the trace. They show only the objects that you can view: a hidden cable shows as no cable, and a hidden peer is not in the list.
+
+To open the details:
+
+- Click **Details** in the toolbar of the face. While the button is on, a click or a tap on a connector opens its details instead of the component. Click **Details** again to turn it off.
+- Focus a connector with the keyboard and press **Space**. **Enter** opens the component, or its details while **Details** is on.
+- Click a connector that has no single component. A connector with several components opens a chooser of its components. A connector with a missing binding opens the details of each binding.
+
+Press **Escape** or click the close button to close the details. The focus then goes back to the connector.
 
 ### Permissions
 

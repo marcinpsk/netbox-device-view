@@ -25,6 +25,17 @@ from ..components import (
     device_components,
     find,
 )
+from ..details import (
+    FOUND,
+    MISSING,
+    SEVERAL,
+    SINGLE,
+    UNRESOLVED,
+    Details,
+    Entry,
+    details_id,
+    resolution,
+)
 from ..models import Association, DefinitionRevision
 from .storage import DamagedBlob, read_blob
 from .svg import (
@@ -41,8 +52,6 @@ logger = logging.getLogger(__name__)
 
 ARTWORK = "artwork"
 DAMAGED = "damaged"
-FOUND = "found"
-MISSING = "missing"
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
 OVERVIEW = "o"
 API = "a"
@@ -65,7 +74,7 @@ _PAINT = frozenset(
 )
 # The outline width as a part of the larger face dimension.
 _OUTLINE = 1 / 300
-# The outer mark of a connector: its cable status, else marked connected, else unresolved.
+# The outer mark of a connector: its cable status or marked connected, else several or unresolved.
 _CABLE_MARKS = {
     "connected": "cable-connected",
     "planned": "cable-planned",
@@ -74,7 +83,6 @@ _CABLE_MARKS = {
 # A cable status that NetBox configuration adds.
 CABLE_OTHER = "cable-other"
 MARKED = "marked"
-UNRESOLVED = "unresolved"
 # The inner mark of a connector.
 DISABLED = "disabled"
 # The ring of a connector that has the keyboard focus.
@@ -86,6 +94,7 @@ LEGEND = (
     (CABLE_OTHER, "Cable with another status"),
     (MARKED, "Marked connected"),
     (DISABLED, "Disabled"),
+    (SEVERAL, "Several components"),
     (UNRESOLVED, "No component found"),
 )
 
@@ -108,10 +117,25 @@ class Connector:
     bindings: tuple[Binding, ...]
 
     @property
+    def resolution(self) -> str:
+        return resolution(binding.status for binding in self.bindings)
+
+    @property
     def target(self) -> ComponentState | None:
-        """Return the component that a click opens: the one found binding, else None."""
-        found = [binding.state for binding in self.bindings if binding.status == FOUND]
-        return found[0] if len(found) == 1 else None
+        """Return the component that a click opens: the only binding when it is found, else None."""
+        return self.bindings[0].state if self.resolution == SINGLE else None
+
+    def details(self, prefix) -> Details:
+        entries = tuple(
+            Entry(
+                component_label(binding.model, binding.name),
+                binding.status,
+                () if binding.state is None else (binding.state,),
+            )
+            for binding in self.bindings
+        )
+        title = f"Connector {self.label or self.key}"
+        return Details(details_id(prefix, self.key), title, entries)
 
 
 @dataclass(frozen=True)
@@ -122,6 +146,8 @@ class RenderedFace:
     svg: SafeString
     # The ids of the stored face that the face draws, without the prefix.
     ids: frozenset[str]
+    # The details of each connector that the face draws; none for a plain face.
+    details: tuple[Details, ...] = ()
 
     @property
     def label(self):
@@ -189,13 +215,16 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     faces = []
     for face in revision.face_names:
         prefix = face_prefix(view, device, face)
-        svg, ids = _face_svg(
-            data[face],
-            prefix,
-            [connector for connector in connectors if connector.face == face],
-            plain,
+        drawn = [connector for connector in connectors if connector.face == face]
+        svg, ids = _face_svg(data[face], prefix, drawn, plain)
+        details = (
+            ()
+            if plain
+            else tuple(
+                connector.details(prefix) for connector in drawn if connector.key in ids
+            )
         )
-        faces.append(RenderedFace(face, prefix, svg, ids))
+        faces.append(RenderedFace(face, prefix, svg, ids, details))
     return Part(device, ARTWORK, revision, tuple(faces), connectors)
 
 
@@ -258,12 +287,9 @@ def _mark_connectors(root, prefix, connectors, elements):
                     outer, inner
                 )
                 defs.append(marks)
-            if connector.target is not None:
-                ring = _MarkFilter(
-                    f"{prefix}{_FOCUS}{connector.key}", *space
-                ).focus_ring()
-                defs.append(ring)
-        _wrap(element, connector, outer, inner, marks, ring, prefix)
+            ring = _MarkFilter(f"{prefix}{_FOCUS}{connector.key}", *space).focus_ring()
+            defs.append(ring)
+        _wrap(element, connector, prefix, outer, inner, marks, ring)
     if len(defs):
         root.insert(0, defs)
 
@@ -272,7 +298,7 @@ def _marks(connector) -> tuple[str | None, bool]:
     """Return the outer mark of a connector and whether it has the inner disabled mark."""
     target = connector.target
     if target is None:
-        return UNRESOLVED, False
+        return connector.resolution, False
     if target.cable_status:
         outer = _CABLE_MARKS.get(target.cable_status, CABLE_OTHER)
     else:
@@ -325,21 +351,23 @@ def _style_token(token, prefix: str) -> str:
     return tinycss2.serialize([token])
 
 
-def _wrap(element, connector, outer, inner, marks, ring, prefix):
-    """Wrap the connector element in a link to its component, or in a group when it has none."""
+def _wrap(element, connector, prefix, outer, inner, marks, ring):
+    """Wrap the connector element in a link to its component, or in a button that opens its details."""
     target = connector.target
     if target is None:
-        wrapper = etree.Element(f"{{{SVG_NS}}}g")
-        wrapper.set("class", "dv-art-unresolved")
+        wrapper = etree.Element(
+            f"{{{SVG_NS}}}g", tabindex="0", role="button", **{"aria-haspopup": "dialog"}
+        )
     else:
         wrapper = etree.Element(f"{{{SVG_NS}}}a")
         wrapper.set("href", target.component.get_absolute_url())
-        classes = ["dv-art-connector"]
-        if outer:
-            classes.append(f"dv-art-{outer}")
-        if inner:
-            classes.append(f"dv-art-{DISABLED}")
-        wrapper.set("class", " ".join(classes))
+    classes = ["dv-art-connector"]
+    if outer:
+        classes.append(f"dv-art-{outer}")
+    if inner:
+        classes.append(f"dv-art-{DISABLED}")
+    wrapper.set("class", " ".join(classes))
+    wrapper.set("data-dv-details", details_id(prefix, connector.key))
     if marks is not None:
         wrapper.set("filter", f"url(#{marks.get('id')})")
     title = _title(connector)
@@ -426,11 +454,17 @@ def _title(connector) -> str:
     """Return each fact of the connector as text, so no fact depends on colour alone."""
     target = connector.target
     if target is None:
-        found = [b for b in connector.bindings if b.status == FOUND]
+        if connector.resolution == SEVERAL:
+            names = ", ".join(
+                component_label(b.model, b.name) for b in connector.bindings
+            )
+            return f"Several components: {names}"
         names = ", ".join(
-            component_label(b.model, b.name) for b in found or connector.bindings
+            component_label(b.model, b.name)
+            for b in connector.bindings
+            if b.status == MISSING
         )
-        return f"Two or more components: {names}" if found else f"No component: {names}"
+        return f"No component: {names}"
     facts = []
     if target.enabled is not None:
         facts.append("enabled" if target.enabled else "disabled")
@@ -536,6 +570,8 @@ class _MarkFilter:
         if mark == MARKED:
             near = self.cut(self.grow(0.75), "SourceAlpha")
             return self.add("feComposite", {"in": near, "in2": far, "operator": "over"})
+        if mark == SEVERAL:
+            return far
         if mark == UNRESOLVED:
             return self.keep(far, self.checker(2))
         raise ValueError(f"unknown mark {mark!r}")
