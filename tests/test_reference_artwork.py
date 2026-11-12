@@ -3,22 +3,9 @@
 import io
 import shutil
 import tempfile
-import zipfile
 from io import StringIO
-from pathlib import Path
 
-import yaml
-from dcim.models import (
-    ConsolePortTemplate,
-    ConsoleServerPortTemplate,
-    Device,
-    DeviceRole,
-    DeviceType,
-    InterfaceTemplate,
-    Manufacturer,
-    PowerPortTemplate,
-    Site,
-)
+from dcim.models import Device, DeviceRole, Site
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -28,49 +15,17 @@ from users.models import User
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import Association
 
+from .reference_samples import (
+    ARTWORK,
+    COMMUNITY,
+    LIBRARY,
+    community_type,
+    definition_bundle,
+)
 from .test_artwork_device_view import TAB_URL, faces, links
 
-# A copy of the definition in netbox-device-view-library, and of the community type that it binds.
-FIXTURES = Path(__file__).parent / "fixtures"
-LIBRARY = FIXTURES / "library"
-DEFINITION = LIBRARY / "artwork" / "Avocent" / "ACS6048"
-COMMUNITY = FIXTURES / "devicetype-library"
+DEFINITION = ARTWORK / "Avocent" / "ACS6048"
 COMMUNITY_TYPE = COMMUNITY / "device-types" / "Avocent" / "ACS6048.yaml"
-TEMPLATES = {
-    "interfaces": InterfaceTemplate,
-    "console-ports": ConsolePortTemplate,
-    "console-server-ports": ConsoleServerPortTemplate,
-    "power-ports": PowerPortTemplate,
-}
-
-
-def definition_bundle() -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for file in sorted(DEFINITION.iterdir()):
-            archive.writestr(f"artwork/Avocent/ACS6048/{file.name}", file.read_bytes())
-    return buffer.getvalue()
-
-
-def community_device_type() -> DeviceType:
-    """Create the community device type with its component templates, as an import would."""
-    data = yaml.safe_load(COMMUNITY_TYPE.read_text())
-    manufacturer = Manufacturer.objects.create(
-        name=data["manufacturer"], slug=data["manufacturer"].lower()
-    )
-    device_type = DeviceType.objects.create(
-        manufacturer=manufacturer,
-        model=data["model"],
-        slug=data["slug"],
-        part_number=data["part_number"],
-        u_height=data["u_height"],
-    )
-    for key, template in TEMPLATES.items():
-        template.objects.bulk_create(
-            template(device_type=device_type, name=item["name"], type=item["type"])
-            for item in data[key]
-        )
-    return device_type
 
 
 class ReferenceArtworkTests(TestCase):
@@ -85,7 +40,7 @@ class ReferenceArtworkTests(TestCase):
 
     def test_the_definition_passes_the_offline_bundle_import(self):
         [imported] = import_bundle(
-            self.admin, "acs6048.zip", io.BytesIO(definition_bundle())
+            self.admin, "acs6048.zip", io.BytesIO(definition_bundle("Avocent/ACS6048"))
         )
         self.assertTrue(imported.created)
         manifest = imported.revision.manifest
@@ -96,7 +51,7 @@ class ReferenceArtworkTests(TestCase):
 
     def activate(self):
         """Return a device of the community type, and the revision that is its active artwork."""
-        device_type = community_device_type()
+        device_type = community_type(COMMUNITY_TYPE)
         device = Device.objects.create(
             name="acs1",
             device_type=device_type,
@@ -104,7 +59,7 @@ class ReferenceArtworkTests(TestCase):
             role=DeviceRole.objects.create(name="Role", slug="role"),
         )
         [imported] = import_bundle(
-            self.admin, "acs6048.zip", io.BytesIO(definition_bundle())
+            self.admin, "acs6048.zip", io.BytesIO(definition_bundle("Avocent/ACS6048"))
         )
         Association.objects.create(device_type=device_type, revision=imported.revision)
         return device, imported.revision
@@ -160,5 +115,5 @@ class ReferenceArtworkTests(TestCase):
             stdout=stdout,
         )
         self.assertEqual(
-            stdout.getvalue().strip(), "Checked 0 layouts and 1 artwork definition."
+            stdout.getvalue().strip(), "Checked 0 layouts and 4 artwork definitions."
         )
