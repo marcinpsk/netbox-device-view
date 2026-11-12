@@ -100,6 +100,17 @@ _ASPECT = re.compile(
 )
 
 
+def safe_parser(**options) -> etree.XMLParser:
+    """Return an XML parser that loads no entity, DTD or network resource."""
+    return etree.XMLParser(
+        resolve_entities=False,
+        no_network=True,
+        huge_tree=False,
+        load_dtd=False,
+        **options,
+    )
+
+
 def _bounded(text: str) -> float:
     value = float(text)
     if not math.isfinite(value) or abs(value) > MAX_NUMBER:
@@ -210,7 +221,7 @@ def _keywords_or(words: str, other: Callable[[str], object]) -> Callable[[str], 
     return check
 
 
-def _view_box(value: str) -> tuple[float, float, float, float]:
+def parse_view_box(value: str) -> tuple[float, float, float, float]:
     numbers = _number_list(value)
     if len(numbers) != 4:
         raise _Invalid("must be four numbers: min-x, min-y, width, height")
@@ -308,7 +319,8 @@ def _transform_arguments(scanner: _Scanner) -> list[float]:
         numbers.append(scanner.number())
 
 
-def _transform(value: str):
+def _transform_items(value: str):
+    """Yield (name, numbers) of each function of a valid transform list."""
     if len(value.encode()) > MAX_TRANSFORM_BYTES:
         raise _Bound(f"transform list is longer than {MAX_TRANSFORM_BYTES} bytes")
     scanner = _Scanner(value)
@@ -319,16 +331,75 @@ def _transform(value: str):
         if counts is None:
             raise _Invalid(f"unknown transform {name or scanner.peek()} {where}")
         scanner.skip(_WSP)
-        count = len(_transform_arguments(scanner))
-        if count not in counts:
+        numbers = _transform_arguments(scanner)
+        if len(numbers) not in counts:
             allowed = " or ".join(map(str, counts))
-            raise _Invalid(f"{name} takes {allowed} numbers, not {count}")
+            raise _Invalid(f"{name} takes {allowed} numbers, not {len(numbers)}")
         separator = scanner.skip(_TRANSFORM_SEPARATOR)
         if scanner.at_end():
             if "," in separator:
                 raise _Invalid("transform list must not end with a comma")
         elif not separator:
             raise _Invalid(f"separate transforms with whitespace or commas {where}")
+        yield name, numbers
+
+
+def _transform(value: str):
+    for _ in _transform_items(value):
+        pass
+
+
+# An affine matrix (a, b, c, d, e, f): x' = a*x + c*y + e, y' = b*x + d*y + f.
+IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def multiply(m, n):
+    """Return the matrix that applies n first, then m."""
+    a, b, c, d, e, f = m
+    p, q, r, s, t, u = n
+    return (
+        a * p + c * q,
+        b * p + d * q,
+        a * r + c * s,
+        b * r + d * s,
+        a * t + c * u + e,
+        b * t + d * u + f,
+    )
+
+
+def _function_matrix(name: str, numbers: list[float]):
+    if name == "matrix":
+        return tuple(numbers)
+    if name == "translate":
+        return (1.0, 0.0, 0.0, 1.0, numbers[0], numbers[1] if len(numbers) > 1 else 0.0)
+    if name == "scale":
+        return (numbers[0], 0.0, 0.0, numbers[-1], 0.0, 0.0)
+    if name == "rotate":
+        angle = math.radians(numbers[0])
+        cx, cy = numbers[1:] or (0.0, 0.0)
+        rotation = (
+            math.cos(angle),
+            math.sin(angle),
+            -math.sin(angle),
+            math.cos(angle),
+            0.0,
+            0.0,
+        )
+        return multiply(
+            multiply((1.0, 0.0, 0.0, 1.0, cx, cy), rotation),
+            (1.0, 0.0, 0.0, 1.0, -cx, -cy),
+        )
+    if name == "skewX":
+        return (1.0, 0.0, math.tan(math.radians(numbers[0])), 1.0, 0.0, 0.0)
+    return (1.0, math.tan(math.radians(numbers[0])), 0.0, 1.0, 0.0, 0.0)
+
+
+def transform_matrix(value: str):
+    """Return the matrix of a valid transform list; the functions apply right to left."""
+    matrix = IDENTITY
+    for name, numbers in _transform_items(value.strip(_SPACE)):
+        matrix = multiply(matrix, _function_matrix(name, numbers))
+    return matrix
 
 
 def _url(value: str, kinds: frozenset[str]) -> _Reference | None:
@@ -452,7 +523,7 @@ ATTRIBUTES: dict[str, Callable[[str], object]] = {
     "d": _path,
     "transform": _transform,
     "gradientTransform": _transform,
-    "viewBox": _view_box,
+    "viewBox": parse_view_box,
     "preserveAspectRatio": _aspect,
     "offset": _fraction,
     "gradientUnits": _UNITS,
@@ -557,11 +628,8 @@ class _Validator:
             data.decode("utf-8")
         except UnicodeDecodeError as error:
             self.fail(_line_at(data, error.start), "file must be UTF-8")
-        parser = etree.XMLParser(
-            resolve_entities=False, no_network=True, huge_tree=False, load_dtd=False
-        )
         try:
-            root = etree.fromstring(data, parser)
+            root = etree.fromstring(data, safe_parser())
         except etree.XMLSyntaxError as error:
             self.fail(error.lineno, f"invalid XML: {error.msg}")
         docinfo = root.getroottree().docinfo
@@ -803,7 +871,7 @@ class _Validator:
         if self.issues:
             raise ArtworkError(self.issues)
         return Face(
-            view_box=_view_box(root.get("viewBox").strip(_SPACE)),
+            view_box=parse_view_box(root.get("viewBox").strip(_SPACE)),
             connector_ids=frozenset(i for i in self.ids if i.startswith("con-")),
             bay_ids=frozenset(i for i in self.ids if i.startswith("bay-")),
             id_lines={

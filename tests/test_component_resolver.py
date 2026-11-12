@@ -2,7 +2,6 @@
 
 from html.parser import HTMLParser
 
-from core.models import ObjectType
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -27,10 +26,12 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
-from users.models import ObjectPermission, Token, User
+from users.models import Token, User
 
 from netbox_device_view.components import BINDABLE_MODELS, device_components, find
 from netbox_device_view.models import DeviceView, RenderMode
+
+from .permissions import grant
 
 SINGLE_VIEW_PATCH_PANEL = """
 version: 1
@@ -538,21 +539,15 @@ class HiddenObjectTests(ResolverTestBase):
         )
         cls.far_cable.save()
         cls.user = User.objects.create_user(username="viewer")
-        for name, constraints in (
-            ("dcim.view_device", None),
-            ("dcim.view_interface", {"device_id__in": [cls.device.pk, cls.near.pk]}),
-            ("dcim.view_cable", {"id": cls.far_cable.pk}),
-            ("netbox_device_view.view_deviceview", None),
-        ):
-            app_label, action_model = name.split(".")
-            action, model = action_model.split("_", 1)
-            permission = ObjectPermission.objects.create(
-                name=name, actions=[action], constraints=constraints
-            )
-            permission.users.add(cls.user)
-            permission.object_types.add(
-                ObjectType.objects.get_by_natural_key(app_label, model)
-            )
+        grant(cls.user, Device, "view")
+        grant(
+            cls.user,
+            Interface,
+            "view",
+            constraints={"device_id__in": [cls.device.pk, cls.near.pk]},
+        )
+        grant(cls.user, Cable, "view", constraints={"id": cls.far_cable.pk})
+        grant(cls.user, DeviceView, "view")
 
     def test_a_hidden_cable_renders_as_no_cable(self):
         self.assertEqual(

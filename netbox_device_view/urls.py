@@ -90,6 +90,11 @@ urlpatterns = (
         name="definitionrevision",
     ),
     path(
+        "artwork-revisions/<int:pk>/activate/",
+        views.ActivateRevisionView.as_view(),
+        name="definitionrevision_activate",
+    ),
+    path(
         "artwork-revisions/<int:pk>/delete/",
         views.DefinitionRevisionDeleteView.as_view(),
         name="definitionrevision_delete",
@@ -99,5 +104,26 @@ urlpatterns = (
         ObjectChangeLogView.as_view(),
         name="definitionrevision_changelog",
         kwargs={"model": models.DefinitionRevision},
+    ),
+    path(
+        "artwork-associations/",
+        views.AssociationListView.as_view(),
+        name="association_list",
+    ),
+    path(
+        "artwork-associations/<int:pk>/",
+        views.AssociationView.as_view(),
+        name="association",
+    ),
+    path(
+        "artwork-associations/<int:pk>/delete/",
+        views.AssociationDeleteView.as_view(),
+        name="association_delete",
+    ),
+    path(
+        "artwork-associations/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="association_changelog",
+        kwargs={"model": models.Association},
     ),
 )

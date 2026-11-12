@@ -14,6 +14,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils.html import escape, format_html, format_html_join
 from django.utils.safestring import mark_safe
 
+from .artwork.render import active_revisions, has_active_artwork, resolve_device
 from .components import (
     AMBIGUOUS,
     CONNECTED,
@@ -375,11 +376,41 @@ def panel_title(obj, user):
     return obj.name
 
 
+def artwork_parts(obj, user):
+    """Return the artwork Part of each member that ``user`` can view, or None unless every member has active artwork."""
+    members = panel_members(obj, user)
+    revisions = active_revisions({member.device_type_id for member in members})
+    if not members or any(member.device_type_id not in revisions for member in members):
+        return None
+    return [
+        resolve_device(member, revisions[member.device_type_id], user)
+        for member in members
+    ]
+
+
+def has_device_view(obj, user):
+    """Return True when the device type of ``obj`` has active artwork or a DeviceView that ``user`` can view."""
+    return (
+        has_active_artwork(obj.device_type_id)
+        or DeviceView.objects.restrict(user, "view")
+        .filter(device_type=obj.device_type_id)
+        .exists()
+    )
+
+
 def device_view_context(obj, user, cable_colors=False):
     """Return the render context for the device view of ``obj`` that ``user`` sees, or None without one.
 
-    ``layout_error`` holds the parse error of a stored layout that does not parse.
+    Active artwork comes before a layout. ``layout_error`` holds the parse
+    error of a stored layout that does not parse.
     """
+    parts = artwork_parts(obj, user)
+    if parts is not None:
+        return {
+            "artwork_parts": parts,
+            "current_device": obj.pk,
+            "panel_title": panel_title(obj, user),
+        }
     context = {
         "layout_error": None,
         "device_view": None,

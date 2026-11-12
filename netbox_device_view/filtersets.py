@@ -6,7 +6,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox.filtersets import ChangeLoggedModelFilterSet, NetBoxModelFilterSet
 from utilities.filtersets import register_filterset
 
-from .models import DefinitionRevision, DeviceView, VisualDefinition
+from .models import Association, DefinitionRevision, DeviceView, VisualDefinition
 
 
 @register_filterset
@@ -83,3 +83,24 @@ class VisualDefinitionFilterSet(ChangeLoggedModelFilterSet):
         if not value.strip():
             return queryset
         return queryset.filter(key__icontains=value)
+
+
+@register_filterset
+class AssociationFilterSet(ChangeLoggedModelFilterSet):
+    q = django_filters.CharFilter(method="search", label=_("Search"))
+    device_type_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=DeviceType.objects.all(), label=_("Device type (ID)")
+    )
+
+    class Meta:
+        model = Association
+        fields = ("id", "revision")
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(device_type__model__icontains=value)
+            | Q(module_type__model__icontains=value)
+            | Q(revision__definition__key__icontains=value)
+        )
