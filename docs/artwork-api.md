@@ -104,6 +104,7 @@ Active artwork comes before a layout. A member gets `"layout"` when its device t
 | `svg_layout_required` | No active artwork, and the `DeviceView` has no YAML layout. |
 | `invalid_layout` | No active artwork, and the YAML layout does not parse. |
 | `damaged_artwork` | A stored file of the active revision is missing or does not match its digest. Import the revision again to repair it. |
+| `artwork_error` | Drawing the active revision failed with an unexpected error, for example a stored file that storage cannot read. The NetBox log has the error. |
 
 ### Artwork
 
