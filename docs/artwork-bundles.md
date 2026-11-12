@@ -29,6 +29,8 @@ artwork/
 - The archive uses the classic zip format. A zip64 archive fails. A bundle fits the classic format, because of its size and member limits.
 - If one definition fails, the import stores nothing.
 
+To check a definition before an import, use the [`device_view_check` command](library-check.md).
+
 ---
 
 ## Manifest

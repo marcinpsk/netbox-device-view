@@ -146,6 +146,8 @@ If a file has the same layout as the device view, the result is **Unchanged**. T
 
 ## What the import checks
 
+To run these checks on the files of a library before a sync, use the [`device_view_check` command](library-check.md).
+
 - **Content:** YAML layouts must pass the [YAML layout validation](layout-yaml.md#validation), as for a save in the edit form or with the API.
 
     CSS layouts can contain only the grid rules that the plugin renders:
