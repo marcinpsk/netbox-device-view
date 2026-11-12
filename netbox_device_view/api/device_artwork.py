@@ -23,6 +23,7 @@ UNAVAILABLE = "unavailable"
 # Reserved for a generic schematic (#47); no member gets it yet.
 SCHEMATIC = "schematic"
 DAMAGED_ARTWORK = "damaged_artwork"
+ARTWORK_ERROR = "artwork_error"
 # The ComponentState facts that a binding gives as they are.
 _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_complete")
 
@@ -49,7 +50,14 @@ def compose_device_artwork(device: Device, user) -> dict:
 
 def _representation(member, revision, user) -> dict:
     if revision is not None:
-        part = resolve_device(member, revision, user, view=API, plain=True)
+        try:
+            part = resolve_device(member, revision, user, view=API, plain=True)
+        except Exception:
+            # As for the panels: one member that fails does not fail the others.
+            logger.exception(
+                "Unexpected error drawing the artwork of device %s", member.pk
+            )
+            return _unavailable_member(ARTWORK_ERROR)
         if part.representation == DAMAGED:
             return _unavailable_member(DAMAGED_ARTWORK)
         return {
