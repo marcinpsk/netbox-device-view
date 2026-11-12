@@ -12,9 +12,7 @@ from dcim.models import Device
 
 from ..artwork.render import (
     API,
-    ARTWORK,
     DAMAGED,
-    SCHEMATIC,
     resolve_device,
     resolve_schematic,
 )
@@ -53,20 +51,16 @@ def compose_device_artwork(device: Device, user) -> dict:
 
 def _representation(member, user) -> dict:
     device, device_view = member.device, member.device_view
-    if member.revision is not None:
-        try:
-            part = resolve_device(device, member.revision, user, view=API, plain=True)
-        except Exception:
-            # As for the panels: one member that fails does not fail the others.
-            logger.exception(
-                "Unexpected error drawing the artwork of device %s", device.pk
-            )
-            return _unavailable_member(ARTWORK_ERROR)
+    try:
+        part = _drawing(member, user)
+    except Exception:
+        # As for the panels: one member that fails does not fail the others.
+        logger.exception("Unexpected error drawing the artwork of device %s", device.pk)
+        return _unavailable_member(ARTWORK_ERROR)
+    if part is not None:
         if part.representation == DAMAGED:
             return _unavailable_member(DAMAGED_ARTWORK)
-        return _drawn(ARTWORK, part)
-    if member.schematic:
-        return _drawn(SCHEMATIC, resolve_schematic(device, user, view=API, plain=True))
+        return _drawn(part.representation, part)
     if device_view is None:
         return _unavailable_member(UnavailableReason.NO_LAYOUT)
     if not device_view.has_yaml_layout:
@@ -81,6 +75,17 @@ def _representation(member, user) -> dict:
         logger.exception("Unexpected error composing panels for device %s", device.pk)
         return _unavailable_member(UnavailableReason.INVALID_LAYOUT)
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
+
+
+def _drawing(member, user):
+    """Return the artwork or schematic Part of ``member``, or None when it has neither."""
+    if member.revision is not None:
+        return resolve_device(
+            member.device, member.revision, user, view=API, plain=True
+        )
+    if member.schematic:
+        return resolve_schematic(member.device, user, view=API, plain=True)
+    return None
 
 
 def _drawn(representation, part) -> dict:
