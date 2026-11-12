@@ -55,6 +55,28 @@
   <div class="row">
     <div class="col col-12">
       <div class="card">
+        <h2 class="card-header">{% trans "Connectors" %}</h2>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead>
+              <tr><th>{% trans "Connector key" %}</th><th>{% trans "Face" %}</th><th>{% trans "Label" %}</th><th>{% trans "Bindings" %}</th></tr>
+            </thead>
+            <tbody>
+              {% for connector in connectors %}
+                <tr>
+                  <td class="font-monospace">{{ connector.key }}</td>
+                  <td>{{ connector.face }}</td>
+                  <td>{{ connector.label|placeholder }}</td>
+                  <td>{{ connector.bindings|default:_("No binding") }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="4" class="text-muted">{% trans "None" %}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
         <h2 class="card-header">{% trans "Files" %}</h2>
         <table class="table table-hover mb-0">
           <thead>

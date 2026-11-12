@@ -1,5 +1,6 @@
 """Plugin behaviour in an active NetBox Branching branch; skipped when netbox-branching is not enabled."""
 
+import io
 import shutil
 import tempfile
 import unittest
@@ -12,13 +13,17 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.urls import reverse
-from users.models import User
+from rest_framework.test import APIClient
+from users.constants import TOKEN_PREFIX
+from users.models import Token, User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
+from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import (
     Association,
+    BindingOverride,
     DefinitionRevision,
     DeviceView,
     VisualDefinition,
@@ -31,6 +36,9 @@ from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import EDIT_URL as DEFINITION_EDIT_URL
 from .test_artwork_source_import import SOURCE_IMPORT_URL
+from .test_binding_override_api import LIST as OVERRIDE_API_LIST
+from .test_binding_override_pages import ADD_URL as OVERRIDE_ADD_URL
+from .test_binding_override_pages import rows
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
 
@@ -119,7 +127,11 @@ class CatalogueModelTests(SimpleTestCase):
         # A branch can change device types and module types, so their links are branched too.
         self.assertEqual(
             labels - CATALOGUE,
-            {"netbox_device_view.deviceview", "netbox_device_view.association"},
+            {
+                "netbox_device_view.deviceview",
+                "netbox_device_view.association",
+                "netbox_device_view.bindingoverride",
+            },
         )
 
 
@@ -290,3 +302,109 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
             .filter(object_type=ObjectType.objects.get_for_model(Association))
             .exists()
         )
+
+
+class BindingOverrideInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main, with the artwork and its associations, when it is provisioned.
+        media = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, media)
+        media_override = override_settings(MEDIA_ROOT=media)
+        media_override.enable()
+        self.addCleanup(media_override.disable)
+        admin = User.objects.create_user(username="admin", is_superuser=True)
+        [imported] = import_bundle(
+            admin, "sw24.zip", io.BytesIO(bundle(definition(DEVICE_DIR, DEVICE_FILES)))
+        )
+        manufacturer = Manufacturer.objects.create(name="ACME", slug="acme")
+        self.device_type, other_type = (
+            DeviceType.objects.create(
+                manufacturer=manufacturer, model=model, slug=model
+            )
+            for model in ("SW-24", "SW-48")
+        )
+        for device_type in (self.device_type, other_type):
+            Association.objects.create(
+                device_type=device_type, revision=imported.revision
+            )
+        self.stored = [
+            BindingOverride.objects.create(
+                device_type=other_type,
+                definition=imported.revision.definition,
+                connector_key=key,
+                bindings=[],
+            )
+            for key in ("con-eth1", "con-psu")
+        ]
+        super().setUp()
+        grant(self.user, DeviceType, "view")
+
+    def add_override(self):
+        return self.client.post(
+            reverse(OVERRIDE_ADD_URL),
+            {
+                "device_type": self.device_type.pk,
+                "connector_key": "con-eth1",
+                **rows(("interface", "eth2")),
+            },
+        )
+
+    def change_diffs(self):
+        from netbox_branching.models import ChangeDiff
+
+        return ChangeDiff.objects.using("default").filter(
+            object_type=ObjectType.objects.get_for_model(BindingOverride)
+        )
+
+    def test_an_override_in_a_branch_changes_main_at_the_merge(self):
+        from netbox_branching.utilities import activate_branch
+
+        grant(self.user, BindingOverride, "view", "add")
+
+        response = self.add_override()
+
+        added = BindingOverride.objects.filter(device_type=self.device_type)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(added.exists())
+        with activate_branch(self.branch):
+            self.assertTrue(added.exists())
+
+        self.branch.merge(user=self.user)
+
+        self.assertEqual(added.get().connector_key, "con-eth1")
+
+    def test_a_rejected_override_in_a_branch_leaves_no_change_record(self):
+        grant(
+            self.user,
+            BindingOverride,
+            "view",
+            "add",
+            constraints={"connector_key": "con-psu"},
+        )
+
+        response = self.add_override()
+
+        self.assertContains(response, "permissions violation")
+        self.assertFalse(self.change_diffs().exists())
+
+    def test_a_failed_bulk_api_change_in_a_branch_leaves_no_change_record(self):
+        grant(self.user, BindingOverride, "view", "change")
+        token = Token.objects.create(user=self.user)
+        api = APIClient()
+        api.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}",
+            HTTP_X_NETBOX_BRANCH=self.branch.schema_id,
+        )
+        first, second = self.stored
+
+        response = api.patch(
+            reverse(OVERRIDE_API_LIST),
+            [
+                {"id": first.pk, "bindings": [{"component": "interface", "name": "a"}]},
+                {"id": second.pk, "bindings": [{"component": "fan", "name": "b"}]},
+            ],
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.content[:500])
+        self.assertFalse(self.change_diffs().exists())

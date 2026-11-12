@@ -1,15 +1,27 @@
 """Activate a definition revision for a device type: the one writer of associations."""
 
+from dcim.models import Device
 from django.core.exceptions import PermissionDenied
 from django.db import DEFAULT_DB_ALIAS, IntegrityError, router, transaction
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from ..models import Association
+from ..models import Association, BindingOverride
+from .overrides import depending_on
+from .type_lock import lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
 CHANGE_PERMISSION = "netbox_device_view.change_association"
 RACED_MESSAGE = _(
     "Another activation for this device type ran at the same time. Try again."
+)
+MISSING_CONNECTORS = _(
+    "These binding overrides name a connector that the revision does not have:"
+    " {overrides}. Delete them, or select another revision."
+)
+HIDDEN_OVERRIDES = _(
+    "Binding overrides name a connector that the revision does not have. Your"
+    " permissions do not cover every affected object."
 )
 
 
@@ -39,6 +51,8 @@ def activate(user, revision, device_type) -> Association:
 
 
 def _activate(user, revision, device_type) -> Association:
+    # The writers of binding overrides take the same lock.
+    lock_types([device_type], router.db_for_write(Association))
     association = (
         Association.objects.select_for_update().filter(device_type=device_type).first()
     )
@@ -50,6 +64,7 @@ def _activate(user, revision, device_type) -> Association:
             return association
         association.snapshot()
         action = "change"
+    _check_overrides(user, revision, device_type)
     association.revision = revision
     # A concurrent first activation fails on the unique constraint instead.
     association.full_clean(validate_unique=False)
@@ -64,3 +79,28 @@ def _require(user, action, association):
         Association.objects.restrict(user, action).filter(pk=association.pk).exists()
     ):
         raise PermissionDenied
+
+
+def _check_overrides(user, revision, device_type):
+    """Refuse a revision without the connector of an override that depends on the type."""
+    missing = (
+        BindingOverride.objects.filter(
+            depending_on(device_type), definition=revision.definition_id
+        )
+        .exclude(connector_key__in=list(revision.manifest["connectors"]))
+        .select_related("device_type__manufacturer", "device")
+    )
+    count = missing.count()
+    if not count:
+        return
+    # A name needs view permission on the override and on its device.
+    visible = list(
+        missing.restrict(user, "view").filter(
+            Q(device__isnull=True) | Q(device__in=Device.objects.restrict(user, "view"))
+        )
+    )
+    if len(visible) != count:
+        raise ActivationRejected(HIDDEN_OVERRIDES)
+    raise ActivationRejected(
+        MISSING_CONNECTORS.format(overrides=", ".join(map(str, visible)))
+    )

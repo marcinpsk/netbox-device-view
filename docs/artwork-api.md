@@ -125,7 +125,7 @@ Each `svg` is the stored face, parsed and written again. It has only the element
 | `face` | string | The face that draws the connector. |
 | `label` | string \| null | The label of the manifest. |
 | `element_id` | string \| null | The `id` of the connector element in the `svg` of its face. Draw state or find a tap target from this element. `null` when the face does not draw the element, for example in a face stored before the import rejected elements in `title` and `desc`. |
-| `bindings` | array | One entry per binding of the manifest, in manifest order. |
+| `bindings` | array | One entry per binding, in list order. The list is the one of the manifest, or the replacement list of a [binding override](artwork-bundles.md#binding-overrides). |
 
 The page links a connector to its component only when exactly one binding has `status: "found"`. A client should do the same.
 
@@ -136,7 +136,7 @@ The page links a connector to its component only when exactly one binding has `s
 | `status` | string | `"found"`, or `"missing"` when the device has no component of that type and name that the user can view. A component that the user cannot view is missing. |
 | `object_type` | string | `app_label.model_name` of the bound type, for example `"dcim.interface"` or `"dcim.powerport"`. Set for a missing binding too. |
 | `object_id` | int \| null | The component. `null` when missing. |
-| `name` | string | The component name. For a missing binding, the name in the manifest. |
+| `name` | string | The component name. For a missing binding, the name in the binding list. |
 | `enabled` | bool \| null | The administrative state of an interface. `null` for the other types, which have no `enabled` field. |
 | `cable_status` | string \| null | The status of the cable that the user can view: `"connected"`, `"planned"` or `"decommissioning"`. `null` without a cable, or with a cable that the user cannot view. |
 | `cable_color` | string \| null | As in a [rendered-layout hotspot](rendered-layout-api.md#hotspot). |
