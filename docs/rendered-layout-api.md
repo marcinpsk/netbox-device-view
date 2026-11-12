@@ -129,7 +129,7 @@ Unlike the web UI's SVG (documented in [SVG Renderer](svg-renderer.md)), this en
 - **No CSS classes.** Every port's fill colour is baked in as an explicit `fill` attribute at composition time — nothing depends on a stylesheet or JavaScript running after the SVG is parsed.
 - **No `<text>` elements.** Port/interface labels are not rendered into the SVG at all — they're returned as `hotspot.name` instead. Renderers that can't reliably centre SVG text (a real, documented `flutter_svg` limitation) render labels as native text overlays positioned from hotspot geometry instead.
 - **No interactivity attributes** (`<title>`, `tabindex`, `role`, `data-bs-*`) — those are a browser/Bootstrap concern with no equivalent here.
-- The same `dv-nocolor-pattern` diagonal-stripe `<defs>` pattern the web renderer uses is included, for cables with no colour set.
+- A diagonal-stripe `<defs>` pattern with the id `dv-nocolor-pattern` is included, for cables with no colour set. The web renderer gives each panel its own pattern id.
 
 If you need to render this SVG in a browser-based tool for debugging, it will look structurally identical to the web UI's SVG but with colours already applied and no labels.
 
@@ -141,7 +141,7 @@ A `DeviceView`'s own `render_mode` field (`css` or `svg`) controls which rendere
 
 ## Virtual Chassis
 
-A Virtual Chassis device returns one set of panels per member, in rack order (same ordering the web UI uses), each composed from that member's own device type's `DeviceView`. Members that the user cannot view are left out. If the device type of **any** other member lacks an SVG-capable `DeviceView` that the user can view, the whole response is `available: false`. There is no partial per-member fallback (the web UI does the same). See [Virtual Chassis](virtual-chassis.md).
+A Virtual Chassis device returns one set of panels per member, in rack order (same ordering the web UI uses), each composed from that member's own device type's `DeviceView`. Members that the user cannot view are left out. If the device type of **any** other member lacks an SVG-capable `DeviceView` that the user can view, the whole response is `available: false`. There is no partial per-member fallback. The web UI and the [artwork API](artwork-api.md) resolve each member alone. See [Virtual Chassis](virtual-chassis.md).
 
 ---
 

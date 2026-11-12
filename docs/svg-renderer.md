@@ -14,7 +14,7 @@ If either condition is not met, the plugin silently falls back to CSS rendering.
 Set **Render Mode → SVG** on the DeviceView edit page. The field is available at *Plugins → Device Views → [edit]*.
 
 !!! note
-    Virtual Chassis devices render as one SVG panel per member (in rack order), each using that member's own device type's DeviceView — see [Virtual Chassis](virtual-chassis.md). SVG mode requires *every* member's device type to have a YAML-layout DeviceView; if any member is missing one, the whole device falls back to CSS.
+    Virtual Chassis devices show one panel per member, in rack order. Each member resolves alone: a member whose DeviceView is in SVG mode with a YAML layout shows an SVG panel, and another member can show a CSS grid, artwork or a schematic. See [Virtual Chassis](virtual-chassis.md).
 
 ---
 
@@ -59,10 +59,10 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 ## SVG output structure
 
 ```xml
-<svg class="dv-svg" viewBox="0 0 W H" xmlns="...">
+<svg class="dv-svg" viewBox="0 0 W H" xmlns="..." style="--dv-nocolor-fill: url(#dv-s{device id}-{face}-nocolor)">
   <defs>
-    <!-- diagonal stripe pattern for cables with no colour set -->
-    <pattern id="dv-nocolor-pattern" .../>
+    <!-- diagonal stripe pattern for cables with no colour set; each panel has its own id -->
+    <pattern id="dv-s{device id}-{face}-nocolor" .../>
   </defs>
 
   <!-- canvas background -->
@@ -130,5 +130,5 @@ Use `cell_size: 0` in the YAML canvas to enable auto sizing for patch panels.
 
 ## Limitations
 
-- Virtual Chassis SVG rendering requires every member's device type to have an SVG-capable DeviceView (see above) — one missing member falls the whole device back to CSS
+- The page resolves each Virtual Chassis member alone (see above). The [rendered-layout API](rendered-layout-api.md) does not: it needs a DeviceView with a YAML layout for every member that the user can view, and one member without it makes the whole response unavailable (`no_layout` or `svg_layout_required`)
 - `cell_size: 0` (patch-panel auto sizing) uses `DEFAULT_CELL = 32 px` in SVG mode since CSS `auto` sizing has no SVG equivalent

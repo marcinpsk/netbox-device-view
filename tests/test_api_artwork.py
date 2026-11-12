@@ -477,7 +477,7 @@ class VirtualChassisApiTests(ChassisApiTestCase):
         )
         self.assertEqual(
             [(m["representation"], m["reason"]) for m in body["members"]],
-            [("artwork", None), ("unavailable", "no_layout")],
+            [("artwork", None), ("schematic", None)],
         )
 
     def test_a_member_with_a_layout_gets_its_panels_beside_an_artwork_member(self):

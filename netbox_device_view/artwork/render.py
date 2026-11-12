@@ -6,8 +6,9 @@ bytes reach the page as they are. Every id gets the prefix of its occurrence,
 lists each module on the placement path, and the references are rewritten on
 the tree. A module without drawable artwork shows as a generated schematic of
 its components and module bays, and a bay without a module that the user can
-view shows that its inventory is not recorded. A focus view draws one module
-again in its own coordinates.
+view shows that its inventory is not recorded. A device without artwork can
+show as a schematic of the same kind, on its one face ``schematic``. A focus
+view draws one module again in its own coordinates.
 """
 
 import functools
@@ -66,8 +67,11 @@ logger = logging.getLogger(__name__)
 
 ARTWORK = "artwork"
 DAMAGED = "damaged"
-# An installed module without drawable artwork: a schematic of its components; also the name of its face.
+# A device or an installed module without drawable artwork: a schematic of its components; also the name of its face.
 SCHEMATIC = "schematic"
+# A device schematic is as wide as rack equipment (17.5 in), and one rack unit high per unit of its type.
+SCHEMATIC_WIDTH = 444.5
+RACK_UNIT = 44.45
 # The state of a drawn bay.
 INSTALLED = "installed"
 NOT_RECORDED = "not_recorded"
@@ -329,11 +333,12 @@ class AssemblyNode:
 
 @dataclass(frozen=True)
 class Part:
-    """The artwork of one device: its faces in physical order, or none when a blob is damaged."""
+    """The drawing of one device: its artwork faces in physical order, its schematic face, or no face when a blob is damaged."""
 
     device: object
     representation: str
-    revision: DefinitionRevision
+    # None for a schematic.
+    revision: DefinitionRevision | None
     # The id of the overview of the device.
     ident: str
     faces: tuple[RenderedFace, ...]
@@ -367,10 +372,6 @@ class Part:
             )
 
         return nodes(None)
-
-
-def has_active_artwork(device_type_id) -> bool:
-    return Association.objects.filter(device_type=device_type_id).exists()
 
 
 def active_revisions(kind, type_ids) -> dict[int, DefinitionRevision]:
@@ -416,6 +417,34 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     )
 
 
+def resolve_schematic(device, user, view=OVERVIEW, plain=False) -> Part:
+    """Return the schematic Part of ``device``: one face with the components and module bays that ``user`` can view.
+
+    A slot draws its installed module: its artwork scaled to fit, or its own
+    schematic. A ``plain`` face has no class, links or marks.
+    """
+    composer = _Composer(device, user, plain)
+    part_id = f"dv-{view}-d{device.pk}"
+    # A type can have a height of 0 U or less than 1 U.
+    height = max(float(device.device_type.u_height), 1) * RACK_UNIT
+    face, connectors = composer.schematic_face(
+        part_id, None, Rect(0, 0, SCHEMATIC_WIDTH, height)
+    )
+    modules, bays = tuple(composer.modules), tuple(composer.bays)
+    focus_views = () if plain else composer.focus_views(device, part_id, modules)
+    return Part(
+        device,
+        SCHEMATIC,
+        None,
+        part_id,
+        (face,),
+        connectors,
+        modules,
+        bays,
+        focus_views,
+    )
+
+
 def _read_faces(revision) -> dict[str, bytes] | None:
     """Return {face: SVG bytes} of a revision, or None when a stored file is damaged."""
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
@@ -451,6 +480,7 @@ class _Composer:
     """Draw the faces of one device, with each installed module that the user can view in its bay."""
 
     def __init__(self, device, user, plain):
+        self.device = device
         self.plain = plain
         self.states = device_components(device, user, BINDABLE_MODELS)
         modules = list(
@@ -465,11 +495,10 @@ class _Composer:
         visible_bays = {bay.pk for bay in bays}
         # {(module pk of the bay or None, bay name): module bay}
         self.bay_named = {(bay.module_id, bay.name): bay for bay in bays}
-        # {module pk: its module bays}, the slots of its schematic.
+        # {module pk of the bay or None: its module bays}, the slots of a schematic.
         self.slots = {}
         for bay in bays:
-            if bay.module_id is not None:
-                self.slots.setdefault(bay.module_id, []).append(bay)
+            self.slots.setdefault(bay.module_id, []).append(bay)
         by_pk = {module.pk: module for module in modules}
         # {(module pk of the bay or None, bay name): installed module}
         self.installed = {}
@@ -527,7 +556,8 @@ class _Composer:
                     len(path),
                 )
             else:
-                rendered = self.schematic_face(ident, placed, len(path))
+                bay = Rect(0, 0, placed.bay.width, placed.bay.height)
+                rendered, _ = self.schematic_face(ident, placed.module, bay, len(path))
             # The overview already lists the modules and bays that the focus view draws again.
             del self.modules[first:]
             del self.bays[bays:]
@@ -559,23 +589,26 @@ class _Composer:
         own = tuple(c.details(prefix, owner) for c in connectors)
         return self.finish(root, face, prefix, frozenset(elements), own, first)
 
-    def schematic_face(self, part_id, placed, depth) -> RenderedFace:
-        """Draw the schematic of ``placed`` in its own coordinates, at the size of its bay."""
-        bay = placed.bay
+    def schematic_face(
+        self, part_id, module, rect, depth=0
+    ) -> tuple[RenderedFace, tuple[Connector, ...]]:
+        """Draw the schematic of ``module``, or of the device when it is None, in its own coordinates at the size of ``rect``.
+
+        Return the face and the connectors of the schematic.
+        """
         root = etree.Element(
             f"{{{SVG_NS}}}svg",
-            viewBox=f"0 0 {_number(bay.width)} {_number(bay.height)}",
+            viewBox=f"0 0 {_number(rect.width)} {_number(rect.height)}",
             nsmap={None: SVG_NS},
         )
         first = len(self.modules)
-        width = max(bay.width, bay.height) * _OUTLINE_WIDTH
-        scope = _Scope(placed.module, part_id, SCHEMATIC, IDENTITY, 0, depth, width)
-        drawn = self.schematic(
-            root, Rect(0, 0, bay.width, bay.height), placed.module, scope, scope
-        )
-        prefix, ids, connectors = drawn
-        own = tuple(c.details(prefix, placed.label) for c in connectors)
-        return self.finish(root, SCHEMATIC, prefix, ids, own, first)
+        width = max(rect.width, rect.height) * _OUTLINE_WIDTH
+        scope = _Scope(module, part_id, SCHEMATIC, IDENTITY, 0, depth, width)
+        prefix, ids, connectors = self.schematic(root, rect, module, scope, scope)
+        owner = None if module is None else part_label(module)
+        own = tuple(c.details(prefix, owner) for c in connectors)
+        face = self.finish(root, SCHEMATIC, prefix, ids, own, first)
+        return face, connectors
 
     def finish(self, root, face, prefix, ids, own, first) -> RenderedFace:
         """Serialize a root face with the details of its own connectors and of the modules placed after ``first``."""
@@ -838,15 +871,17 @@ class _Composer:
         return prefix, frozenset(elements)
 
     def schematic(self, group, bay, module, scope, inner):
-        """Draw a schematic of ``module`` in ``bay`` of ``scope``; return (prefix, ids, connectors).
+        """Draw a schematic of ``module``, or of the device when it is None, in ``bay`` of ``scope``; return (prefix, ids, connectors).
 
-        It shows the components of the module that the user can view, by type
+        It shows the components of the part that the user can view, by type
         in NetBox order, and a slot for each module bay. It is not turned.
         """
         prefix = f"{inner.part_id}-{SCHEMATIC}-"
         target, rect, matrix = _upright(group, bay, scope.matrix)
+        # The key of the components and bays of the part.
+        owner = None if module is None else module.pk
         states = sorted(
-            (s for s in self.states if s.component.module_id == module.pk),
+            (s for s in self.states if s.component.module_id == owner),
             key=lambda s: (
                 BINDABLE_MODELS.index(type(s.component)),
                 _natural(s.component),
@@ -865,15 +900,20 @@ class _Composer:
         drawable = _finite(rect.x + rect.width, rect.y + rect.height)
         # Past the depth limit, the modules in it do not show.
         slots = (
-            self.slots.get(module.pk, [])
+            self.slots.get(owner, [])
             if drawable and inner.depth <= MAX_MODULE_DEPTH
             else []
         )
         title, cells = layout(rect, len(connectors) + len(slots) if drawable else 0)
         width = _own_width(rect, scope.outline_width)
-        body = self.body(target, module, "dv-art-module-body dv-art-schematic")
+        if module is None:
+            body = self.body(target, self.device, "dv-art-device-body dv-art-schematic")
+            model = self.device.device_type.model
+        else:
+            body = self.body(target, module, "dv-art-module-body dv-art-schematic")
+            model = module.module_type.model
         self.box(body, rect, _SCHEMATIC_FRAME, width)
-        _label(body, title, module.module_type.model)
+        _label(body, title, model)
         parts = etree.Element(_G)
         elements = {}
         for connector, cell in zip(connectors, cells, strict=False):
@@ -897,7 +937,7 @@ class _Composer:
             frame = self.box(element, cell, _SCHEMATIC_SLOT, width, dashed=True)
             name, area = _slot_areas(cell)
             _label(element, name, slot.name)
-            child = self.installed.get((module.pk, slot.name))
+            child = self.installed.get((owner, slot.name))
             if child is None:
                 self.not_recorded(element, area, width, frame=False)
                 self.bays.append(
@@ -951,14 +991,19 @@ class _Composer:
             self.faces[revision.pk] = _read_faces(revision)
         return self.faces[revision.pk]
 
-    def body(self, group, module, classes):
-        """Return the link of a module body to its record; a plain face has a group instead."""
+    def body(self, group, part, classes):
+        """Return the link of the body of a module or the device to its record; a plain face has a group instead."""
         if self.plain:
             return etree.SubElement(group, _G)
         body = etree.SubElement(
-            group, _A, {"class": classes, "href": module.get_absolute_url()}
+            group, _A, {"class": classes, "href": part.get_absolute_url()}
         )
-        etree.SubElement(body, _TITLE).text = _xml_text(f"Module {part_label(module)}")
+        title = (
+            f"Module {part_label(part)}"
+            if isinstance(part, Module)
+            else f"Device {part}"
+        )
+        etree.SubElement(body, _TITLE).text = _xml_text(title)
         return body
 
     def focus_ring(self, group, rect, width):

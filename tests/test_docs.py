@@ -8,7 +8,7 @@ import pytest
 from dcim.models import Interface, Module
 
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
-from netbox_device_view.api import device_artwork
+from netbox_device_view.api import device_artwork, rendered_layout
 from netbox_device_view.api.rendered_layout import UnavailableReason
 from netbox_device_view.artwork import limits, placement, render
 from netbox_device_view.artwork.manifest import MAX_BINDINGS
@@ -106,15 +106,21 @@ def test_layout_page_states_the_save_rules(statement):
     assert statement in (ROOT / "docs" / "layout-yaml.md").read_text()
 
 
+def test_rendered_layout_api_page_states_the_pattern_id_of_the_api():
+    text = (ROOT / "docs" / "rendered-layout-api.md").read_text()
+    assert f"`{rendered_layout.NO_COLOR_FILL.removeprefix('url(#')[:-1]}`" in text
+    assert "The web renderer gives each panel its own pattern id." in text
+
+
 def test_artwork_api_page_states_the_values_of_the_code():
     text = (ROOT / "docs" / "artwork-api.md").read_text()
     assert f"(`schema_version: {device_artwork.SCHEMA_VERSION}`)" in text
     *others, last = (
         f'`"{value}"`'
         for value in (
-            device_artwork.ARTWORK,
+            render.ARTWORK,
             device_artwork.LAYOUT,
-            device_artwork.SCHEMATIC,
+            render.SCHEMATIC,
             device_artwork.UNAVAILABLE,
         )
     )
