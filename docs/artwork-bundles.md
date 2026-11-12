@@ -253,7 +253,7 @@ The details of a connector show each binding. For a component that the binding f
 To open the details:
 
 - Click **Details** in the toolbar of the face. While the button is on, a click or a tap on a connector opens its details instead of the component. Click **Details** again to turn it off.
-- Focus a connector with the keyboard and press **Space**. **Enter** opens the component.
+- Focus a connector with the keyboard and press **Space**. **Enter** opens the component, or its details while **Details** is on.
 - Click a connector that has no single component. A connector with several components opens a chooser of its components. A connector with a missing binding opens the details of each binding.
 
 Press **Escape** or click the close button to close the details. The focus then goes back to the connector.
