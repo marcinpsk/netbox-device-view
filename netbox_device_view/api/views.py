@@ -22,6 +22,7 @@ from ..filtersets import (
     VisualDefinitionFilterSet,
 )
 from ..forms import ArtworkSourceImportForm
+from .device_artwork import compose_device_artwork
 from .rendered_layout import compose_rendered_layout
 from .serializers import (
     DefinitionRevisionSerializer,
@@ -36,7 +37,20 @@ class DeviceViewViewSet(NetBoxModelViewSet):
     filterset_class = DeviceViewFilterSet
 
 
-class DeviceRenderedLayoutView(RetrieveAPIView):
+class DeviceCompositionView(RetrieveAPIView):
+    """Return ``compose(device, user)`` for a device that the user can view; others give 404."""
+
+    queryset = Device.objects.all()
+    compose = None
+
+    def get_queryset(self):
+        return super().get_queryset().restrict(self.request.user, "view")
+
+    def get(self, request, *args, **kwargs):
+        return Response(self.compose(self.get_object(), request.user))
+
+
+class DeviceRenderedLayoutView(DeviceCompositionView):
     """
     GET /api/plugins/device_view/devices/<pk>/rendered-layout/
 
@@ -61,14 +75,18 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
     ModelSerializer machinery that doesn't fit its shape.
     """
 
-    queryset = Device.objects.all()
+    compose = staticmethod(compose_rendered_layout)
 
-    def get_queryset(self):
-        return super().get_queryset().restrict(self.request.user, "view")
 
-    def get(self, request, *args, **kwargs):
-        device = self.get_object()
-        return Response(compose_rendered_layout(device, request.user))
+class DeviceArtworkView(DeviceCompositionView):
+    """
+    GET /api/plugins/device_view/devices/<pk>/artwork/
+
+    The artwork, layout panels or reason of each member that the user can view;
+    see docs/artwork-api.md. Device access is as for the rendered-layout API.
+    """
+
+    compose = staticmethod(compose_device_artwork)
 
 
 class DefinitionRevisionViewSet(NetBoxModelViewSet):

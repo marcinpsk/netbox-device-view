@@ -18,6 +18,7 @@ from netbox_device_view.layout.parser import (
     MAX_CSS_CLASSES,
     MAX_EXPANDED_ELEMENTS,
     MAX_KEY_LENGTH,
+    MAX_LAYOUT_BYTES,
     MAX_PAINTED_CELLS,
     MAX_RENDERED_CELLS,
     LayoutParseError,
@@ -65,6 +66,15 @@ def strict(data):
     return parse(text, strict=True)
 
 
+# Resource limits apply in lenient mode too: a stored layout is parsed leniently on every render.
+BOTH_MODES = pytest.mark.parametrize("mode", ["strict", "lenient"])
+
+
+def parse_in(mode, data):
+    text = data if isinstance(data, str) else yaml.safe_dump(data)
+    return parse(text, strict=mode == "strict")
+
+
 def layout(change):
     data = copy.deepcopy(BASE)
     change(data)
@@ -101,18 +111,150 @@ def test_lenient_parse_is_unchanged():
         strict("views: {}")
 
 
+HUGE_INT = "0x" + "f" * 3600
+# Each alias doubles the value: its repr has 2**24 items and takes seconds.
+ALIAS_BOMB = (
+    "["
+    + ", ".join(["&a0 [0]"] + [f"&a{i} [*a{i - 1}, *a{i - 1}]" for i in range(1, 25)])
+    + "]"
+)
+FRONT = "views:\n  front:\n    "
+
+
+@BOTH_MODES
+@pytest.mark.parametrize("value", [HUGE_INT, ALIAS_BOMB], ids=["integer", "aliases"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "version: {}\n" + FRONT + "elements: [{{key: a}}]\n",
+        FRONT + "elements: [{{key: {}}}]\n",
+        FRONT + "elements: [{{key: a, kind: {}}}]\n",
+        FRONT + "rows:\n      - sequence: {{prefix: p, count: 2, pattern: {}}}\n",
+        FRONT + "rows:\n      - sequence: {{prefix: p, count: 2, start: {}}}\n",
+    ],
+    ids=["version", "key", "kind", "pattern", "start"],
+)
+def test_a_large_value_is_a_parse_error(mode, value, text):
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError):
+        parse_in(mode, text.format(value))
+    assert time.monotonic() - started < 1
+
+
+def _wide_merge():
+    wide = ", ".join(f"k{i}: 0" for i in range(8000))
+    return FRONT + f"elements: [&a {{{wide}}}, {{<<: [{', '.join(['*a'] * 16000)}]}}]\n"
+
+
+def _doubling_merge():
+    anchors = ["&a0 {key: p}"]
+    anchors += [f"&a{i} {{<<: [*a{i - 1}, *a{i - 1}]}}" for i in range(1, 25)]
+    return FRONT + f"elements: [{', '.join(anchors)}]\n"
+
+
+def _empty_merges():
+    aliases = ", ".join(["*e"] * 10000)
+    return f"e: &e {{}}\ns: &s [{aliases}]\nitems:\n" + "  - {<<: *s}\n" * 4000
+
+
+@BOTH_MODES
+@pytest.mark.parametrize(
+    "build",
+    [_wide_merge, _doubling_merge, _empty_merges],
+    ids=["wide", "doubling", "empty"],
+)
+def test_merge_keys_have_a_budget(mode, build):
+    # Without the budget each input takes more than 15 s; with it, under 1 s.
+    text = build()
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="merge keys copy"):
+        parse_in(mode, text)
+    assert time.monotonic() - started < 5
+
+
+@BOTH_MODES
+def test_a_layout_has_at_most_256_kib(mode):
+    text = FRONT + "elements: [{key: a}]\n"
+    parse_in(mode, text + " " * (MAX_LAYOUT_BYTES - len(text)))
+    with pytest.raises(LayoutParseError, match="256 KiB"):
+        parse_in(mode, text + " " * (MAX_LAYOUT_BYTES - len(text) + 1))
+
+
+def test_strict_mapping_keys_with_one_hash_are_rejected_at_once():
+    # On 64-bit Python each of these integers hashes to 0.
+    text = "".join(f"{i * (2**61 - 1)}: 0\n" for i in range(9000))
+    assert len(text) <= MAX_LAYOUT_BYTES
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="keys must be strings"):
+        strict(text)
+    assert time.monotonic() - started < 1
+
+
+def test_a_long_aliased_key_is_checked_in_linear_time():
+    head = "s: &s " + "x" * 128 * 1024 + "\nitems:\n"
+    text = head + "- {*s: 0}\n" * ((MAX_LAYOUT_BYTES - len(head)) // 10)
+    # Lenient parsing reads the same text without the key check.
+    started = time.monotonic()
+    parse(text)
+    lenient = time.monotonic() - started
+    started = time.monotonic()
+    with pytest.raises(LayoutParseError, match="unknown key"):
+        strict(text)
+    assert time.monotonic() - started < 2 * lenient + 0.2
+
+
+def test_strict_mapping_keys_are_strings():
+    with pytest.raises(LayoutParseError, match="keys must be strings"):
+        strict(FRONT + "elements: [{key: a}]\n1: x\n")
+
+
+@BOTH_MODES
+@pytest.mark.parametrize("start", [2**64, 10**62], ids=["64-bit", "63-digit"])
+def test_both_modes_accept_the_same_large_integers(mode, start):
+    parse_in(
+        mode,
+        FRONT + f"rows:\n      - sequence: {{prefix: p, count: 1, start: {start}}}\n",
+    )
+
+
+@BOTH_MODES
+def test_an_integer_has_at_most_64_digits(mode):
+    with pytest.raises(LayoutParseError, match="64 digits"):
+        parse_in(
+            mode,
+            FRONT
+            + f"rows:\n      - sequence: {{prefix: p, count: 1, step: {10**64}}}\n",
+        )
+
+
+@BOTH_MODES
+def test_a_merge_key_still_works(mode):
+    layout = parse_in(
+        mode,
+        FRONT + "elements:\n      - &p {key: p1, label: x, at: {row: 1, col: 1}}\n"
+        "      - {<<: *p, key: p2, at: {row: 1, col: 2}}\n",
+    )
+    assert [e.label for e in layout.views["front"].elements] == ["x", "x"]
+
+
 class TestLimits:
-    def test_canvas_cell_limit(self):
-        strict(layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2)))
+    @BOTH_MODES
+    def test_canvas_cell_limit(self, mode):
+        parse_in(
+            mode, layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2))
+        )
         with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
-            strict(
-                layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2 + 1))
+            parse_in(
+                mode,
+                layout(lambda d: d["canvas"].update(columns=MAX_CANVAS_CELLS // 2 + 1)),
             )
 
-    def test_view_canvas_cell_limit(self):
+    @BOTH_MODES
+    def test_view_canvas_cell_limit(self, mode):
         with pytest.raises(LayoutParseError, match=f"{MAX_CANVAS_CELLS} cells"):
-            strict(
-                layout(lambda d: front(d).update(canvas={"columns": 4096, "rows": 2}))
+            parse_in(
+                mode,
+                layout(lambda d: front(d).update(canvas={"columns": 4096, "rows": 2})),
             )
 
     @pytest.mark.parametrize(
@@ -124,13 +266,15 @@ class TestLimits:
             {"group": {"spacer": 10**12, "sections": [{"blank": 1}, {"blank": 1}]}},
         ],
     )
-    def test_expansion_is_checked_before_allocation(self, row):
+    @BOTH_MODES
+    def test_expansion_is_checked_before_allocation(self, mode, row):
         started = time.monotonic()
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(lambda d: front(d)["rows"].append(row)))
+            parse_in(mode, layout(lambda d: front(d)["rows"].append(row)))
         assert time.monotonic() - started < 5
 
-    def test_expansion_budget_spans_views_and_variants(self):
+    @BOTH_MODES
+    def test_expansion_budget_spans_views_and_variants(self, mode):
         # Each part fits a canvas; together they exceed the budget.
         part = MAX_EXPANDED_ELEMENTS // 4 + 1
         canvas = {"columns": part, "rows": 1, "cell_size": 0}
@@ -142,7 +286,7 @@ class TestLimits:
             d["variants"] = {name: {"rows": [sequence]} for name in ("A", "B", "C")}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
 
 class TestCycles:
@@ -233,6 +377,11 @@ class TestFields:
             (lambda d: d["canvas"].update(background=5), "background"),
             (lambda d: front(d).update(background="url(x)"), "background"),
             (lambda d: d["meta"].update(background="notacolor"), "background"),
+            (lambda d: d["meta"].update(background="color()"), "background"),
+            (
+                lambda d: d["meta"].update(background=f"rgb({'9' * 4400} 0 0)"),
+                "too long",
+            ),
             (lambda d: d["meta"].update(background="red /*"), "background"),
             (lambda d: d["meta"].update(background="/**/red"), "background"),
             (lambda d: d["meta"].update(background="red blue"), "background"),
@@ -560,16 +709,18 @@ class TestReviewFindings:
         with pytest.raises(LayoutParseError, match="css_classes"):
             strict(layout(lambda d: variant_element(d).update(css_classes=classes)))
 
-    def test_rendered_cells_are_bounded_across_variants(self):
+    @BOTH_MODES
+    def test_rendered_cells_are_bounded_across_variants(self, mode):
         # Each variant renders the whole canvas again, even with no elements.
         def change(d):
             d["canvas"] = {"columns": 2048, "rows": 2, "cell_size": 0}
             d["variants"] = {f"V{i}": {"elements": []} for i in range(40)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_RENDERED_CELLS} cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_painted_cells_are_bounded(self):
+    @BOTH_MODES
+    def test_painted_cells_are_bounded(self, mode):
         # Each element paints its whole span, so full-canvas elements multiply the cost.
         def change(d):
             d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
@@ -585,9 +736,10 @@ class TestReviewFindings:
             ]
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_base_elements_are_charged_in_every_variant(self):
+    @BOTH_MODES
+    def test_base_elements_are_charged_in_every_variant(self, mode):
         # Each variant renders the base elements again, also those that overlap.
         def change(d):
             d["canvas"] = {"columns": 1, "rows": 1}
@@ -596,33 +748,37 @@ class TestReviewFindings:
             d["variants"] = {f"V{i}": {"elements": []} for i in range(100)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
 
-    def test_repeated_base_keys_are_charged_in_every_variant(self):
+    @BOTH_MODES
+    def test_repeated_base_keys_are_charged_in_every_variant(self, mode):
         # Each variant renders all base elements, also those that share a key.
         full = {"key": "p1", "span": {"rows": MAX_CANVAS_ROWS, "cols": 64}}
         data = flat((64, MAX_CANVAS_ROWS), [full] * 5)
         data["variants"] = {f"V{i}": {"elements": []} for i in range(3)}
 
         with pytest.raises(LayoutParseError, match=f"{MAX_PAINTED_CELLS} grid cells"):
-            strict(data)
+            parse_in(mode, data)
 
-    def test_canvas_rows_are_bounded(self):
+    @BOTH_MODES
+    def test_canvas_rows_are_bounded(self, mode):
         with pytest.raises(LayoutParseError, match="rows"):
-            strict(
+            parse_in(
+                mode,
                 layout(
                     lambda d: d["canvas"].update(columns=1, rows=MAX_CANVAS_ROWS + 1)
-                )
+                ),
             )
 
-    def test_entries_without_elements_use_the_budget(self):
+    @BOTH_MODES
+    def test_entries_without_elements_use_the_budget(self, mode):
         def change(d):
             d["canvas"] = {"columns": 64, "rows": MAX_CANVAS_ROWS}
             front(d)["rows"] = [{"spacer": 0}] * (MAX_EXPANDED_ELEMENTS + 1)
 
         started = time.monotonic()
         with pytest.raises(LayoutParseError, match=f"{MAX_EXPANDED_ELEMENTS} elements"):
-            strict(layout(change))
+            parse_in(mode, layout(change))
         assert time.monotonic() - started < 5
 
     def test_deep_nesting_fails_fast(self):
@@ -706,7 +862,8 @@ class TestReviewFindings:
             ("span", "cols", MAX_CANVAS_CELLS),
         ],
     )
-    def test_element_position_and_span_are_bounded(self, field, value, limit):
+    @BOTH_MODES
+    def test_element_position_and_span_are_bounded(self, mode, field, value, limit):
         def place(n):
             def change(d):
                 d["canvas"] = (
@@ -719,12 +876,12 @@ class TestReviewFindings:
 
             return layout(change)
 
-        strict(place(limit))
+        parse_in(mode, place(limit))
         with pytest.raises(LayoutParseError, match=f"{field}.{value}"):
-            strict(place(limit + 1))
+            parse_in(mode, place(limit + 1))
 
     def test_huge_generated_key_number_is_rejected(self):
         huge = 10**3000
         sequence = {"prefix": "p", "count": huge, "step": huge}
-        with pytest.raises(LayoutParseError, match="prefix"):
+        with pytest.raises(LayoutParseError, match="64 digits"):
             strict(layout(lambda d: front(d)["rows"].append({"sequence": sequence})))

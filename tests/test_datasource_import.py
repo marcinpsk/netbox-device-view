@@ -892,7 +892,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
                     "views:\n  front:\n    rows:\n      - sequence: "
                     f"{{prefix: p, count: {huge}, step: {huge}}}\n"
                 ),
-                "prefix",
+                "64 digits",
             ),
         }
         wide = ", ".join(
@@ -949,7 +949,7 @@ class StrictYamlImportTests(DataSourceImportTestBase):
                 self.assertEqual(review.token, "")
 
     def test_local_definitions_keep_the_lenient_parser(self):
-        # Rendering reads stored YAML with the lenient parser; only imports are strict.
+        # Rendering reads stored YAML with the lenient parser; only saves are strict.
         DeviceView.objects.create(
             device_type=self.device_type,
             yaml_layout="views:\n  front:\n    elements:\n      - {key: p1, extra: 1}\n",
