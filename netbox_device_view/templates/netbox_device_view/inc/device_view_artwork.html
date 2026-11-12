@@ -28,6 +28,11 @@
 				</div>
 				{# A scroll area takes keyboard focus, so a keyboard can scroll a zoomed face without a link in it. #}
 				<div class="dv-art-viewport" data-zoom="1" tabindex="0" role="group" aria-label="{% blocktrans with face=face.label %}Artwork of the {{ face }} face{% endblocktrans %}">{{ face.svg }}</div>
+				{% if face.warnings %}
+				<ul class="dv-art-warnings list-unstyled small mb-0" aria-label="{% blocktrans with face=face.label %}Warnings of the {{ face }} face{% endblocktrans %}">
+					{% for warning in face.warnings %}<li><i class="mdi mdi-alert-outline" aria-hidden="true"></i> {{ warning.message }}</li>{% endfor %}
+				</ul>
+				{% endif %}
 				{% for details in face.details %}{% include 'netbox_device_view/inc/connector_details.html' %}{% endfor %}
 			</div>
 		</div>

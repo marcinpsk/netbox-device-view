@@ -13,8 +13,8 @@ CSS = (
     Path(__file__).resolve().parents[1]
     / "netbox_device_view/static/netbox_device_view/css/device_view_artwork.css"
 )
-# The focusable SVG elements: each shows an outline and its .dv-art-focus-ring child.
-SVG_CLASSES = ("dv-art-connector",)
+# The focusable SVG elements: each shows an outline and its .dv-art-focus-ring child or later sibling.
+SVG_CLASSES = ("dv-art-connector", "dv-art-module-body")
 # The focusable HTML elements: an outline shows in every browser.
 HTML_CLASSES = ("dv-art-viewport",)
 _FOCUSED = re.compile(r"\.([\w-]+):focus-visible")
@@ -54,8 +54,11 @@ def test_each_focusable_svg_element_shows_its_focus_ring():
     found = dict(rules())
     assert found[".dv-art-focus-ring"].get("display") == "none"
     for name in SVG_CLASSES:
-        selector = f".{name}:focus-visible > .dv-art-focus-ring"
-        assert found.get(selector, {}).get("display") == "inline", selector
+        assert any(
+            re.fullmatch(rf"\.{name}:focus-visible [>~] \.dv-art-focus-ring", selector)
+            and declarations.get("display") == "inline"
+            for selector, declarations in found.items()
+        ), name
 
 
 def test_each_focusable_svg_element_has_an_outline():

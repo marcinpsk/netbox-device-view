@@ -21,6 +21,8 @@ from dcim.models import (
     Interface,
     InterfaceTemplate,
     Module,
+    ModuleBay,
+    ModuleBayTemplate,
     PowerOutlet,
     PowerOutletTemplate,
     PowerPort,
@@ -49,6 +51,7 @@ _TEMPLATE_MODELS = {
     RearPort: RearPortTemplate,
     PowerPort: PowerPortTemplate,
     PowerOutlet: PowerOutletTemplate,
+    ModuleBay: ModuleBayTemplate,
 }
 logger = logging.getLogger(__name__)
 _HEX_COLOR_RE = re.compile(r"^[0-9A-Fa-f]{6}$")

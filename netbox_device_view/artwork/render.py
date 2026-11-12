@@ -1,8 +1,10 @@
-"""Draw the active artwork of a device, with each connector bound to a component of that device.
+"""Draw the active artwork of a device, with each installed module in its bay and each connector bound to a component.
 
 Each face is parsed from its verified blob and serialized again, so no stored
 bytes reach the page as they are. Every id gets the prefix of its occurrence,
-``dv-<view>-d<device pk>-<face>-``, and the references are rewritten on the tree.
+``dv-<view>-d<device pk>[-m<module pk>]...-<face>-``, where the module part
+lists each module on the placement path, and the references are rewritten on
+the tree.
 """
 
 import functools
@@ -10,9 +12,10 @@ import logging
 import math
 import re
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import tinycss2
+from dcim.models import Module, ModuleBay
 from django.utils.safestring import SafeString, mark_safe
 from django.utils.text import capfirst
 from lxml import etree
@@ -24,6 +27,7 @@ from ..components import (
     component_label,
     device_components,
     find,
+    resolve_name,
 )
 from ..details import (
     FOUND,
@@ -36,10 +40,13 @@ from ..details import (
     details_id,
     resolution,
 )
-from ..models import Association, DefinitionRevision
-from .overrides import connector_bindings
+from ..models import TYPE_SCOPES, Association, DefinitionRevision
+from .manifest import MODULE_KIND
+from .overrides import connector_bindings, part_overrides
+from .placement import Rect, place, transform_rect
 from .storage import DamagedBlob, read_blob
 from .svg import (
+    BAY_ATTRIBUTES,
     IDENTITY,
     SVG_NS,
     XLINK_NS,
@@ -53,6 +60,27 @@ logger = logging.getLogger(__name__)
 
 ARTWORK = "artwork"
 DAMAGED = "damaged"
+# An installed module without drawable artwork: an outline of its bay with the model of its type.
+OUTLINE = "outline"
+
+
+class WarningCode:
+    """The code of each warning of a placed module."""
+
+    SIZE_MISMATCH = "size_mismatch"
+    NOT_FINITE = "placement_not_finite"
+    DAMAGED_ARTWORK = "damaged_artwork"
+    DUPLICATE_BAY = "duplicate_bay"
+    TOO_DEEP = "too_deep"
+
+
+# A finite bay can still overflow: x + width, or the transforms of the parents.
+_PLACEMENT_NOT_FINITE = (
+    "the placement in bay {key} is not a finite number, so the module shows as an"
+    " outline."
+)
+# Modules on one placement path; it keeps the composed face below the nesting depth of HTML parsers.
+MAX_MODULE_DEPTH = 8
 # The view part of an id: "o" for the overview of a device, "a" for the artwork API.
 OVERVIEW = "o"
 API = "a"
@@ -65,6 +93,32 @@ _USE = f"{{{SVG_NS}}}use"
 _NOT_XML = dict.fromkeys(
     [*range(0x9), 0xB, 0xC, *range(0xE, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF]
 )
+_G, _A, _RECT = (f"{{{SVG_NS}}}{tag}" for tag in ("g", "a", "rect"))
+# The attributes of a root svg that place it in its parent; a placed module face gets its own.
+_VIEWPORT_ATTRIBUTES = ("x", "y", "width", "height")
+# The initial value of each inherited property of the profile: a module does not take them from its parent.
+# font-family is not reset, because its initial value depends on the browser.
+INHERITED_INITIAL = {
+    "fill": "black",
+    "fill-opacity": "1",
+    "fill-rule": "nonzero",
+    "stroke": "none",
+    "stroke-width": "1",
+    "stroke-opacity": "1",
+    "stroke-linecap": "butt",
+    "stroke-linejoin": "miter",
+    "stroke-dasharray": "none",
+    "stroke-dashoffset": "0",
+    "stroke-miterlimit": "4",
+    "visibility": "visible",
+    "clip-rule": "nonzero",
+    "font-size": "medium",
+    "font-weight": "normal",
+    "font-style": "normal",
+    "text-anchor": "start",
+    "dominant-baseline": "auto",
+    "letter-spacing": "normal",
+}
 # A generated local id starts with "-"; an author id starts with a letter.
 _MARKS = "-marks-"
 _FOCUS = "-focus-"
@@ -73,8 +127,8 @@ _SHAPE = "-shape-"
 _PAINT = frozenset(
     {"fill", "stroke", "opacity", "fill-opacity", "stroke-opacity", "visibility"}
 )
-# The outline width as a part of the larger face dimension.
-_OUTLINE = 1 / 300
+# The width of a connector outline as a part of the larger face dimension.
+_OUTLINE_WIDTH = 1 / 300
 # The outer mark of a connector: its cable status or marked connected, else several or unresolved.
 _CABLE_MARKS = {
     "connected": "cable-connected",
@@ -102,7 +156,7 @@ LEGEND = (
 
 @dataclass(frozen=True)
 class Binding:
-    # The component model and name that the manifest binds.
+    # The component model and name that the binding list gives, with {module} resolved for a module.
     model: type
     name: str
     status: str
@@ -126,7 +180,8 @@ class Connector:
         """Return the component that a click opens: the only binding when it is found, else None."""
         return self.bindings[0].state if self.resolution == SINGLE else None
 
-    def details(self, prefix) -> Details:
+    def details(self, prefix, owner=None) -> Details:
+        """Return the details of the connector; ``owner`` names the module that has it."""
         entries = tuple(
             Entry(
                 component_label(binding.model, binding.name),
@@ -136,7 +191,53 @@ class Connector:
             for binding in self.bindings
         )
         title = f"Connector {self.label or self.key}"
+        if owner is not None:
+            title = f"{title} · {owner}"
         return Details(details_id(prefix, self.key), title, entries)
+
+
+@dataclass(frozen=True)
+class ArtworkWarning:
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PlacedModule:
+    """One installed module in a bay of its parent: drawn with its artwork, or as an outline."""
+
+    module: Module
+    # The installed module that has the bay; None for a bay of the device.
+    parent: Module | None
+    bay_key: str
+    # The face of the device that shows the module.
+    face: str
+    representation: str
+    # The active revision of the module type, or None.
+    revision: DefinitionRevision | None
+    # The bay in the coordinates of the device face; None when it is not finite.
+    bay: Rect | None
+    # The rotation from the module face to the device face.
+    rotate: int
+    # The id of the group that draws the module, or None; and the prefix of the ids of its face.
+    element_id: str | None
+    prefix: str
+    connectors: tuple[Connector, ...]
+    # The ids of the stored module face that the group draws, without the prefix.
+    ids: frozenset[str]
+    warnings: tuple[ArtworkWarning, ...]
+
+    @property
+    def label(self):
+        return part_label(self.module)
+
+    def connector_id(self, key) -> str | None:
+        return self.prefix + key if key in self.ids else None
+
+
+def part_label(module) -> str:
+    """Return the name of an installed module, for example "ACME NM-2X in Network Module"."""
+    return f"{module.module_type.full_name} in {module.module_bay.name}"
 
 
 @dataclass(frozen=True)
@@ -149,6 +250,8 @@ class RenderedFace:
     ids: frozenset[str]
     # The details of each connector that the face draws; none for a plain face.
     details: tuple[Details, ...] = ()
+    # The warnings of the modules that the face shows.
+    warnings: tuple[ArtworkWarning, ...] = ()
 
     @property
     def label(self):
@@ -168,6 +271,8 @@ class Part:
     revision: DefinitionRevision
     faces: tuple[RenderedFace, ...]
     connectors: tuple[Connector, ...]
+    # Each installed module that a face shows, parents before their children.
+    modules: tuple[PlacedModule, ...] = ()
 
     @property
     def damaged(self):
@@ -178,78 +283,424 @@ def has_active_artwork(device_type_id) -> bool:
     return Association.objects.filter(device_type=device_type_id).exists()
 
 
-def active_revisions(device_type_ids) -> dict[int, DefinitionRevision]:
-    """Return {device type id: active revision} for the device types that have an association."""
+def active_revisions(kind, type_ids) -> dict[int, DefinitionRevision]:
+    """Return {type id: active revision} for the device types or module types (by definition ``kind``) that have one."""
+    scope = TYPE_SCOPES[kind]
     # Rendering needs no permission on the association or the revision.
     return {
-        association.device_type_id: association.revision
+        scope.id_of(association): association.revision
         for association in Association.objects.filter(
-            device_type__in=device_type_ids
+            scope.among(type_ids)
         ).select_related("revision__definition")
     }
 
 
-def face_prefix(view, device, face) -> str:
-    """Return the prefix of every id in one face of one device."""
-    return f"dv-{view}-d{device.pk}-{face}-"
-
-
 def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
-    """Return the artwork Part of ``device`` with the components that ``user`` can view.
+    """Return the artwork Part of ``device`` with the components and modules that ``user`` can view.
 
-    The connectors bind with the overrides of the device and its type. A
-    ``plain`` face has no class, connector links or marks.
+    The connectors bind with the overrides of each part and its type. A
+    ``plain`` face has no class, links or marks.
     """
-    states = device_components(device, user, BINDABLE_MODELS)
-    bindings = connector_bindings(revision, device)
-    connectors = tuple(
-        _connector(key, item, bindings[key], states)
-        for key, item in sorted(revision.manifest["connectors"].items())
+    composer = _Composer(device, user, plain)
+    connectors = composer.connectors(revision, device)
+    data = _read_faces(revision)
+    if data is None:
+        return Part(device, DAMAGED, revision, (), connectors)
+    faces = tuple(
+        composer.device_face(
+            f"dv-{view}-d{device.pk}", face, data[face], revision, connectors
+        )
+        for face in revision.face_names
     )
+    return Part(device, ARTWORK, revision, faces, connectors, tuple(composer.modules))
+
+
+def _read_faces(revision) -> dict[str, bytes] | None:
+    """Return {face: SVG bytes} of a revision, or None when a stored file is damaged."""
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
     try:
-        data = {
+        return {
             face: read_blob(blobs[revision.manifest["faces"][face]["file"]])
             for face in revision.face_names
         }
     except DamagedBlob as exc:
         logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
-        return Part(device, DAMAGED, revision, (), connectors)
-    faces = []
-    for face in revision.face_names:
-        prefix = face_prefix(view, device, face)
-        drawn = [connector for connector in connectors if connector.face == face]
-        svg, ids = _face_svg(data[face], prefix, drawn, plain)
-        details = (
-            ()
-            if plain
-            else tuple(
-                connector.details(prefix) for connector in drawn if connector.key in ids
+        return None
+
+
+@dataclass(frozen=True)
+class _Scope:
+    """The part whose face has a bay: the device, or an installed module."""
+
+    # None for the device.
+    module: Module | None
+    part_id: str
+    # The face of the device that shows the part.
+    face: str
+    # From the face coordinates of the part to the device face.
+    matrix: tuple
+    rotate: int
+    # The number of modules on the placement path: 0 for the device.
+    depth: int
+
+
+class _Composer:
+    """Draw the faces of one device, with each installed module that the user can view in its bay."""
+
+    def __init__(self, device, user, plain):
+        self.plain = plain
+        self.states = device_components(device, user, BINDABLE_MODELS)
+        modules = list(
+            Module.objects.restrict(user, "view")
+            .filter(device=device)
+            .select_related("module_bay", "module_type__manufacturer")
+        )
+        visible_bays = set(
+            ModuleBay.objects.restrict(user, "view")
+            .filter(device=device)
+            .values_list("pk", flat=True)
+        )
+        by_pk = {module.pk: module for module in modules}
+        # {(module pk of the bay or None, bay name): installed module}
+        self.installed = {}
+        for module in modules:
+            bay = module.module_bay
+            if bay.pk not in visible_bays:
+                continue
+            # NetBox resolves {module} through these objects, so the walk makes no query.
+            if bay.module_id in by_pk:
+                bay.module = by_pk[bay.module_id]
+            self.installed[(bay.module_id, bay.name)] = module
+        self.revisions = active_revisions(
+            MODULE_KIND, {module.module_type_id for module in modules}
+        )
+        self.overrides = part_overrides([device, *modules])
+        self.faces = {}
+        self.modules = []
+
+    def connectors(self, revision, part) -> tuple[Connector, ...]:
+        """Return the connectors of ``revision`` for a device or an installed module."""
+        bindings = connector_bindings(revision, part, self.overrides)
+        module = part if isinstance(part, Module) else None
+        return tuple(
+            _connector(key, item, bindings[key], self.states, module)
+            for key, item in sorted(revision.manifest["connectors"].items())
+        )
+
+    def device_face(self, part_id, face, data, revision, connectors) -> RenderedFace:
+        prefix = f"{part_id}-{face}-"
+        root, elements = _parse_face(data, prefix)
+        for name in _VIEWPORT_ATTRIBUTES:
+            root.attrib.pop(name, None)
+        view_box = parse_view_box(root.get("viewBox").strip())
+        # Module faces keep the outline width of the device face: placement does not scale.
+        self.outline_width = max(view_box[2:]) * _OUTLINE_WIDTH
+        first = len(self.modules)
+        self.compose(
+            root, elements, revision, face, _Scope(None, part_id, face, IDENTITY, 0, 0)
+        )
+        placed = self.modules[first:]
+        connectors = [c for c in connectors if c.face == face]
+        details = ()
+        if not self.plain:
+            root.set("class", "dv-art-face")
+            _mark_connectors(
+                root, prefix, connectors, elements, view_box, self.outline_width
+            )
+            details = (
+                *(c.details(prefix) for c in connectors if c.key in elements),
+                *(
+                    c.details(module.prefix, module.label)
+                    for module in placed
+                    for c in module.connectors
+                    if c.key in module.ids
+                ),
+            )
+        # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
+        svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
+        warnings = tuple(w for module in placed for w in module.warnings)
+        return RenderedFace(face, prefix, svg, frozenset(elements), details, warnings)
+
+    def compose(self, root, elements, revision, face, scope):
+        """Draw the installed module of each bay of ``revision`` on ``face`` into ``root``."""
+        # {module bay name: bay keys}; with {module}, two keys can name one module bay.
+        mapped = {}
+        for key, item in sorted(revision.manifest["bays"].items()):
+            # A bay in title or desc is not drawn.
+            if item["face"] != face or key not in elements:
+                continue
+            name = item["module_bay"]
+            if scope.module is not None:
+                name = resolve_name(ModuleBay, name, scope.module)
+            mapped.setdefault(name, []).append(key)
+        owner = None if scope.module is None else scope.module.pk
+        for name, (key, *others) in mapped.items():
+            module = self.installed.get((owner, name))
+            # An empty bay draws nothing more: the parent artwork shows the slot.
+            if module is not None:
+                rotate = revision.manifest["bays"][key]["rotate"]
+                self.place(elements[key], key, rotate, module, scope, others)
+
+    def place(self, rect, key, rotate, module, scope, others=()):
+        """Draw ``module`` over the bay ``rect`` of ``scope``, and its own bays inside it.
+
+        ``others`` are the later bay keys that name the same module bay; they draw nothing.
+        """
+        revision = self.revisions.get(module.module_type_id)
+        inner = _Scope(
+            module,
+            f"{scope.part_id}-m{module.pk}",
+            scope.face,
+            scope.matrix,
+            (scope.rotate + rotate) % 360,
+            scope.depth + 1,
+        )
+        label = part_label(module)
+        warnings = []
+
+        def warn(code, text):
+            warnings.append(ArtworkWarning(code, f"{label}: {text}"))
+
+        if others:
+            warn(
+                WarningCode.DUPLICATE_BAY,
+                f"the bays {key} and {', '.join(others)} map to the module bay"
+                f" {module.module_bay.name}, so the module shows only in {key}.",
+            )
+        connectors = () if revision is None else self.connectors(revision, module)
+        # The children come after their parent, so the parent takes this index.
+        index = len(self.modules)
+        bay = Rect(*(float(rect.get(name, "0")) for name in BAY_ATTRIBUTES))
+        absolute, drawn, element_id = None, None, None
+        if not _finite(*vars(bay).values()):
+            warn(
+                WarningCode.NOT_FINITE,
+                f"the bay {key} has a position or size that is not a finite number,"
+                " so the module is not drawn.",
+            )
+        else:
+            group = self.module_group(rect, inner.part_id, bay)
+            element_id = inner.part_id
+            absolute = transform_rect(scope.matrix, bay)
+            if not _finite(*vars(absolute).values()):
+                warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+                absolute = None
+            elif inner.depth > MAX_MODULE_DEPTH:
+                warn(
+                    WarningCode.TOO_DEEP,
+                    f"the module is more than {MAX_MODULE_DEPTH} modules deep, so it"
+                    " shows as an outline.",
+                )
+            elif revision is not None:
+                drawn = self.artwork(
+                    group, bay, rotate, revision, connectors, inner, key, warn
+                )
+            if drawn is None:
+                self.outline(group, bay, module)
+            if not self.plain:
+                self.focus_ring(group, bay)
+        prefix, ids = drawn or ("", frozenset())
+        self.modules.insert(
+            index,
+            PlacedModule(
+                module=module,
+                parent=scope.module,
+                bay_key=key,
+                face=scope.face,
+                representation=OUTLINE if drawn is None else ARTWORK,
+                revision=revision,
+                bay=absolute,
+                rotate=inner.rotate,
+                element_id=element_id,
+                prefix=prefix,
+                connectors=connectors,
+                ids=ids,
+                warnings=tuple(warnings),
+            ),
+        )
+
+    def module_group(self, rect, part_id, bay):
+        """Return the group of a module, clipped to its bay, after the top-level element of the parent face that holds the bay."""
+        clip = f"{part_id}--clip"
+        group = etree.Element(
+            _G, {"id": part_id, "clip-path": f"url(#{clip})", **INHERITED_INITIAL}
+        )
+        etree.SubElement(
+            etree.SubElement(group, f"{{{SVG_NS}}}clipPath", id=clip),
+            _RECT,
+            _rect_attributes(bay),
+        )
+        # Outside the groups of the bay, so their opacity, clip and display do not reach the module.
+        top = rect
+        while top.getparent().getparent() is not None:
+            top = top.getparent()
+        top.addnext(group)
+        return group
+
+    def artwork(self, group, bay, rotate, revision, connectors, scope, key, warn):
+        """Draw the artwork of the module of ``scope`` into ``group``; return (prefix, ids), or None when it cannot."""
+        data = self.face_data(revision)
+        if data is None:
+            warn(
+                WarningCode.DAMAGED_ARTWORK,
+                f"a stored file of the active {revision.definition.key} revision is"
+                " missing or does not match its digest. Import the revision again.",
+            )
+            return None
+        [face] = revision.face_names
+        prefix = f"{scope.part_id}-{face}-"
+        child, elements = _parse_face(data[face], prefix)
+        view_box = parse_view_box(child.get("viewBox").strip())
+        placement = place(view_box, bay, rotate)
+        nested = (
+            None
+            if placement.matrix is None
+            else multiply(scope.matrix, placement.matrix)
+        )
+        if nested is None or not _finite(*nested):
+            warn(WarningCode.NOT_FINITE, _PLACEMENT_NOT_FINITE.format(key=key))
+            return None
+        if placement.size_mismatch:
+            warn(
+                WarningCode.SIZE_MISMATCH,
+                f"the artwork is {_number(placement.size[0])} ×"
+                f" {_number(placement.size[1])} mm, but the bay {key} is"
+                f" {_number(bay.width)} × {_number(bay.height)} mm.",
+            )
+        self.compose(child, elements, revision, face, replace(scope, matrix=nested))
+        if not self.plain:
+            drawn = [c for c in connectors if c.face == face]
+            _mark_connectors(
+                child, prefix, drawn, elements, view_box, self.outline_width
+            )
+            body = self.body(group, scope.module, "dv-art-module-body")
+            etree.SubElement(body, _RECT, {**_rect_attributes(bay), "fill": "none"})
+        # The module root stays a viewport, so its percentage lengths keep their meaning.
+        min_x, min_y, width, height = view_box
+        child.attrib.update(
+            zip(
+                _VIEWPORT_ATTRIBUTES,
+                ("0", "0", _number(width), _number(height)),
+                strict=True,
             )
         )
-        faces.append(RenderedFace(face, prefix, svg, ids, details))
-    return Part(device, ARTWORK, revision, tuple(faces), connectors)
+        # The viewport maps the viewBox origin to 0, 0: the transform moves it back.
+        matrix = multiply(placement.matrix, (1, 0, 0, 1, min_x, min_y))
+        art = etree.SubElement(
+            group, _G, transform=f"matrix({' '.join(map(_number, matrix))})"
+        )
+        if not self.plain:
+            art.set("class", "dv-art-module-art")
+        art.append(child)
+        return prefix, frozenset(elements)
+
+    def face_data(self, revision) -> dict[str, bytes] | None:
+        if revision.pk not in self.faces:
+            self.faces[revision.pk] = _read_faces(revision)
+        return self.faces[revision.pk]
+
+    def body(self, group, module, classes):
+        """Return the link of a module body to its record; a plain face has a group instead."""
+        if self.plain:
+            return etree.SubElement(group, _G)
+        body = etree.SubElement(
+            group, _A, {"class": classes, "href": module.get_absolute_url()}
+        )
+        etree.SubElement(body, _TITLE).text = _xml_text(f"Module {part_label(module)}")
+        return body
+
+    def focus_ring(self, group, bay):
+        """Draw the focus ring of the module body last in its group and inside its bay, so no artwork or clip hides it."""
+        # A narrow bay gets a thinner ring, so the ring rect keeps an area.
+        width = min(self.outline_width, bay.width / 3, bay.height / 3)
+        inside = Rect(
+            bay.x + width / 2, bay.y + width / 2, bay.width - width, bay.height - width
+        )
+        etree.SubElement(
+            group,
+            _RECT,
+            {
+                **_rect_attributes(inside),
+                "class": "dv-art-focus-ring dv-art-focus-frame",
+                "fill": "none",
+                "stroke": "#0d6efd",
+                "stroke-width": _number(width),
+                "pointer-events": "none",
+                "aria-hidden": "true",
+            },
+        )
+
+    def outline(self, group, bay, module):
+        """Draw the module as an outline of its bay with the name of its type."""
+        body = self.body(group, module, "dv-art-module-body dv-art-outline")
+        # The plain face of the API has no page CSS, so it needs these colours; the page CSS sets theme colours.
+        etree.SubElement(
+            body,
+            _RECT,
+            {
+                **_rect_attributes(bay),
+                "fill": "#f8f9fa",
+                "stroke": "#6c757d",
+                "stroke-width": _number(self.outline_width),
+            },
+        )
+        name = module.module_type.model
+        # The label is not turned with the bay, so it stays readable.
+        size = min(bay.height * 0.4, bay.width * 0.9 / (0.6 * max(len(name), 1)))
+        x, y = bay.x + bay.width / 2, bay.y + bay.height / 2
+        # A finite bay can have a centre that overflows; the outline then has no label.
+        if not _finite(x, y, size):
+            return
+        text = etree.SubElement(
+            body,
+            f"{{{SVG_NS}}}text",
+            {
+                "x": _number(x),
+                "y": _number(y),
+                "font-size": _number(size),
+                "font-family": "sans-serif",
+                "text-anchor": "middle",
+                "dominant-baseline": "central",
+                "fill": "#212529",
+            },
+        )
+        text.text = _xml_text(name)
 
 
-def _connector(key, item, resolved, states) -> Connector:
-    """Return the connector of manifest ``item`` with the ``resolved`` binding list."""
+def _finite(*values) -> bool:
+    return all(map(math.isfinite, values))
+
+
+def _number(value) -> str:
+    # Adding 0 turns -0.0 into 0.0.
+    return f"{value + 0:.12g}"
+
+
+def _rect_attributes(rect: Rect) -> dict[str, str]:
+    return {name: _number(getattr(rect, name)) for name in BAY_ATTRIBUTES}
+
+
+def _connector(key, item, resolved, states, module=None) -> Connector:
+    """Return the connector of manifest ``item`` with the ``resolved`` binding list, in the scope of ``module``."""
     bindings = []
     for binding in resolved:
         model = BINDING_MODELS[binding["component"]]
-        found = find(states, model, binding["name"])
-        # A device-scope name is unique per component type, so one match at most.
+        found = find(states, model, binding["name"], module)
+        # The page and the API name what NetBox calls the component of this module.
+        name = binding["name"]
+        if module is not None:
+            name = resolve_name(model, name, module) or name
+        # A component name is unique per type on one device, so one match at most.
         bindings.append(
-            Binding(model, binding["name"], FOUND, found[0])
+            Binding(model, name, FOUND, found[0])
             if found
-            else Binding(model, binding["name"], MISSING, None)
+            else Binding(model, name, MISSING, None)
         )
     return Connector(key, item["face"], item.get("label"), tuple(bindings))
 
 
-def _face_svg(
-    data: bytes, prefix: str, connectors: list[Connector], plain: bool
-) -> tuple[SafeString, frozenset[str]]:
-    """Return the face markup and the ids of the stored face that it draws."""
+def _parse_face(data: bytes, prefix: str):
+    """Return the parsed face with the prefix on each id and reference, and {stored id: element} of what it draws."""
     root = etree.fromstring(data, safe_parser(remove_comments=True, remove_pis=True))
     # HTML parses the content of title and desc as HTML, so they keep only their text.
     for element in root.iter(f"{{{SVG_NS}}}title", f"{{{SVG_NS}}}desc"):
@@ -263,19 +714,11 @@ def _face_svg(
             elements[ident] = element
             element.set("id", prefix + ident)
         _rewrite_references(element, prefix)
-    for name in ("x", "y", "width", "height"):
-        root.attrib.pop(name, None)
-    if not plain:
-        _mark_connectors(root, prefix, connectors, elements)
-    # lxml escapes text and attribute values, so the markup holds no stored bytes as they are.
-    svg = mark_safe(etree.tostring(_unprefixed(root), encoding="unicode"))
-    return svg, frozenset(elements)
+    return root, elements
 
 
-def _mark_connectors(root, prefix, connectors, elements):
+def _mark_connectors(root, prefix, connectors, elements, view_box, outline_width):
     """Mark each connector with its facts, and link it to its component when it has one."""
-    view_box = parse_view_box(root.get("viewBox").strip())
-    root.set("class", "dv-art-face")
     defs = etree.Element(f"{{{SVG_NS}}}defs")
     for connector in connectors:
         # A connector in title or desc is gone: a browser does not draw it either.
@@ -284,7 +727,7 @@ def _mark_connectors(root, prefix, connectors, elements):
             continue
         outer, inner = _marks(connector)
         marks = ring = None
-        space = _filter_space(view_box, _user_space(element))
+        space = _filter_space(view_box, _user_space(element), outline_width)
         if space is not None:
             if outer or inner:
                 marks = _MarkFilter(f"{prefix}{_MARKS}{connector.key}", *space).draw(
@@ -499,11 +942,12 @@ def _user_space(element):
     return matrix
 
 
-def _filter_space(view_box, matrix):
+def _filter_space(view_box, matrix, outline_width):
     """Return (region, radii) of a filter in the user space that ``matrix`` maps to the face.
 
-    The region covers the face, and the radii are the outline width on each
-    local axis. None when the matrix cannot be inverted: the connector is not drawn.
+    The region covers the face, and the radii are ``outline_width``, in face
+    units, on each local axis. None when the matrix cannot be inverted: the
+    connector is not drawn.
     """
     a, b, c, d, e, f = matrix
     determinant = a * d - b * c
@@ -522,8 +966,7 @@ def _filter_space(view_box, matrix):
     xs, ys = [x for x, _ in corners], [y for _, y in corners]
     region = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
     # Each local axis keeps the face outline width: divide by the face length of its unit vector.
-    width_on_face = max(width, height) * _OUTLINE
-    radii = (width_on_face / math.hypot(a, b), width_on_face / math.hypot(c, d))
+    radii = (outline_width / math.hypot(a, b), outline_width / math.hypot(c, d))
     if not all(math.isfinite(value) for value in (*region, *radii)):
         return None
     return region, radii

@@ -23,10 +23,17 @@ from utilities.forms.rendering import FieldSet, TabbedGroups
 
 from . import datasource_import
 from .artwork import overrides
-from .artwork.manifest import BINDING_COMPONENTS, MAX_BINDING_NAME_LENGTH, MAX_BINDINGS
+from .artwork.manifest import (
+    BINDING_COMPONENTS,
+    DEVICE_KIND,
+    MAX_BINDING_NAME_LENGTH,
+    MAX_BINDINGS,
+    MODULE_KIND,
+)
 from .components import BINDING_MODELS
 from .models import (
     SCOPE_FIELDS,
+    TYPE_SCOPES,
     Association,
     BindingOverride,
     DeviceView,
@@ -201,23 +208,66 @@ class VisualDefinitionForm(ChangelogMessageMixin, forms.ModelForm):
         fields = ("key_owner",)
 
 
-class ActivateRevisionForm(forms.Form):
-    device_type = DynamicModelChoiceField(
-        queryset=DeviceType.objects.all(),
-        label=_("Device type"),
-        help_text=_("The Device View of every device of this type shows the revision."),
-    )
+# The text of the activation page and the help of its type field, for each definition kind.
+_ACTIVATION_TEXTS = {
+    DEVICE_KIND: (
+        _(
+            "After activation, the Device View of each device of the selected type"
+            " shows this revision of {key}. A type that already has an active revision"
+            " changes to this one."
+        ),
+        _("The Device View of every device of this type shows the revision."),
+    ),
+    MODULE_KIND: (
+        _(
+            "After activation, each installed module of the selected type shows this"
+            " revision of {key} in the bay of its device. A type that already has an"
+            " active revision changes to this one."
+        ),
+        _(
+            "Every installed module of this type shows the revision in the bay of its"
+            " device."
+        ),
+    ),
+}
 
-    def __init__(self, *args, user, **kwargs):
+
+class ActivateRevisionForm(forms.Form):
+    """The one type field of the revision's kind: a device type, or a module type."""
+
+    def __init__(self, *args, user, revision, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["device_type"].queryset = DeviceType.objects.restrict(user, "view")
+        kind = revision.definition.kind
+        scope = TYPE_SCOPES[kind]
+        self.type_field = scope.field
+        intro, help_text = _ACTIVATION_TEXTS[kind]
+        self.intro = intro.format(key=revision.definition.key)
+        self.fields[self.type_field] = DynamicModelChoiceField(
+            queryset=scope.model.objects.restrict(user, "view"),
+            label=capfirst(scope.model._meta.verbose_name),
+            help_text=help_text,
+        )
+
+    @property
+    def type_bound_field(self):
+        return self[self.type_field]
+
+    @property
+    def hardware_type(self):
+        return self.cleaned_data[self.type_field]
 
 
 class AssociationFilterForm(SavedFiltersMixin, FilterForm):
     model = Association
-    fieldsets = (FieldSet("q", "filter_id"), FieldSet("device_type_id"))
+    fieldsets = (
+        FieldSet("q", "filter_id"),
+        FieldSet("device_type_id", "module_type_id", name=_("Type")),
+    )
     device_type_id = DynamicModelMultipleChoiceField(
         queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+    )
+    module_type_id = DynamicModelMultipleChoiceField(
+        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
     )
 
 
