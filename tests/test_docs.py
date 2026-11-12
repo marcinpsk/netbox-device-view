@@ -116,7 +116,7 @@ def test_artwork_api_page_states_the_values_of_the_code():
     assert f"{', '.join(others)} or {last}" in text
     reasons = {
         value for name, value in vars(UnavailableReason).items() if name.isupper()
-    } | {device_artwork.DAMAGED_ARTWORK}
+    } | {device_artwork.DAMAGED_ARTWORK, device_artwork.ARTWORK_ERROR}
     table = text.split("### Reasons", 1)[1].split("###", 1)[0]
     documented = {
         line.split("`")[1] for line in table.splitlines() if line.startswith("| `")

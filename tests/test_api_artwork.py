@@ -508,6 +508,23 @@ class VirtualChassisApiTests(ChassisApiTestCase):
             [("artwork", None), ("unavailable", "invalid_layout")],
         )
 
+    def test_an_unreadable_artwork_file_makes_only_that_member_unavailable(self):
+        grant(self.user, DeviceView, "view")
+        DeviceView.objects.create(
+            device_type=self.member2.device_type, yaml_layout=SVG_YAML
+        )
+        self.activate()
+        # Storage cannot read a directory, as it cannot read a file without permission.
+        stored = self.media / self.revision.files.get(path="front.svg").blob.name
+        stored.unlink()
+        stored.mkdir()
+        with self.assertLogs("netbox_device_view.api.device_artwork", "ERROR"):
+            members = self.get()["members"]
+        self.assertEqual(
+            [(m["representation"], m["reason"]) for m in members],
+            [("unavailable", "artwork_error"), ("layout", None)],
+        )
+
     def test_a_member_that_the_user_cannot_view_is_left_out(self):
         self.activate()
         ObjectPermission.objects.filter(name__startswith="dcim.device").update(
