@@ -2,7 +2,7 @@
 
 A read-only, versioned JSON endpoint that composes a device's SVG layout — structure, port colours, connection state, cable colour, and peer summaries — into a single response. It exists for API clients (e.g. the [netbox-companion](https://github.com/peterbaumert/netbox-companion) mobile app) that render the layout natively instead of embedding NetBox's own HTML/JavaScript device-view page.
 
-The existing [DeviceView CRUD API](configuration.md) (`/api/plugins/device_view/device-view/`) only exposes layout *configuration* (the raw YAML/CSS a device type uses). It does not compose that configuration against a specific device's real interfaces, cables, and connection state — that composition happens in the web UI via [`ports.html`'s inline JavaScript](how-it-works.md). This endpoint moves that composition server-side so API clients don't have to reimplement it.
+The existing [DeviceView CRUD API](configuration.md) (`/api/plugins/device_view/device-view/`) only exposes layout *configuration* (the raw YAML/CSS a device type uses). It does not compose that configuration against a specific device's real interfaces, cables, and connection state. This endpoint gives that composition to API clients, so they do not have to implement it again. The web UI and this endpoint use the same server module, `netbox_device_view.components` (see [How it works](how-it-works.md)).
 
 ---
 
@@ -32,8 +32,8 @@ The response includes only the objects that the requesting user can view. NetBox
 - **DeviceView:** a `DeviceView` that the user cannot view counts as missing (`reason: "no_layout"`).
 - **Components:** an interface, console port, console-server port, front port or rear port that the user cannot view has no hotspot. Its element in the SVG has the default port fill, so the SVG does not show its state or cable colour.
 - **Peers:** `peer_labels` includes only the peers that the user can view. The label of a peer shows the name of its device.
-- **Cables:** a cable that the user cannot view gives `cable_color: null`, and the SVG does not show its colour.
-- **Modules:** a module that the user cannot view does not select a [module variant](layout-yaml.md#variant-definition).
+- **Cables:** a cable that the user cannot view counts as no cable. It gives `cable_color: null` and the `connection_state` of a component without a cable, and the SVG does not show its colour. `peer_labels` still includes the peers that the user can view.
+- **Modules:** a module that the user cannot view does not select a [module variant](layout-yaml.md#variant-definition), and its components have no hotspot.
 
 The Device View tab and the device page panel use the same rule.
 
@@ -67,7 +67,8 @@ The Device View tab and the device page panel use the same rule.
           "peer_labels": ["dev1 | GigabitEthernet0/2"],
           "trace_supported": true
         }
-      ]
+      ],
+      "ambiguous": []
     }
   ]
 }
@@ -77,7 +78,7 @@ The Device View tab and the device page panel use the same rule.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | int | Always `1` for this version. A future breaking change bumps this rather than mutating the shape in place. |
+| `schema_version` | int | Always `1` for this version. A future breaking change bumps this rather than mutating the shape in place. Schema 1 can get new fields. Clients must ignore the fields that they do not know. |
 | `available` | bool | `false` for any of the reasons above. |
 | `reason` | string \| null | `"no_layout"` \| `"svg_layout_required"` \| `"invalid_layout"` \| `null` (only meaningful when `available` is `false`). |
 | `device_id` | int | Echoes the requested device's primary key. |
@@ -92,21 +93,32 @@ The Device View tab and the device page panel use the same rule.
 | `label` | string | Human-readable panel label, e.g. `"Front"`, `"Rear (member-2)"`. |
 | `width`, `height` | int | The SVG's pixel dimensions — matches the `viewBox`/`width`/`height` on the embedded `<svg>`. |
 | `svg` | string | Self-contained SVG markup (see [SVG output](#svg-output) below). |
-| `hotspots` | array | One entry per port-like element whose key matches a real NetBox component. |
+| `hotspots` | array | One entry per port-like element whose key matches exactly one real NetBox component. A front port binds only on the front face and a rear port only on the rear face (see [Shared stylenames](how-it-works.md#shared-stylenames)). |
+| `ambiguous` | array | One entry per port-like element whose key matches two or more components (see [Ambiguous elements](#ambiguous-elements)). Empty when there is none. |
 
 ### Hotspot
 
 | Field | Type | Notes |
 |---|---|---|
-| `object_type` | string | `"dcim.interface"` \| `"dcim.consoleport"` \| `"dcim.consoleserverport"` \| `"dcim.frontport"` \| `"dcim.rearport"`. This is Django's `app_label.model_name`, so it's safe to route on directly. Power ports are not yet collected by the plugin's layout pipeline (`utils.prepare_svg`), so they never appear here. |
+| `object_type` | string | `"dcim.interface"` \| `"dcim.consoleport"` \| `"dcim.consoleserverport"` \| `"dcim.frontport"` \| `"dcim.rearport"`. This is Django's `app_label.model_name`, so it's safe to route on directly. Layouts do not bind power ports, so they never appear here. |
 | `object_id` | int | The real NetBox object's primary key — use this (with `object_type`) to navigate, not a URL. |
 | `name` | string | The component's real name, e.g. `"GigabitEthernet0/1"`. |
 | `x`, `y`, `width`, `height` | int | Hotspot geometry in the same coordinate space as the panel's `svg`/`viewBox` — apply one transform to both. |
 | `enabled` | bool | Always `true` for port-type components (they have no enabled flag); reflects `Interface.enabled` for interfaces. |
-| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`. `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device) — see [SVG Renderer](svg-renderer.md#states). |
+| `connection_state` | string | `"connected"` \| `"partially_connected"` \| `"enabled"` \| `"disabled"`. `"partially_connected"` only applies to interfaces (a cable is attached but the traced path doesn't resolve to a far-end device); see [SVG Renderer](svg-renderer.md#states). |
 | `cable_color` | string \| null | `null` = no cable attached, or a cable that the user cannot view. `""` = cable attached, no colour set (rendered with a diagonal no-colour pattern). `"rrggbb"` = the cable's configured colour. |
 | `peer_labels` | array of string | `"{device} \| {name}"` per resolved peer that the user can view: the traced endpoints when the component has them, otherwise the direct cable peers. Empty when unconnected. |
 | `trace_supported` | bool | Whether NetBox's REST trace endpoint (`GET /api/dcim/{type}s/{id}/trace/`) exists for this object type. `true` for interfaces, console ports and console-server ports; `false` for front/rear ports, which use `PassThroughPortMixin` and have no `/trace/` action. |
+
+### Ambiguous elements
+
+When two or more components have the key of an element, the element names no single object. It has no hotspot. It gets one entry in the panel's `ambiguous` array instead. Its SVG element has the default port fill.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | The element key. |
+| `x`, `y`, `width`, `height` | int | The element geometry, in the same coordinate space as a hotspot. |
+| `candidates` | array | One `{"object_type", "object_id", "name"}` per component with the key. The fields have the same types as in a hotspot. |
 
 ---
 
@@ -129,13 +141,13 @@ A `DeviceView`'s own `render_mode` field (`css` or `svg`) controls which rendere
 
 ## Virtual Chassis
 
-A Virtual Chassis device returns one set of panels per member, in rack order (same ordering the web UI uses), each composed from that member's own device type's `DeviceView`. Members that the user cannot view are left out. If the device type of **any** other member lacks an SVG-capable `DeviceView` that the user can view, the whole response is `available: false`. There is no partial per-member fallback (this matches the existing `prepare_svg()` behaviour the web UI relies on). See [Virtual Chassis](virtual-chassis.md).
+A Virtual Chassis device returns one set of panels per member, in rack order (same ordering the web UI uses), each composed from that member's own device type's `DeviceView`. Members that the user cannot view are left out. If the device type of **any** other member lacks an SVG-capable `DeviceView` that the user can view, the whole response is `available: false`. There is no partial per-member fallback (the web UI does the same). See [Virtual Chassis](virtual-chassis.md).
 
 ---
 
 ## Performance
 
-The composition path (`netbox_device_view.api.rendered_layout`) prefetches cable terminations and cable-trace path objects for every component up front, using the same prefetch shapes NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` use (`dcim/api/views.py`) — one request never issues a query per port. This is covered by a regression test (`tests/test_api_rendered_layout.py::QueryCountTests`) that asserts query count doesn't scale with interface count.
+The component resolver (`netbox_device_view.components`) prefetches cable terminations and cable-trace path objects for every component up front, using the same prefetch shapes NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` use (`dcim/api/views.py`). One request never issues a query per port. This is covered by a regression test (`tests/test_api_rendered_layout.py::QueryCountTests`) that asserts query count doesn't scale with interface count.
 
 No caching (`ETag`/`Last-Modified`) is applied — connection state and cable colour can change at any time, and a stale cached response would show wrong data. This may be revisited if it becomes a real bottleneck.
 

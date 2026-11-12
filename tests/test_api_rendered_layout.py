@@ -292,8 +292,10 @@ class RenderedPanelTests(RenderedLayoutTestBase):
         self.assertEqual(len(data["panels"]), 1)
         panel = data["panels"][0]
         self.assertEqual(
-            set(panel.keys()), {"key", "label", "width", "height", "svg", "hotspots"}
+            set(panel.keys()),
+            {"key", "label", "width", "height", "svg", "hotspots", "ambiguous"},
         )
+        self.assertEqual(panel["ambiguous"], [])
         self.assertGreater(panel["width"], 0)
         self.assertGreater(panel["height"], 0)
         self.assertIn("<svg", panel["svg"])
@@ -417,7 +419,7 @@ class PatchPanelMultiPanelTests(RenderedLayoutTestBase):
             render_mode=RenderMode.SVG,
         )
         # The composition path only reads .name/.link_peers/.cable per port
-        # (see rendered_layout._component_querysets) — it doesn't need a
+        # (see components.device_components). It does not need a
         # real FrontPort<->RearPort mapping, so these are independent.
         RearPort.objects.create(device=self.device, name="Port 1", type="8p8c")
         RearPort.objects.create(device=self.device, name="Port 2", type="8p8c")

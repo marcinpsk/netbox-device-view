@@ -71,10 +71,13 @@ with no label and no interactivity.
 from __future__ import annotations
 
 import html
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from ..model import (
     CanvasConfig,
     ElementKind,
+    Face,
     LayoutView,
     NormalizedLayout,
     PlacedElement,
@@ -100,7 +103,23 @@ COLOUR_STANDALONE_TEXT = "#333"  # text for label elements
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
-def render(layout: NormalizedLayout, variant_name: str | None = None) -> str:
+@dataclass(frozen=True)
+class PortCell:
+    """The state markup of one port group: classes, attributes, fill and title."""
+
+    classes: tuple[str, ...] = ()
+    attributes: Mapping[str, str] = field(default_factory=dict)
+    fill: str | None = None
+    title: str | None = None
+    # A small dot in the top right corner, for a partially connected port.
+    dot: bool = False
+
+
+def render(
+    layout: NormalizedLayout,
+    variant_name: str | None = None,
+    cells: Mapping[str | None, Mapping[str, PortCell]] | None = None,
+) -> str:
     """
     Render a NormalizedLayout to one or more SVG strings.
 
@@ -115,6 +134,9 @@ def render(layout: NormalizedLayout, variant_name: str | None = None) -> str:
         If given, render this variant overlay on top of the base elements
         (exactly as the CSS renderer does for module overlays).
         Pass ``None`` to render the base layout only.
+    cells:
+        ``{"front" | "rear": {key: PortCell}}``; each view takes the cells of
+        its ``drawn_face()``.
 
     Returns
     -------
@@ -122,23 +144,32 @@ def render(layout: NormalizedLayout, variant_name: str | None = None) -> str:
         Raw SVG markup ready for embedding in a Django template with
         ``{% autoescape off %} {{ svg }} {% endautoescape %}``.
     """
-    parts: list[str] = []
+    cells = cells or {}
+    return "\n".join(
+        _render_view(
+            view,
+            data_face=face,
+            variant_name=variant_name,
+            cells=cells.get(drawn_face(face, view)),
+        )
+        for face, view in face_views(layout)
+    )
 
+
+def face_views(layout: NormalizedLayout) -> list[tuple[str | None, LayoutView]]:
+    """Return (face, view) for each rendered view; ``face`` is None for a layout without separate faces."""
     if layout.has_separate_faces():
-        if layout.front:
-            parts.append(
-                _render_view(layout.front, data_face="front", variant_name=variant_name)
-            )
-        if layout.rear:
-            parts.append(
-                _render_view(layout.rear, data_face="rear", variant_name=variant_name)
-            )
-    else:
-        view = layout.front or layout.rear
-        if view:
-            parts.append(_render_view(view, data_face=None, variant_name=variant_name))
+        faces = (("front", layout.front), ("rear", layout.rear))
+        return [(face, view) for face, view in faces if view]
+    view = layout.front or layout.rear
+    return [(None, view)] if view else []
 
-    return "\n".join(parts)
+
+def drawn_face(face: str | None, view: LayoutView) -> str:
+    """Return the face that a view of ``face_views()`` draws: "front", or "rear" for a rear view."""
+    if face:
+        return face
+    return "rear" if view.face == Face.REAR else "front"
 
 
 def render_api_view(
@@ -291,6 +322,7 @@ def _render_view(
     view: LayoutView,
     data_face: str | None,
     variant_name: str | None,
+    cells: Mapping[str, PortCell] | None = None,
 ) -> str:
     """Render a single LayoutView to an ``<svg>`` element string."""
     canvas = view.canvas
@@ -327,7 +359,7 @@ def _render_view(
     # Render the correct element set for the requested variant (or base if None).
     # elements_for_variant merges base + variant overrides — no hidden layers needed.
     elements = view.elements_for_variant(variant_name)
-    lines.extend(_render_elements(elements, canvas))
+    lines.extend(_render_elements(elements, canvas, cells or {}))
 
     lines.append("</svg>")
     return "\n".join(lines)
@@ -336,19 +368,19 @@ def _render_view(
 def _render_elements(
     elements: list[PlacedElement],
     canvas: CanvasConfig,
-    group_class: str = "",
+    cells: Mapping[str, PortCell],
     indent: int = 2,
 ) -> list[str]:
     """Render a list of PlacedElement objects to SVG lines."""
     pad = " " * indent
     lines: list[str] = []
     for el in sorted(elements, key=lambda e: (e.row, e.col)):
-        lines.extend(_render_element(el, canvas, pad))
+        lines.extend(_render_element(el, canvas, cells.get(el.key, PortCell()), pad))
     return lines
 
 
 def _render_element(
-    el: PlacedElement, canvas: CanvasConfig, pad: str = "  "
+    el: PlacedElement, canvas: CanvasConfig, cell: PortCell, pad: str = "  "
 ) -> list[str]:
     """Render a single PlacedElement to SVG lines."""
     x, y = cell_xy(el.row, el.col, canvas)
@@ -363,7 +395,7 @@ def _render_element(
         return _render_blank_element(el, x, y, w, h, pad)
 
     # Port / interface / console-port / power-port / module-slot
-    return _render_port_element(el, x, y, w, h, cs, pad)
+    return _render_port_element(el, x, y, w, h, cs, pad, cell)
 
 
 def _render_port_element(
@@ -374,39 +406,49 @@ def _render_port_element(
     h: int,
     cs: int,
     pad: str,
+    cell: PortCell,
 ) -> list[str]:
     """
     Render a port/interface element.
 
-    The ``<g>`` element carries the stylename as a class so templates can
-    locate it via ``document.querySelector('.dv-port.{stylename}')``.
-    Status classes (bg-success, bg-secondary, bg-danger) and cable colors
-    are applied in the template layer, not here.
+    The ``<g>`` element carries the stylename as a class and in
+    ``data-stylename``. ``cell`` adds the state classes, attributes, fill and
+    title of the component that the key binds to.
     """
     key = el.key
-    safe_key = html.escape(key)
     label = el.label or _abbreviate(key)
     safe_label = html.escape(label)
 
-    extra_classes = html.escape(" ".join(el.css_classes))
-    g_class = f"dv-port {safe_key}{' ' + extra_classes if extra_classes else ''}"
+    attributes = {
+        "class": " ".join(("dv-port", key, *el.css_classes, *cell.classes)),
+        "data-stylename": key,
+        "tabindex": "0",
+        "role": "button",
+        "aria-label": key,
+        **cell.attributes,
+    }
+    g_attributes = "".join(
+        f' {name}="{html.escape(value, quote=True)}"'
+        for name, value in attributes.items()
+    )
+    fill = html.escape(cell.fill or COLOUR_PORT_DEFAULT, quote=True)
 
-    # Port rect — fill is a CSS variable so templates can override per-port
     cx = x + w // 2
     cy = y + h // 2
 
     lines = [
-        (
-            f'{pad}<g class="{g_class}" data-stylename="{safe_key}"'
-            f' tabindex="0" role="button" aria-label="{safe_key}">'
-        ),
-        f"{pad}  <title>{safe_key}</title>",
+        f"{pad}<g{g_attributes}>",
+        f"{pad}  <title>{html.escape(cell.title or key)}</title>",
         (
             f'{pad}  <rect class="dv-port-rect" x="{x}" y="{y}" width="{w}" height="{h}"'
             f' rx="{CORNER_RADIUS}" ry="{CORNER_RADIUS}"'
-            f' fill="{COLOUR_PORT_DEFAULT}" stroke="{COLOUR_BORDER}" stroke-width="1"/>'
+            f' fill="{fill}" stroke="{COLOUR_BORDER}" stroke-width="1"/>'
         ),
     ]
+    if cell.dot:
+        lines.append(
+            f'{pad}  <circle class="dv-partial-dot" cx="{x + w - 3}" cy="{y + 3}" r="2.5"/>'
+        )
 
     # Only show text if the cell is wide or tall enough to fit it
     if w >= 10 and h >= 8:

@@ -1,52 +1,35 @@
 """
 Rendered-layout composition for the device rendered-layout API endpoint.
 
-Bridges the layout engine (``netbox_device_view.layout`` — pure, NetBox-
-agnostic geometry) with real NetBox component objects (Interface,
-ConsolePort, ConsoleServerPort, FrontPort, RearPort) to produce the
-versioned JSON envelope consumed by API clients (e.g. the netbox-companion
-mobile app).
-
-This computes connection-state, cable-color, and peer-summary information
-server-side, replicating exactly what ``ports.html``'s inline JavaScript
-(``applyPortStatus()``) currently does client-side for the web tab — see
-that template for the reference behaviour this mirrors. Device/DeviceView
-selection reuses ``utils.py``'s ``_detect_variant``/``panel_members`` and
-the same stylename derivation as ``process_interfaces``/``process_ports``,
-so layout selection stays identical to the existing web view.
+Bridges the layout engine (``netbox_device_view.layout``, pure and NetBox-
+agnostic geometry) with the components that ``netbox_device_view.components``
+resolves, to produce the versioned JSON envelope consumed by API clients (e.g.
+the netbox-companion mobile app). The Device View tab and the device page
+panel use the same resolver, so the page and the API bind the same components
+in the same state.
 """
 
 from __future__ import annotations
 
 import logging
-import re
-from dataclasses import dataclass, field
-from itertools import chain
 
-from dcim.models import (
-    ConsolePort,
-    ConsoleServerPort,
-    Device,
-    FrontPort,
-    Interface,
-    RearPort,
-)
+from dcim.models import Device
 
-from ..layout import parse as parse_layout
-from ..layout.model import Face, LayoutView
-from ..layout.parser import LayoutParseError
-from ..layout.renderers.svg import render_api_view, svg_dims
-from ..models import DeviceView
-from ..utils import (
-    _derive_interface_stylename,
-    _derive_port_stylename,
-    _detect_variant,
-    cable_peers,
-    label_connections,
+from ..components import (
+    CONNECTED,
+    DISABLED,
+    ENABLED,
+    PARTIALLY_CONNECTED,
+    bind_layout,
+    device_components,
     panel_members,
-    path_objects,
     viewable_device_view,
 )
+from ..layout import parse as parse_layout
+from ..layout.parser import LayoutParseError
+from ..layout.renderers.svg import drawn_face, face_views, render_api_view, svg_dims
+from ..models import DeviceView
+from ..utils import _detect_variant
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +45,6 @@ COLOUR_DISABLED = "#dc3545"  # bg-danger
 COLOUR_PARTIAL = "#ffc107"  # bg-warning
 NO_COLOR_FILL = "url(#dv-nocolor-pattern)"
 
-_HEX_COLOR_RE = re.compile(r"^[0-9A-Fa-f]{6}$")
-
-# Component types with a NetBox REST /trace/ action (PathEndpointMixin in
-# dcim/api/views.py). FrontPort/RearPort use PassThroughPortMixin instead
-# and have no /trace/ action.
-_TRACE_SUPPORTED_MODELS = {"interface", "consoleport", "consoleserverport"}
-
 
 class UnavailableReason:
     NO_LAYOUT = "no_layout"
@@ -76,165 +52,48 @@ class UnavailableReason:
     INVALID_LAYOUT = "invalid_layout"
 
 
-@dataclass
-class ComponentStatus:
-    component: object
-    object_type: str
-    enabled: bool
-    connection_state: (
-        str  # "connected" | "partially_connected" | "enabled" | "disabled"
-    )
-    cable_color: str | None  # None = no cable, "" = cable with no color set
-    peer_labels: list[str] = field(default_factory=list)
-
-
-def compute_component_status(component, *, is_port: bool) -> ComponentStatus:
-    """Replicate ports.html's applyPortStatus() JS, in Python, for one component.
-
-    ``label_connections()`` must set the connection facts of ``component``.
-    """
-    object_type = f"dcim.{type(component)._meta.model_name}"
-
-    if is_port:
-        enabled = True
-        connected = bool(component.linked_peers)
-        partially_connected = False
-    else:
-        enabled = bool(component.enabled)
-        connected = bool(component.linked_endpoints)
-        partially_connected = bool(component.linked_peers) and not connected
-
-    if connected:
-        state = "connected"
-    elif partially_connected:
-        state = "partially_connected"
-    elif enabled:
-        state = "enabled"
-    else:
-        state = "disabled"
-
-    return ComponentStatus(
-        component=component,
-        object_type=object_type,
-        enabled=enabled,
-        connection_state=state,
-        cable_color=component.cable_color,
-        peer_labels=component.peer_labels,
-    )
-
-
-def _fill_for(status: ComponentStatus) -> str:
-    if status.cable_color is not None:
-        if status.cable_color == "":
-            return NO_COLOR_FILL
-        if _HEX_COLOR_RE.match(status.cable_color):
-            return f"#{status.cable_color}"
-        # Malformed value somehow stored on the model — don't trust it raw
-        # in hand-built SVG; fall through to the state colour instead.
-        logger.warning(
-            "Ignoring non-hex cable color %r on %s",
-            status.cable_color,
-            status.component,
-        )
-
+def _fill_for(state) -> str:
+    if state.cable_color == "":
+        return NO_COLOR_FILL
+    if state.cable_fill:
+        return state.cable_fill
     return {
-        "connected": COLOUR_CONNECTED,
-        "partially_connected": COLOUR_PARTIAL,
-        "enabled": COLOUR_ENABLED,
-        "disabled": COLOUR_DISABLED,
-    }[status.connection_state]
+        CONNECTED: COLOUR_CONNECTED,
+        PARTIALLY_CONNECTED: COLOUR_PARTIAL,
+        ENABLED: COLOUR_ENABLED,
+        DISABLED: COLOUR_DISABLED,
+    }[state.connection_state]
 
 
-def _component_querysets(device, user):
-    """Return (interfaces, [console_ports, console_server_ports, front_ports,
-    rear_ports]) querysets of the components of one device that ``user`` can
-    view, with N+1-avoiding prefetches
-    matching the same prefetch shape NetBox's own InterfaceViewSet/
-    ConsolePortViewSet/ConsoleServerPortViewSet/FrontPortViewSet/
-    RearPortViewSet use (dcim/api/views.py)."""
-    interfaces = (
-        Interface.objects.restrict(user, "view")
-        .filter(device=device)
-        .exclude(type__in=("virtual", "lag"))
-        .prefetch_related(path_objects(), cable_peers())
-    )
-    console_ports = (
-        ConsolePort.objects.restrict(user, "view")
-        .filter(device=device)
-        .prefetch_related(path_objects(), cable_peers())
-    )
-    console_server_ports = (
-        ConsoleServerPort.objects.restrict(user, "view")
-        .filter(device=device)
-        .prefetch_related(path_objects(), cable_peers())
-    )
-    front_ports = (
-        FrontPort.objects.restrict(user, "view")
-        .filter(device=device)
-        .exclude(type="virtual")
-        .prefetch_related(cable_peers())
-    )
-    rear_ports = (
-        RearPort.objects.restrict(user, "view")
-        .filter(device=device)
-        .exclude(type="virtual")
-        .prefetch_related(cable_peers())
-    )
-    return interfaces, [console_ports, console_server_ports, front_ports, rear_ports]
-
-
-def _stylename_map(device, user) -> dict[str, ComponentStatus]:
-    """Return {stylename: ComponentStatus} for every eligible component on
-    one device that ``user`` can view. The keys are the key space that
-    PlacedElement.key ("stylename") uses."""
-    interfaces, ports = _component_querysets(device, user)
-    interfaces = list(interfaces)
-    ports = list(chain.from_iterable(ports))
-    label_connections([*interfaces, *ports], user)
-
-    by_stylename: dict[str, ComponentStatus] = {}
-    for itf in interfaces:
-        by_stylename[_derive_interface_stylename(itf.name)] = compute_component_status(
-            itf, is_port=False
-        )
-    for port in ports:
-        by_stylename[_derive_port_stylename(port.name)] = compute_component_status(
-            port, is_port=True
-        )
-    return by_stylename
-
-
-def _face_views(normalized) -> list[tuple[str, str, LayoutView]]:
-    """Return (key, label, view) for each face of a parsed layout."""
-    if normalized.has_separate_faces():
-        faces = (
-            ("front", "Front", normalized.front),
-            ("rear", "Rear", normalized.rear),
-        )
-        return [face for face in faces if face[2]]
-    view = normalized.front or normalized.rear
-    if view is None:
-        return []
-    if view.face == Face.REAR:
-        return [("rear", "Rear", view)]
-    return [("front", "Front", view)]
-
-
-def _hotspot(cell: dict, status: ComponentStatus) -> dict:
-    component = status.component
+def _reference(state) -> dict:
     return {
-        "object_type": status.object_type,
-        "object_id": component.pk,
-        "name": component.name,
-        "x": cell["x"],
-        "y": cell["y"],
-        "width": cell["width"],
-        "height": cell["height"],
-        "enabled": status.enabled,
-        "connection_state": status.connection_state,
-        "cable_color": status.cable_color,
-        "peer_labels": status.peer_labels,
-        "trace_supported": type(component)._meta.model_name in _TRACE_SUPPORTED_MODELS,
+        "object_type": state.object_type,
+        "object_id": state.component.pk,
+        "name": state.component.name,
+    }
+
+
+def _geometry(cell: dict) -> dict:
+    return {name: cell[name] for name in ("x", "y", "width", "height")}
+
+
+def _hotspot(cell: dict, state) -> dict:
+    return {
+        **_reference(state),
+        **_geometry(cell),
+        "enabled": state.enabled is not False,
+        "connection_state": state.connection_state,
+        "cable_color": state.cable_color,
+        "peer_labels": state.peer_labels,
+        "trace_supported": state.trace_supported,
+    }
+
+
+def _ambiguous(cell: dict, binding) -> dict:
+    return {
+        "name": binding.key,
+        **_geometry(cell),
+        "candidates": [_reference(candidate) for candidate in binding.candidates],
     }
 
 
@@ -283,22 +142,33 @@ def compose_rendered_layout(device: Device, user) -> dict:
             normalized = parse_layout(device_view.yaml_layout)
             member_modules = list(member.modules.restrict(user, "view"))
             variant = _detect_variant(member_modules, device_view)
-            status_by_stylename = _stylename_map(member, user)
+            states = device_components(member, user)
 
             member_prefix = f"member-{member.pk}-" if len(members) > 1 else ""
             member_suffix = f" ({member.name})" if len(members) > 1 else ""
 
-            for face_key, face_label, view in _face_views(normalized):
+            for face, view in face_views(normalized):
+                face_key = drawn_face(face, view)
+                bindings = bind_layout(states, face_key)
+                face_label = face_key.capitalize()
                 svg, geometry = render_api_view(
                     view,
-                    fills={k: _fill_for(v) for k, v in status_by_stylename.items()},
+                    fills={
+                        key: _fill_for(binding.state)
+                        for key, binding in bindings.items()
+                        if binding.state
+                    },
                     variant_name=variant,
                 )
-                hotspots = [
-                    _hotspot(cell, status_by_stylename[cell["key"]])
-                    for cell in geometry
-                    if cell["key"] in status_by_stylename
-                ]
+                hotspots, ambiguous = [], []
+                for cell in geometry:
+                    binding = bindings.get(cell["key"])
+                    if binding is None:
+                        continue
+                    if binding.state is None:
+                        ambiguous.append(_ambiguous(cell, binding))
+                    else:
+                        hotspots.append(_hotspot(cell, binding.state))
                 width, height = svg_dims(view.canvas)
                 panels.append(
                     {
@@ -308,6 +178,7 @@ def compose_rendered_layout(device: Device, user) -> dict:
                         "height": height,
                         "svg": svg,
                         "hotspots": hotspots,
+                        "ambiguous": ambiguous,
                     }
                 )
     except LayoutParseError:
