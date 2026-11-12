@@ -111,6 +111,16 @@ urlpatterns = (
         name="association_list",
     ),
     path(
+        "artwork-associations/review/",
+        views.AssociationReviewView.as_view(),
+        name="association_review",
+    ),
+    path(
+        "artwork-associations/review-update/",
+        views.AssociationReviewUpdateView.as_view(),
+        name="association_review_update",
+    ),
+    path(
         "artwork-associations/<int:pk>/",
         views.AssociationView.as_view(),
         name="association",
@@ -161,5 +171,41 @@ urlpatterns = (
         ObjectChangeLogView.as_view(),
         name="bindingoverride_changelog",
         kwargs={"model": models.BindingOverride},
+    ),
+    path(
+        "instance-pins/",
+        views.InstancePinListView.as_view(),
+        name="instancepin_list",
+    ),
+    path(
+        "instance-pins/add/",
+        views.InstancePinEditView.as_view(),
+        name="instancepin_add",
+    ),
+    path(
+        "instance-pins/delete/",
+        views.InstancePinBulkDeleteView.as_view(),
+        name="instancepin_bulk_delete",
+    ),
+    path(
+        "instance-pins/<int:pk>/",
+        views.InstancePinView.as_view(),
+        name="instancepin",
+    ),
+    path(
+        "instance-pins/<int:pk>/edit/",
+        views.InstancePinEditView.as_view(),
+        name="instancepin_edit",
+    ),
+    path(
+        "instance-pins/<int:pk>/delete/",
+        views.InstancePinDeleteView.as_view(),
+        name="instancepin_delete",
+    ),
+    path(
+        "instance-pins/<int:pk>/changelog/",
+        ObjectChangeLogView.as_view(),
+        name="instancepin_changelog",
+        kwargs={"model": models.InstancePin},
     ),
 )

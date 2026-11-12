@@ -28,6 +28,7 @@ from netbox.views.generic import BulkImportView
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
+    GetReturnURLMixin,
     ViewTab,
     register_model_view,
 )
@@ -35,8 +36,8 @@ from utilities.views import (
 from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
-from .artwork import activation, overrides
 from .artwork import importing as artwork_importing
+from .artwork import overrides, review
 from .artwork.errors import ArtworkError
 from .artwork.type_lock import lock_bulk_writes
 from .components import binding_labels
@@ -387,17 +388,22 @@ class DefinitionRevisionListView(generic.ObjectListView):
     actions = (BundleImport, SourceImport)
 
 
-class ActivateRevision(ObjectAction):
+class ActivationAction(ObjectAction):
+    """A button for a user who can add or change associations."""
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # permissions_required needs every permission; activation needs add or change.
+        if not review.can_activate(context["request"].user):
+            return ""
+        return super().render(context, obj, **kwargs)
+
+
+class ActivateRevision(ActivationAction):
     name = "activate"
     label = _("Activate")
     template_name = "netbox_device_view/buttons/activate.html"
     url_kwargs = ("pk",)
-
-    @classmethod
-    def render(cls, context, obj, **kwargs):
-        if not activation.can_activate(context["request"].user):
-            return ""
-        return super().render(context, obj, **kwargs)
 
 
 class DefinitionRevisionView(generic.ObjectView):
@@ -424,67 +430,155 @@ class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
     queryset = models.DefinitionRevision.objects.all()
 
 
-class ActivateRevisionView(ContentTypePermissionRequiredMixin, View):
-    """Make a revision the active artwork of a device type or a module type."""
-
-    template_name = "netbox_device_view/artwork_activate.html"
-
+class ActivationPermissionMixin(ContentTypePermissionRequiredMixin):
     def has_permission(self):
-        return activation.can_activate(self.request.user)
+        return review.can_activate(self.request.user)
 
-    def _render(self, request, revision, form, status=200):
-        return render(
-            request,
-            self.template_name,
-            {"object": revision, "form": form},
-            status=status,
-        )
 
-    def _revision(self, request, pk):
-        return get_object_or_404(
+class ActivateRevisionView(ActivationPermissionMixin, View):
+    """Select the types that a review activates a revision for; the form opens the review."""
+
+    def get(self, request, pk):
+        revision = get_object_or_404(
             models.DefinitionRevision.objects.restrict(
                 request.user, "view"
             ).select_related("definition"),
             pk=pk,
         )
-
-    @staticmethod
-    def _form(request, revision, data=None):
-        return forms.ActivateRevisionForm(data, user=request.user, revision=revision)
-
-    def get(self, request, pk):
-        revision = self._revision(request, pk)
-        return self._render(request, revision, self._form(request, revision))
-
-    def post(self, request, pk):
-        revision = self._revision(request, pk)
-        form = self._form(request, revision, request.POST)
-        if not form.is_valid():
-            return self._render(request, revision, form, status=400)
-        try:
-            association = activation.activate(
-                request.user, revision, form.hardware_type
-            )
-        except ValidationError as exc:
-            form.add_error(None, exc.messages)
-            return self._render(request, revision, form, status=400)
-        except activation.ActivationRejected as exc:
-            form.add_error(None, str(exc))
-            return self._render(request, revision, form, status=409)
-        messages.success(
+        return render(
             request,
-            _("{type} now shows {revision}.").format(
-                type=association.hardware_type.full_name, revision=revision
-            ),
+            "netbox_device_view/artwork_activate.html",
+            {
+                "object": revision,
+                "form": forms.ActivateRevisionForm(
+                    user=request.user, revision=revision
+                ),
+            },
         )
-        # The association page needs view permission on it; the revision page needs none more.
-        if (
-            models.Association.objects.restrict(request.user, "view")
-            .filter(pk=association.pk)
-            .exists()
-        ):
-            return redirect(association.get_absolute_url())
-        return redirect(revision.get_absolute_url())
+
+
+class AssociationReviewView(ActivationPermissionMixin, GetReturnURLMixin, View):
+    """Review the impact of a selection of (type, revision) pairs, and activate it."""
+
+    template_name = "netbox_device_view/association_review.html"
+    default_return_url = "plugins:netbox_device_view:association_list"
+
+    def get(self, request):
+        form = forms.ReviewForm(request.GET, user=request.user)
+        context = {
+            "form": form,
+            "return_url": self.get_return_url(request),
+            "hidden_message": review.HIDDEN,
+            "unstable_message": review.UNSTABLE,
+        }
+        if not form.is_valid():
+            return render(request, self.template_name, context, status=400)
+        if form.pairs:
+            context["review"] = review.build(request.user, form.pairs)
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        try:
+            associations = review.apply(request.user, request.POST.get("token", ""))
+        except review.ActivationRejected as exc:
+            return render(
+                request,
+                self.template_name,
+                {
+                    "error": str(exc),
+                    "return_url": self.get_return_url(request),
+                    "review_url": request.get_full_path(),
+                },
+                status=409,
+            )
+        for association in associations:
+            messages.success(
+                request,
+                _("{type} now shows {revision}.").format(
+                    type=association.hardware_type.full_name,
+                    revision=association.revision,
+                ),
+            )
+        return redirect(self.get_return_url(request))
+
+
+class ReviewUpdate(ActivationAction):
+    name = "review_update"
+    label = _("Review update")
+    multi = True
+    template_name = "netbox_device_view/buttons/review_update.html"
+
+
+class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, View):
+    """Open the review of the selected associations, each with the newest revision of its definition."""
+
+    default_return_url = "plugins:netbox_device_view:association_list"
+
+    def post(self, request):
+        queryset = models.Association.objects.restrict(request.user, "view")
+        if request.POST.get("_all"):
+            queryset = filtersets.AssociationFilterSet(
+                request.GET, queryset, request=request
+            ).qs
+        else:
+            pks = {
+                pk
+                for pk in map(_parse_pk, request.POST.getlist("pk"))
+                if pk is not None
+            }
+            queryset = queryset.filter(pk__in=pks)
+        count = queryset.count()
+        if not count:
+            messages.warning(request, _("Select one or more associations."))
+            return redirect(self.get_return_url(request))
+        if count > review.MAX_PAIRS:
+            messages.error(
+                request,
+                _("Select at most {count} associations in one review.").format(
+                    count=review.MAX_PAIRS
+                ),
+            )
+            return redirect(self.get_return_url(request))
+        associations = list(
+            queryset.select_related("device_type", "module_type", "revision").defer(
+                "revision__manifest"
+            )
+        )
+        # The newest revision of each definition; the review checks that the user can view it.
+        newest = {
+            revision.definition_id: revision
+            for revision in models.DefinitionRevision.objects.filter(
+                definition__in={a.revision.definition_id for a in associations}
+            )
+            .order_by("definition_id", "-created", "pk")
+            .distinct("definition_id")
+            .only("pk", "definition_id")
+        }
+        pairs, current = [], []
+        for association in associations:
+            candidate = newest[association.revision.definition_id]
+            if candidate.pk == association.revision_id:
+                current.append(association.pk)
+            else:
+                pairs.append((association.hardware_type, candidate))
+        return redirect(
+            forms.review_url(
+                pairs, current=current, return_url=self.get_return_url(request)
+            )
+        )
+
+
+class RollBack(ObjectAction):
+    name = "rollback"
+    label = _("Roll back")
+    template_name = "netbox_device_view/buttons/rollback.html"
+
+    @classmethod
+    def render(cls, context, obj, **kwargs):
+        # AssociationView gives the link only to a user who can change the association.
+        if not context.get("rollback_url"):
+            return ""
+        return super().render(context, obj, url=context["rollback_url"], **kwargs)
 
 
 class AssociationListView(generic.ObjectListView):
@@ -496,7 +590,7 @@ class AssociationListView(generic.ObjectListView):
     table = tables.AssociationTable
     filterset = filtersets.AssociationFilterSet
     filterset_form = forms.AssociationFilterForm
-    actions = ()
+    actions = (ReviewUpdate,)
 
 
 class AssociationView(generic.ObjectView):
@@ -505,7 +599,27 @@ class AssociationView(generic.ObjectView):
         "module_type__manufacturer",
         "revision__definition",
     )
-    actions = (DeleteObject,)
+    actions = (RollBack, DeleteObject)
+
+    def get_extra_context(self, request, instance):
+        previous = review.previous_revision(instance)
+        if previous is None or not (
+            models.DefinitionRevision.objects.restrict(request.user, "view")
+            .filter(pk=previous.pk)
+            .exists()
+        ):
+            return {"previous_revision": None, "rollback_url": None}
+        rollback_url = None
+        if (
+            models.Association.objects.restrict(request.user, "change")
+            .filter(pk=instance.pk)
+            .exists()
+        ):
+            rollback_url = forms.review_url(
+                [(instance.hardware_type, previous)],
+                return_url=instance.get_absolute_url(),
+            )
+        return {"previous_revision": previous, "rollback_url": rollback_url}
 
 
 class AssociationDeleteView(generic.ObjectDeleteView):
@@ -584,15 +698,59 @@ class BindingOverrideDeleteView(generic.ObjectDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
 
 
-class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
+class ScopedRowBulkDeleteView(generic.BulkDeleteView):
+    """Delete several overrides or pins with the bulk lock of their writers."""
+
+    def post(self, request, **kwargs):
+        with models.write_transaction(self.queryset.model) as using:
+            lock_bulk_writes(using)
+            return super().post(request, **kwargs)
+
+
+class BindingOverrideBulkDeleteView(ScopedRowBulkDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
     filterset = filtersets.BindingOverrideFilterSet
     table = tables.BindingOverrideTable
 
-    def post(self, request, **kwargs):
-        with models.BindingOverride.writing() as using:
-            lock_bulk_writes(using)
-            return super().post(request, **kwargs)
+
+class InstancePinListView(generic.ObjectListView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    table = tables.InstancePinTable
+    filterset = filtersets.InstancePinFilterSet
+    filterset_form = forms.InstancePinFilterForm
+    actions = (AddObject, BulkExport, BulkDelete)
+
+
+class InstancePinView(generic.ObjectView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    actions = (EditObject, DeleteObject)
+
+    def get_extra_context(self, request, instance):
+        field = instance._meta.get_field(instance.scope_field)
+        return {"instance_type": capfirst(field.verbose_name)}
+
+
+class InstancePinEditView(generic.ObjectEditView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    form = forms.InstancePinForm
+
+    def get_object(self, **kwargs):
+        obj = super().get_object(**kwargs)
+        # The checks of a pin name its instance, so a hidden instance hides the pin.
+        if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
+            raise Http404
+        return obj
+
+
+class InstancePinDeleteView(generic.ObjectDeleteView):
+    # InstancePin.delete() takes the type lock.
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+
+
+class InstancePinBulkDeleteView(ScopedRowBulkDeleteView):
+    queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
+    filterset = filtersets.InstancePinFilterSet
+    table = tables.InstancePinTable
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):

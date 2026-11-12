@@ -45,8 +45,7 @@ from ..details import (
     details_id,
     resolution,
 )
-from ..models import TYPE_SCOPES, Association, DefinitionRevision
-from .manifest import MODULE_KIND
+from ..models import DefinitionRevision, active_revisions
 from .overrides import connector_bindings, part_overrides
 from .placement import Rect, fit, place, transform_rect
 from .schematic import layout
@@ -239,6 +238,8 @@ class PlacedModule:
     prefix: str
     # The connectors of its artwork, or of its schematic: one for each component.
     connectors: tuple[Connector, ...]
+    # The connectors of its revision, also when it shows as a schematic; none without a revision.
+    revision_connectors: tuple[Connector, ...]
     # The ids of the module face or schematic that the group draws, without the prefix.
     ids: frozenset[str]
     warnings: tuple[ArtworkWarning, ...]
@@ -246,6 +247,11 @@ class PlacedModule:
     @property
     def label(self):
         return part_label(self.module)
+
+    @property
+    def damaged(self) -> bool:
+        """Return True when a stored file of its revision is damaged, so it shows as a schematic."""
+        return any(w.code == WarningCode.DAMAGED_ARTWORK for w in self.warnings)
 
     def connector_id(self, key) -> str | None:
         return self.prefix + key if key in self.ids else None
@@ -374,25 +380,16 @@ class Part:
         return nodes(None)
 
 
-def active_revisions(kind, type_ids) -> dict[int, DefinitionRevision]:
-    """Return {type id: active revision} for the device types or module types (by definition ``kind``) that have one."""
-    scope = TYPE_SCOPES[kind]
-    # Rendering needs no permission on the association or the revision.
-    return {
-        scope.id_of(association): association.revision
-        for association in Association.objects.filter(
-            scope.among(type_ids)
-        ).select_related("revision__definition")
-    }
-
-
-def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
+def resolve_device(
+    device, revision, user, view=OVERVIEW, plain=False, selection=None
+) -> Part:
     """Return the artwork Part of ``device`` with the components and modules that ``user`` can view.
 
     The connectors bind with the overrides of each part and its type. A
-    ``plain`` face has no class, links or marks.
+    ``plain`` face has no class, links or marks. A ``selection`` gives the
+    revisions of the types of a reviewed activation: see active_revisions().
     """
-    composer = _Composer(device, user, plain)
+    composer = _Composer(device, user, plain, selection)
     connectors = composer.connectors(revision, device)
     part_id = f"dv-{view}-d{device.pk}"
     data = _read_faces(revision)
@@ -417,13 +414,14 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     )
 
 
-def resolve_schematic(device, user, view=OVERVIEW, plain=False) -> Part:
+def resolve_schematic(device, user, view=OVERVIEW, plain=False, selection=None) -> Part:
     """Return the schematic Part of ``device``: one face with the components and module bays that ``user`` can view.
 
     A slot draws its installed module: its artwork scaled to fit, or its own
-    schematic. A ``plain`` face has no class, links or marks.
+    schematic. A ``plain`` face has no class, links or marks. A ``selection``
+    is as for resolve_device().
     """
-    composer = _Composer(device, user, plain)
+    composer = _Composer(device, user, plain, selection)
     part_id = f"dv-{view}-d{device.pk}"
     # A type can have a height of 0 U or less than 1 U.
     height = max(float(device.device_type.u_height), 1) * RACK_UNIT
@@ -446,13 +444,17 @@ def resolve_schematic(device, user, view=OVERVIEW, plain=False) -> Part:
 
 
 def _read_faces(revision) -> dict[str, bytes] | None:
-    """Return {face: SVG bytes} of a revision, or None when a stored file is damaged."""
+    """Return {face: SVG bytes} of a revision, or None when a stored file is damaged or missing."""
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
     try:
-        return {
-            face: read_blob(blobs[revision.manifest["faces"][face]["file"]])
-            for face in revision.face_names
-        }
+        faces = {}
+        for face in revision.face_names:
+            path = revision.manifest["faces"][face]["file"]
+            if path not in blobs:
+                # A concurrent delete of the revision removes its files.
+                raise DamagedBlob(f"{path} is not a file of the revision.")
+            faces[face] = read_blob(blobs[path])
+        return faces
     except DamagedBlob as exc:
         logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
         return None
@@ -479,7 +481,7 @@ class _Scope:
 class _Composer:
     """Draw the faces of one device, with each installed module that the user can view in its bay."""
 
-    def __init__(self, device, user, plain):
+    def __init__(self, device, user, plain, selection):
         self.device = device
         self.plain = plain
         self.states = device_components(device, user, BINDABLE_MODELS)
@@ -510,9 +512,8 @@ class _Composer:
             if bay.module_id in by_pk:
                 bay.module = by_pk[bay.module_id]
             self.installed[(bay.module_id, bay.name)] = module
-        self.revisions = active_revisions(
-            MODULE_KIND, {module.module_type_id for module in modules}
-        )
+        # {module pk: revision}
+        self.revisions = active_revisions(modules, selection)
         self.overrides = part_overrides([device, *modules])
         self.faces = {}
         self.modules = []
@@ -678,7 +679,7 @@ class _Composer:
         ``others`` are the later bay keys that name the same module bay; they
         draw nothing. In a ``slot`` of a schematic, artwork is scaled to fit.
         """
-        revision = self.revisions.get(module.module_type_id)
+        revision = self.revisions.get(module.pk)
         inner = _Scope(
             module,
             f"{scope.part_id}-m{module.pk}",
@@ -767,6 +768,7 @@ class _Composer:
                 element_id=element_id,
                 prefix=prefix,
                 connectors=connectors,
+                revision_connectors=artwork_connectors,
                 ids=ids,
                 warnings=tuple(warnings),
             ),

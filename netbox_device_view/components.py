@@ -224,6 +224,11 @@ def _peer_querysets():
     return [model.objects.select_related("device", "cable") for model in LAYOUT_MODELS]
 
 
+def findable(model) -> Q:
+    """Return the filter of the components of ``model`` that a binding can find, by the fields of the component."""
+    return ~Q(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
+
+
 def _queryset(model, device, user):
     queryset = (
         model.objects.restrict(user, "view")
@@ -231,7 +236,7 @@ def _queryset(model, device, user):
         .filter(
             Q(module__isnull=True) | Q(module__in=Module.objects.restrict(user, "view"))
         )
-        .exclude(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
+        .filter(findable(model))
         # The details of a port name its module: the bay and the type.
         .select_related("cable", "module__module_bay", "module__module_type")
         .prefetch_related(

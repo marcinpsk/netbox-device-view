@@ -10,7 +10,7 @@ from dcim.models import Interface, Module
 from netbox_device_view import NetBoxDeviceViewConfig, datasource_import
 from netbox_device_view.api import device_artwork, rendered_layout
 from netbox_device_view.api.rendered_layout import UnavailableReason
-from netbox_device_view.artwork import limits, placement, render
+from netbox_device_view.artwork import limits, placement, render, review
 from netbox_device_view.artwork.manifest import MAX_BINDINGS
 from netbox_device_view.artwork.render import MISSING, Binding
 from netbox_device_view.forms import DataSourceImportSourceForm
@@ -66,6 +66,10 @@ MIB = 1024 * 1024
         f"An override has the schema of the `bindings` of a manifest connector: 0 to {MAX_BINDINGS} bindings",
         f"the bay differ by more than {placement.SIZE_TOLERANCE} mm. The module still shows.",
         f"A module is more than {render.MAX_MODULE_DEPTH} modules deep",
+        f"A review holds {review.MAX_PAIRS} types at most.",
+        f"Select {review.MAX_PAIRS} associations at most.",
+        f"The token is valid for {review.REVIEW_MAX_AGE_SECONDS // 60} minutes",
+        f'the review shows only "{review.HIDDEN}"',
     ],
 )
 def test_artwork_page_states_the_code_limits(statement):
@@ -173,6 +177,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         element_id="dv-a-d1-m1",
         prefix="",
         connectors=(),
+        revision_connectors=(),
         ids=frozenset(),
         warnings=(),
     )
