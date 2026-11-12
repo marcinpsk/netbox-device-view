@@ -392,7 +392,7 @@ def resolve_device(
     composer = _Composer(device, user, plain, selection)
     connectors = composer.connectors(revision, device)
     part_id = f"dv-{view}-d{device.pk}"
-    data = _read_faces(revision)
+    data = read_faces(revision)
     if data is None:
         return Part(device, DAMAGED, revision, part_id, (), connectors)
     faces = tuple(
@@ -443,7 +443,7 @@ def resolve_schematic(device, user, view=OVERVIEW, plain=False, selection=None) 
     )
 
 
-def _read_faces(revision) -> dict[str, bytes] | None:
+def read_faces(revision) -> dict[str, bytes] | None:
     """Return {face: SVG bytes} of a revision, or None when a stored file is damaged or missing."""
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
     try:
@@ -990,7 +990,7 @@ class _Composer:
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
-            self.faces[revision.pk] = _read_faces(revision)
+            self.faces[revision.pk] = read_faces(revision)
         return self.faces[revision.pk]
 
     def body(self, group, part, classes):
