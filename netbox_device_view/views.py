@@ -544,16 +544,10 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
                 "revision__manifest"
             )
         )
-        # The newest revision of each definition; the review checks that the user can view it.
-        newest = {
-            revision.definition_id: revision
-            for revision in models.DefinitionRevision.objects.filter(
-                definition__in={a.revision.definition_id for a in associations}
-            )
-            .order_by("definition_id", "-created", "pk")
-            .distinct("definition_id")
-            .only("pk", "definition_id")
-        }
+        # The review checks that the user can view the newest revision.
+        newest = models.newest_revisions(
+            {a.revision.definition_id for a in associations}
+        )
         pairs, current = [], []
         for association in associations:
             candidate = newest[association.revision.definition_id]
