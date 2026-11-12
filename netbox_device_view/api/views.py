@@ -1,6 +1,9 @@
 from collections.abc import Mapping
 
 from dcim.models import Device
+from django.core.exceptions import ValidationError
+from django.db import router, transaction
+from django.http import Http404
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import mixins, status
@@ -12,10 +15,18 @@ from rest_framework.views import APIView
 from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
-from ..filtersets import DefinitionRevisionFilterSet, DeviceViewFilterSet
+from ..filtersets import (
+    DefinitionRevisionFilterSet,
+    DeviceViewFilterSet,
+    VisualDefinitionFilterSet,
+)
 from ..forms import ArtworkSourceImportForm
 from .rendered_layout import compose_rendered_layout
-from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
+from .serializers import (
+    DefinitionRevisionSerializer,
+    DeviceViewSerializer,
+    VisualDefinitionSerializer,
+)
 
 
 class DeviceViewViewSet(NetBoxModelViewSet):
@@ -67,6 +78,35 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
     ).prefetch_related("files__blob", "imports__data_source")
     serializer_class = DefinitionRevisionSerializer
     filterset_class = DefinitionRevisionFilterSet
+
+
+class VisualDefinitionViewSet(NetBoxModelViewSet):
+    """Read definitions and transfer their keys; an import creates a definition."""
+
+    queryset = models.VisualDefinition.objects.select_related("key_owner")
+    serializer_class = VisualDefinitionSerializer
+    filterset_class = VisualDefinitionFilterSet
+    http_method_names = ("get", "put", "patch", "head", "options")
+
+    def update(self, request, *args, **kwargs):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            return super().update(request, *args, **kwargs)
+
+    def get_object_with_snapshot(self):
+        # Coerce as the later lookup does; its get_object_or_404 cannot catch a ValueError here.
+        try:
+            pk = models.VisualDefinition._meta.pk.to_python(
+                self.kwargs[self.lookup_field]
+            )
+        except ValidationError:
+            raise Http404 from None
+        models.VisualDefinition.lock([pk])
+        return super().get_object_with_snapshot()
+
+    def perform_bulk_update(self, objects, update_data, partial):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            models.VisualDefinition.lock(update_data)
+            return super().perform_bulk_update(objects, update_data, partial)
 
 
 def _error_response(exc: ArtworkError):

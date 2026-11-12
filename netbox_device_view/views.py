@@ -3,6 +3,7 @@ from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.db import router, transaction
 from django.db.models import Count, OuterRef, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -17,6 +18,7 @@ from netbox.object_actions import (
     BulkExport,
     BulkImport,
     DeleteObject,
+    EditObject,
     ObjectAction,
 )
 from netbox.views import generic
@@ -394,6 +396,40 @@ class DefinitionRevisionView(generic.ObjectView):
 
 class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
     queryset = models.DefinitionRevision.objects.all()
+
+
+class VisualDefinitionListView(generic.ObjectListView):
+    queryset = models.VisualDefinition.objects.select_related("key_owner").annotate(
+        revision_count=Count("revisions")
+    )
+    table = tables.VisualDefinitionTable
+    filterset = filtersets.VisualDefinitionFilterSet
+    filterset_form = forms.VisualDefinitionFilterForm
+    actions = ()
+
+
+class VisualDefinitionView(generic.ObjectView):
+    queryset = models.VisualDefinition.objects.select_related("key_owner")
+    actions = (EditObject,)
+
+    def get_extra_context(self, request, instance):
+        return {"revisions": instance.revisions.restrict(request.user, "view")}
+
+
+class VisualDefinitionEditView(generic.ObjectEditView):
+    """Transfer the key: the form changes only the owner."""
+
+    queryset = models.VisualDefinition.objects.all()
+    form = forms.VisualDefinitionForm
+
+    def post(self, request, *args, **kwargs):
+        with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
+            return super().post(request, *args, **kwargs)
+
+    def get_object(self, **kwargs):
+        if self.request.method == "POST":
+            models.VisualDefinition.lock([kwargs["pk"]])
+        return super().get_object(**kwargs)
 
 
 class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
