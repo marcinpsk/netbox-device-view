@@ -82,10 +82,48 @@
     display: inline;
 }
 
-.dv-art-focus-flood {
+.dv-art-flood-focus {
     flood-color: var(--bs-primary, #0d6efd);
 }
 
-.dv-art-occupied-flood {
-    flood-color: var(--bs-success, #2fb344);
+/* The marks take the colours of the NetBox theme; each mark also has its own pattern. */
+.dv-art-flood-cable-connected {
+    flood-color: var(--tblr-success);
+}
+
+.dv-art-flood-cable-planned {
+    flood-color: var(--tblr-warning);
+}
+
+.dv-art-flood-cable-decommissioning {
+    flood-color: var(--tblr-secondary);
+}
+
+.dv-art-flood-cable-other {
+    flood-color: var(--tblr-purple);
+}
+
+.dv-art-flood-marked {
+    flood-color: var(--tblr-info);
+}
+
+.dv-art-flood-unresolved {
+    flood-color: var(--tblr-gray-400);
+}
+
+.dv-art-flood-disabled {
+    flood-color: var(--tblr-danger);
+}
+
+.dv-art-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin-top: 0.25rem;
+}
+
+.dv-art-swatch {
+    width: 2rem;
+    height: 1.25rem;
+    vertical-align: middle;
 }

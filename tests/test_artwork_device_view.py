@@ -364,8 +364,12 @@ class ArtworkTabTests(ArtworkTestCase):
         self.activate()
         link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
         [own] = link[1].iter(f"{{{SVG_NS}}}title")
-        self.assertEqual(link[0].text, "Interface eth1")
-        self.assertEqual(own.text, "Port 1 · Interface eth1")
+        self.assertEqual(
+            link[0].text, "Interface eth1: enabled, no cable, path incomplete"
+        )
+        self.assertEqual(
+            own.text, "Port 1 · Interface eth1: enabled, no cable, path incomplete"
+        )
 
     def test_a_name_with_characters_that_xml_does_not_allow_renders(self):
         # NetBox accepts these characters in a component name; lxml refuses them.
@@ -379,7 +383,9 @@ class ArtworkTabTests(ArtworkTestCase):
         self.activate()
         link = links(faces(self.tab())[0])[f"dv-o-d{self.device.pk}-front-con-eth1"]
         self.assertEqual(link.get("href"), self.eth1.get_absolute_url())
-        self.assertEqual(link[0].text, "Interface eth1")
+        self.assertEqual(
+            link[0].text, "Interface eth1: enabled, no cable, path incomplete"
+        )
 
     def test_a_connector_link_shows_a_focus_ring_around_the_connector(self):
         self.activate()
@@ -414,7 +420,7 @@ class ArtworkTabTests(ArtworkTestCase):
             [-400, 0, 440, 44],
         )
         self.assertEqual(
-            ring.find(f"{{{SVG_NS}}}feFlood").get("class"), "dv-art-focus-flood"
+            ring.find(f"{{{SVG_NS}}}feFlood").get("class"), "dv-art-flood-focus"
         )
         # The ring draws only the outline; the link draws the connector.
         self.assertNotIn("SourceGraphic", etree.tostring(ring, encoding="unicode"))
@@ -628,9 +634,9 @@ class CableOccupancyTests(ArtworkTestCase):
 
     def test_a_cabled_connector_shows_its_occupancy(self):
         front, link = self.link()
-        self.assertEqual(link.get("class"), "dv-art-connector dv-art-occupied")
+        self.assertEqual(link.get("class"), "dv-art-connector dv-art-cable-connected")
         self.assertIn(link.get("filter")[5:-1], ids(front))
-        self.assertIn("cable attached", link.find(f"{{{SVG_NS}}}title").text)
+        self.assertIn("cable connected", link.find(f"{{{SVG_NS}}}title").text)
 
     def test_a_connector_without_a_cable_shows_no_occupancy(self):
         Cable.objects.all().delete()
@@ -686,6 +692,217 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(region, [0, 0, 1760, 88])
         self.assertAlmostEqual(x_radius, radius * 4, places=3)
         self.assertAlmostEqual(y_radius, radius * 2, places=3)
+
+
+def wrapper(face, ident):
+    """Return the element that wraps the connector ``ident``: its link, or its unresolved group."""
+    [element] = [element for element in face.iter() if element.get("id") == ident]
+    return element.getparent()
+
+
+def mark_filter(face, wrapped):
+    """Return the filter that marks a wrapped connector, or None."""
+    reference = wrapped.get("filter")
+    if reference is None:
+        return None
+    [found] = [
+        element
+        for element in face.iter(f"{{{SVG_NS}}}filter")
+        if element.get("id") == reference[5:-1]
+    ]
+    return found
+
+
+def shape(found):
+    """Return the primitives of a mark filter without their colour."""
+    return [
+        (
+            etree.QName(element).localname,
+            {
+                name: value
+                for name, value in element.attrib.items()
+                if name not in ("class", "flood-color")
+            },
+        )
+        for element in found.iter()
+    ]
+
+
+class ConnectivityFactsTests(ArtworkTestCase):
+    def setUp(self):
+        super().setUp()
+        self.peer = self.make_device(
+            "server1",
+            DeviceType.objects.create(
+                manufacturer=self.manufacturer, model="Server", slug="server"
+            ),
+        )
+        self.peer_eth0 = Interface.objects.create(
+            device=self.peer, name="eth0", type="1000base-t"
+        )
+
+    def cable(self, status="connected", peer=None):
+        Cable(
+            a_terminations=[self.eth1],
+            b_terminations=[peer or self.peer_eth0],
+            status=status,
+        ).save()
+
+    def connector(self, key="con-eth1", face=0):
+        """Return (class, filter, title) of a connector on the page."""
+        page = faces(self.tab())[face]
+        wrapped = wrapper(page, f"dv-o-d{self.device.pk}-{page_face(face)}-{key}")
+        return (
+            wrapped.get("class"),
+            mark_filter(page, wrapped),
+            wrapped.find(f"{{{SVG_NS}}}title").text,
+        )
+
+    def test_a_cabled_disabled_interface_shows_the_cable_and_the_disabled_state(self):
+        self.activate()
+        Interface.objects.filter(pk=self.eth1.pk).update(enabled=False)
+        self.cable()
+        classes, found, title = self.connector()
+        self.assertEqual(
+            classes, "dv-art-connector dv-art-cable-connected dv-art-disabled"
+        )
+        self.assertEqual(
+            title,
+            "Interface eth1: disabled, cable connected, path complete, "
+            "peer server1 | eth0",
+        )
+        operators = [
+            element.get("operator")
+            for element in found.iter(f"{{{SVG_NS}}}feMorphology")
+        ]
+        # The cable ring grows outside the connector; the disabled ring is inside it.
+        self.assertIn("dilate", operators)
+        self.assertIn("erode", operators)
+
+    def test_a_planned_cable_and_a_marked_connected_port_are_their_own_facts(self):
+        self.activate()
+        self.cable("planned")
+        PowerPort.objects.filter(pk=self.psu.pk).update(mark_connected=True)
+        classes, _, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-cable-planned")
+        self.assertIn("cable planned", title)
+        classes, found, title = self.connector("con-psu", face=1)
+        self.assertEqual(classes, "dv-art-connector dv-art-marked")
+        self.assertEqual(
+            title, "Power port PSU1: no cable, marked connected, path incomplete"
+        )
+        self.assertIsNotNone(found)
+
+    def test_a_cable_status_that_netbox_configuration_adds_shows_a_cable(self):
+        # NetBox can add cable statuses (FIELD_CHOICES).
+        self.activate()
+        self.cable()
+        Cable.objects.update(status="inspection")
+        classes, found, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-cable-other")
+        self.assertIsNotNone(found)
+        self.assertIn("cable inspection", title)
+
+    def test_path_completeness_is_separate_from_the_cable(self):
+        self.activate()
+        self.cable(
+            peer=FrontPort.objects.create(device=self.peer, name="F1", type="lc")
+        )
+        classes, _, title = self.connector()
+        self.assertEqual(classes, "dv-art-connector dv-art-cable-connected")
+        self.assertIn("cable connected, path incomplete", title)
+
+    def test_each_mark_has_its_own_pattern_not_only_its_colour(self):
+        self.activate()
+        cases = {
+            "cable connected": lambda: self.cable("connected"),
+            "cable planned": lambda: self.cable("planned"),
+            "cable decommissioning": lambda: self.cable("decommissioning"),
+            "cable inspection": lambda: self.cable("inspection"),
+            "marked connected": lambda: Interface.objects.filter(
+                pk=self.eth1.pk
+            ).update(mark_connected=True),
+            "disabled": lambda: Interface.objects.filter(pk=self.eth1.pk).update(
+                enabled=False
+            ),
+        }
+        shapes = {}
+        for name, setup in cases.items():
+            Cable.objects.all().delete()
+            Interface.objects.filter(pk=self.eth1.pk).update(
+                enabled=True, mark_connected=False
+            )
+            self.eth1.refresh_from_db()
+            setup()
+            _, found, title = self.connector()
+            self.assertIn(name, title)
+            shapes[name] = repr(shape(found))
+        # The filter id and region are per connector, so the unresolved case uses the same connector.
+        Cable.objects.all().delete()
+        self.eth1.delete()
+        _, found, _ = self.connector()
+        shapes["unresolved"] = repr(shape(found))
+        self.assertEqual(len(set(shapes.values())), len(shapes), shapes)
+
+    def test_a_missing_binding_does_not_look_like_a_port_without_a_cable(self):
+        self.activate()
+        classes, found, title = self.connector("con-psu", face=1)
+        self.assertEqual(
+            (classes, found, title),
+            ("dv-art-connector", None, "Power port PSU1: no cable, path incomplete"),
+        )
+        self.psu.delete()
+        page = faces(self.tab())[1]
+        wrapped = wrapper(page, f"dv-o-d{self.device.pk}-rear-con-psu")
+        self.assertEqual(etree.QName(wrapped).localname, "g")
+        self.assertEqual(wrapped.get("class"), "dv-art-unresolved")
+        self.assertIsNotNone(mark_filter(page, wrapped))
+        self.assertEqual(
+            wrapped.find(f"{{{SVG_NS}}}title").text, "No component: Power port PSU1"
+        )
+
+    def test_two_found_bindings_are_unresolved(self):
+        files = {
+            **FILES,
+            "manifest.yaml": MANIFEST.replace(
+                "      - {component: interface, name: eth1}\n",
+                "      - {component: interface, name: eth1}\n"
+                "      - {component: consoleport, name: eth1}\n",
+            ),
+        }
+        admin = User.objects.get(username="admin")
+        [imported] = import_bundle(
+            admin, "two.zip", io.BytesIO(bundle(definition("ACME/SW-24", files)))
+        )
+        Association.objects.create(
+            device_type=self.device_type, revision=imported.revision
+        )
+        classes, found, title = self.connector()
+        self.assertEqual(classes, "dv-art-unresolved")
+        self.assertIsNotNone(found)
+        self.assertEqual(
+            title, "Two or more components: Interface eth1, Console port eth1"
+        )
+
+    def test_the_page_has_a_legend_of_every_mark(self):
+        self.activate()
+        content = self.tab()
+        legend = content.split('class="dv-art-legend ', 1)[1].split("</ul>", 1)[0]
+        for label in (
+            "Cable connected",
+            "Cable planned",
+            "Cable decommissioning",
+            "Cable with another status",
+            "Marked connected",
+            "Disabled",
+            "No component found",
+        ):
+            self.assertIn(label, legend)
+        self.assertEqual(legend.count("<svg"), 7)
+
+
+def page_face(index):
+    return ("front", "rear")[index]
 
 
 class DamagedArtworkTests(ArtworkTestCase):
