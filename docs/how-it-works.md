@@ -58,7 +58,7 @@ In CSS mode, a device outside a virtual chassis shows its front ports and rear p
 Each port of the panel has details: the component, its module, enabled or disabled, the cable and its status, marked connected, the path state and the peers, each with a link, and a link to the trace. The details show only the objects that you can view.
 
 - Click **Details** above the panel. While the button is on, a click or a tap on a port opens its details instead of the component.
-- Focus a port with the keyboard and press **Space**. **Enter** opens the component.
+- Focus a port with the keyboard and press **Space**. **Enter** opens the component, or its details while **Details** is on.
 - A click on a port with a shared stylename opens its details, because the port links to no component.
 
 In an SVG layout, a key that no component has is an empty dotted outline. Its details say that no component has the key.
