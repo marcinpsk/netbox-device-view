@@ -6,6 +6,7 @@ import tempfile
 import time
 from unittest import mock
 
+from core.models import ObjectType
 from dcim.models import (
     ConsolePort,
     ConsoleServerPort,
@@ -22,12 +23,14 @@ from dcim.models import (
 )
 from django.contrib.messages import get_messages
 from django.core import signing
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.db.models.signals import post_init
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils.http import urlencode
+from rest_framework.test import APIClient
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork import pins, review
@@ -48,15 +51,19 @@ from .permissions import grant
 from .test_artwork_activation import (
     ACTIVATE_URL,
     ASSOCIATION_URL,
+    DELETE_URL,
     LIST_URL,
     NEWER,
     REVIEW_AGAIN,
     REVIEW_URL,
+    REVISION_URL,
     ActivationTestCase,
     review_url,
     token_of,
 )
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
+from .test_artwork_import import API_UPLOAD, IMPORT_URL
+from .test_artwork_source_import import API_SOURCE_IMPORT, SOURCE_IMPORT_URL
 from .test_binding_override_activation import WITHOUT_ETH1
 from .test_module_activation import WITHOUT_P1
 
@@ -677,6 +684,12 @@ class VisibilityTests(ReviewTestCase):
         self.sw2 = self.make_device("sw2")
         self.install()
         InstancePin.objects.create(device=self.sw2, revision=self.revision)
+        BindingOverride.objects.create(
+            device_type=self.device_type,
+            definition=self.revision.definition,
+            connector_key="con-psu",
+            bindings=[],
+        )
 
     def assertHidden(self, response):
         self.assertEqual(response.status_code, 200)
@@ -706,6 +719,7 @@ class VisibilityTests(ReviewTestCase):
             (RearPort, {"pk": 0}),
             # The review shows the pin of sw2.
             (InstancePin, {"pk": 0}),
+            (BindingOverride, {"pk": 0}),
         ):
             with self.subTest(model=model.__name__):
                 permission = ObjectPermission.objects.get(
@@ -872,6 +886,117 @@ class TokenTests(ReviewTestCase):
                 change()
 
                 self.assertRefused(self.apply(), REVIEW_AGAIN)
+
+    def test_a_permission_change_after_the_review_needs_a_new_review(self):
+        for model, constraints in (
+            # The change permission does not cover the association any more.
+            (Association, {"pk": 0}),
+            # The reviewer cannot view the candidate revision any more.
+            (DefinitionRevision, {"pk": self.revision.pk}),
+            # The reviewer cannot view the device type any more.
+            (DeviceType, {"pk": 0}),
+        ):
+            with self.subTest(model=model.__name__):
+                self.token = token_of(self.client.get(self.url))
+                self.assertTrue(self.token)
+                permissions = ObjectPermission.objects.filter(
+                    name__startswith=f"{model._meta.label_lower} "
+                )
+                permissions.update(constraints=constraints)
+                try:
+                    self.assertRefused(self.apply(), REVIEW_AGAIN)
+                finally:
+                    permissions.update(constraints=None)
+
+    def test_an_activation_without_add_and_change_permissions_is_forbidden(self):
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.association "
+        ).update(actions=["view"])
+
+        self.assertEqual(self.apply().status_code, 403)
+        self.association.refresh_from_db()
+        self.assertEqual(self.association.revision, self.revision)
+
+
+class ViewerAuthorityTests(ActivationTestCase):
+    """A user who can view every object of NetBox and of the plugin, and has no other permission."""
+
+    def setUp(self):
+        super().setUp()
+        view_all = ObjectPermission.objects.create(
+            name="view everything", actions=["view"]
+        )
+        view_all.users.add(self.user)
+        view_all.object_types.set(
+            ObjectType.objects.filter(
+                app_label__in=("core", "dcim", "netbox_device_view")
+            )
+        )
+        self.association = Association.objects.create(
+            device_type=self.device_type, revision=self.revision
+        )
+        self.newer = self.import_files(NEWER)
+
+    def test_viewing_every_object_gives_no_import_or_activation_authority(self):
+        url = review_url((self.newer, self.device_type))
+        activator = Client()
+        activator.force_login(self.admin)
+        # A valid token of a user who can activate, sent by the viewer.
+        token = token_of(activator.get(url))
+        self.assertTrue(token)
+        api = APIClient()
+        api.force_authenticate(self.user)
+        archive = bundle(definition("ACME/SW-48", FILES))
+        forbidden = {
+            "the import page": lambda: self.client.get(reverse(IMPORT_URL)),
+            "an import": lambda: self.client.post(
+                reverse(IMPORT_URL),
+                {"bundle": SimpleUploadedFile("viewer.zip", archive)},
+            ),
+            "an API import": lambda: api.post(
+                reverse(API_UPLOAD),
+                {"bundle": SimpleUploadedFile("viewer.zip", archive)},
+                format="multipart",
+            ),
+            "the source import page": lambda: self.client.get(
+                reverse(SOURCE_IMPORT_URL)
+            ),
+            "an API source import": lambda: api.post(
+                reverse(API_SOURCE_IMPORT), {}, format="json"
+            ),
+            "the Activate page": lambda: self.client.get(
+                reverse(ACTIVATE_URL, args=[self.newer.pk])
+            ),
+            "the review": lambda: self.client.get(url),
+            "an activation": lambda: self.client.post(url, {"token": token}),
+            "a review update": lambda: self.client.post(
+                reverse("plugins:netbox_device_view:association_review_update"),
+                {"pk": [self.association.pk]},
+            ),
+            "an association delete": lambda: self.client.post(
+                reverse(DELETE_URL, args=[self.association.pk]), {"confirm": True}
+            ),
+        }
+        for name, request in forbidden.items():
+            with self.subTest(name):
+                self.assertEqual(request().status_code, 403)
+        self.assertIsNone(
+            review.build(self.user, [review.Pair(self.device_type, self.newer)]).token
+        )
+        self.association.refresh_from_db()
+        self.assertEqual(self.association.revision, self.revision)
+        self.assertEqual(DefinitionRevision.objects.count(), 2)
+
+    def test_the_pages_offer_a_viewer_no_activation(self):
+        self.assertNotContains(
+            self.client.get(reverse(REVISION_URL, args=[self.newer.pk])),
+            reverse(ACTIVATE_URL, args=[self.newer.pk]),
+        )
+        self.assertNotContains(self.client.get(reverse(LIST_URL)), "Review update")
+        self.assertNotContains(
+            self.client.get(reverse(ASSOCIATION_URL, args=[self.association.pk])),
+            "Roll back",
+        )
 
 
 class EntryTests(ReviewTestCase):
