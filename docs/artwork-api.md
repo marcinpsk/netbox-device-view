@@ -78,6 +78,10 @@ The artwork needs no permission on the artwork association or the revision. Comp
             ],
             "warnings": []
           }
+        ],
+        "bays": [
+          {"parent_module_id": null, "bay_key": "bay-nm", "module_bay_id": 40, "face": "front", "state": "installed", "module_id": 31, "element_id": "dv-a-d12-m31"},
+          {"parent_module_id": null, "bay_key": "bay-psu", "module_bay_id": 41, "face": "front", "state": "not_recorded", "module_id": null, "element_id": "dv-a-d12-front--not-recorded-bay-psu"}
         ]
       },
       "panels": []
@@ -132,6 +136,7 @@ Active artwork comes before a layout. A member gets `"layout"` when its device t
 | `faces` | array | One entry per face in physical order: `name` (`front`, `rear`, …), `label`, and `svg`. |
 | `connectors` | array | One entry per connector of the manifest, sorted by key. |
 | `modules` | array | One entry per installed module that a face shows: see [Module](#module). |
+| `bays` | array | One entry per bay that a face or a schematic draws: see [Bay](#bay). |
 
 Each `svg` is the stored face, parsed and written again, with the [installed modules](artwork-bundles.md#module-bays) in its bays. It has only the elements of the [SVG profile](artwork-bundles.md#svg-profile): no links, scripts, classes or filters. Every `id` of the device face has the prefix `dv-a-d<device_id>-<face>-`. Every `id` of a module face has the prefix `dv-a-d<device_id>-m<module_id>-<face>-`, with one `-m<module_id>` part for each module on the placement path, for example `dv-a-d12-m31-m35-installed-` for a transceiver in a network module. Each reference uses the new id. Thus the faces of several members, and two modules of one type, can share one document. The root keeps its `viewBox` and has no `width` or `height`. Each module face is a nested `svg` element that keeps the `viewBox` of the module, in a group with the placement `transform`, so its percentage lengths keep their meaning.
 
@@ -170,16 +175,30 @@ Each fact is its own field, and no field combines them. A disabled interface wit
 |---|---|---|
 | `module_id`, `module_bay_id` | int, int | The installed module and its module bay. |
 | `parent_module_id` | int \| null | The module that has the bay. `null` for a bay of the device. |
-| `bay_key` | string | The bay key in the manifest of the parent. |
+| `bay_key` | string \| null | The bay key in the manifest of the parent. `null` for a slot of a schematic. |
 | `face` | string | The face of the device that shows the module. |
-| `representation` | string | `"artwork"`, or `"outline"`: an outline of the bay with the model of the module type, when the module type has no active artwork, a stored file of its revision is damaged, the placement is not a finite number, or the module is too deep. A client must accept `"schematic"`: a later version can draw a schematic of the module and its components. |
+| `representation` | string | `"artwork"`, or `"schematic"`: a schematic of the components and module bays of the module, generated at the size of the bay, when the module type has no active artwork, a stored file of its revision is damaged, the placement is not a finite number, or the module is too deep. This is the fact for missing artwork. |
 | `artwork` | object \| null | `definition_key`, `revision_id` and `digest` of the active revision of the module type. `null` without one. |
-| `placement` | object \| null | The bay in the coordinates of the device face: `x`, `y`, `width`, `height`, and `rotate`, the rotation of the module face in degrees. `null` when the bay or the placement is not a finite number. |
+| `placement` | object \| null | The bay in the coordinates of the device face: `x`, `y`, `width`, `height`, and `rotate`, the rotation of the module face in degrees. A schematic is not turned, so its `rotate` is 0. `null` when the bay or the placement is not a finite number. |
 | `element_id` | string \| null | The `id` of the group that draws the module in the `svg` of its face. `null` when the module is not drawn. |
-| `connectors` | array | The connectors of the module, as [Connector](#connector), with the `{module}` names resolved for this module. Empty without artwork. A module that is not drawn gives each connector `element_id: null`. |
+| `connectors` | array | The connectors of the module, as [Connector](#connector). For artwork, the connectors of its manifest, with the `{module}` names resolved for this module. For a schematic, one connector for each component of the module that the user can view: the key is `<type>-<id>`, for example `interface-12`, the face is `schematic`, and the label is the component name. A module that is not drawn gives each connector `element_id: null`. |
 | `warnings` | array | The [warnings](#warning) of the placement. |
 
-The list has the parents before their children, in the order of the bay keys. A module that the user cannot view, or a module in a module bay that the user cannot view, has no entry, and its bay shows no module. An empty bay has no entry.
+The list has the parents before their children, in the order of the bay keys. A module that the user cannot view, or a module in a module bay that the user cannot view, has no entry, and its bay is [not recorded](#bay). A schematic draws a slot only for each module bay that the user can view. A module in a slot of a schematic is scaled to fit the slot, and has `bay_key: null`.
+
+### Bay
+
+| Field | Type | Notes |
+|---|---|---|
+| `parent_module_id` | int \| null | The module that has the bay. `null` for a bay of the device. |
+| `bay_key` | string \| null | The bay key in the manifest of the parent. `null` for a slot of a schematic. |
+| `module_bay_id` | int \| null | The module bay. `null` when NetBox has no module bay of that name that the user can view. |
+| `face` | string | The face of the device that shows the bay. |
+| `state` | string | `"installed"`, or `"not_recorded"`: no module is recorded in the bay, or the user cannot view it. This is the fact for missing inventory. A cable on a port never adds a module. |
+| `module_id` | int \| null | The installed module. `null` when the bay is not recorded. |
+| `element_id` | string \| null | The `id` of the group that draws the module or the "not recorded" mark. `null` when the bay is not a finite number. |
+
+The list has each bay in drawing order: a bay of a parent before the bays of its module. A bay that two bay keys name is listed once, for the first key.
 
 ### Warning
 
@@ -191,9 +210,9 @@ The list has the parents before their children, in the order of the bay keys. A 
 | Code | Condition |
 |---|---|
 | `size_mismatch` | The width or the height of the turned module face and the bay differ by more than 1 mm. The module still shows. |
-| `placement_not_finite` | The bay rect, or the placement that the plugin computes from it, is not a finite number. When the bay rect is finite, the module shows as an outline. Otherwise it is not drawn. |
-| `damaged_artwork` | A stored file of the active revision of the module type is missing or does not match its digest. The module shows as an outline. |
-| `too_deep` | The module is more than 8 modules deep on its placement path. The module shows as an outline. |
+| `placement_not_finite` | The bay rect, or the placement that the plugin computes from it, is not a finite number. When the bay rect is finite, the module shows as a schematic. Otherwise it is not drawn. |
+| `damaged_artwork` | A stored file of the active revision of the module type is missing or does not match its digest. The module shows as a schematic. |
+| `too_deep` | The module is more than 8 modules deep on its placement path. The module shows as a schematic without its slots. |
 | `duplicate_bay` | Two or more bays of the parent name the module bay of the module after `{module}` resolves. The module shows only in the first bay key. |
 
 ---

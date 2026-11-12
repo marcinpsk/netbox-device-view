@@ -1,21 +1,32 @@
 """The artwork API lists each placed module from the same resolver as the Device View tab."""
 
+from dcim.models import Device, Interface, Module, ModuleBay, PowerPort
 from django.urls import reverse
 from lxml import etree
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
-from users.models import Token
+from users.models import Token, User
+
+from netbox_device_view.models import Association
 
 from .module_samples import CHASSIS_SVG
+from .permissions import grant
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, links
-from .test_module_composition import CompositionTestCase, activate_alias_revision
+from .test_module_composition import (
+    CompositionTestCase,
+    activate_alias_revision,
+    activate_unresolved_bay_revision,
+)
 
 
 class ModuleApiTestCase(CompositionTestCase):
     def setUp(self):
         super().setUp()
-        token = Token.objects.create(user=self.user)
+        self.authenticate(self.user)
+
+    def authenticate(self, user):
+        token = Token.objects.create(user=user)
         self.api = APIClient()
         self.api.credentials(
             HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
@@ -107,11 +118,11 @@ class ModuleEntryTests(ModuleApiTestCase):
             {"x": 120, "y": 2, "width": 30, "height": 40, "rotate": 90},
         )
 
-    def test_a_module_without_artwork_is_an_outline_without_connectors(self):
+    def test_a_module_without_artwork_or_components_is_an_empty_schematic(self):
         fan = self.modules()[self.inventory.fan.pk]
         self.assertEqual(
             (fan["representation"], fan["artwork"], fan["connectors"]),
-            ("outline", None, []),
+            ("schematic", None, []),
         )
         self.assertEqual(
             fan["element_id"], f"dv-a-d{self.device.pk}-m{self.inventory.fan.pk}"
@@ -152,6 +163,60 @@ class FaceAgreementTests(ModuleApiTestCase):
                 )
 
 
+class BayStateApiTests(ModuleApiTestCase):
+    def bay(self, parent):
+        [entry] = [
+            entry
+            for entry in self.artwork()["bays"]
+            if entry["parent_module_id"] == parent.pk
+        ]
+        return entry
+
+    def test_an_empty_schematic_slot_is_not_recorded_without_a_module_or_bay_key(
+        self,
+    ):
+        nm2 = self.inventory.nm2
+        Association.objects.filter(module_type=self.inventory.nm_type).delete()
+        slot = ModuleBay.objects.get(module=nm2)
+        self.assertEqual(
+            self.bay(nm2),
+            {
+                "parent_module_id": nm2.pk,
+                "bay_key": None,
+                "module_bay_id": slot.pk,
+                "face": "front",
+                "state": "not_recorded",
+                "module_id": None,
+                "element_id": (
+                    f"dv-a-d{self.device.pk}-m{nm2.pk}-schematic-slot-{slot.pk}"
+                ),
+            },
+        )
+
+    def test_an_installed_module_that_the_user_cannot_view_is_not_recorded(self):
+        nm1 = self.inventory.nm1
+        user = User.objects.create_user(username="partial")
+        for model in (Device, Interface, PowerPort, ModuleBay):
+            grant(user, model, "view")
+        grant(user, Module, "view", constraints={"id__in": [nm1.pk]})
+        self.authenticate(user)
+        self.assertEqual(list(self.modules()), [nm1.pk])
+        self.assertEqual(
+            self.bay(nm1),
+            {
+                "parent_module_id": nm1.pk,
+                "bay_key": "bay-slot",
+                "module_bay_id": self.inventory.sfp.module_bay_id,
+                "face": "front",
+                "state": "not_recorded",
+                "module_id": None,
+                "element_id": (
+                    f"dv-a-d{self.device.pk}-m{nm1.pk}-installed--not-recorded-bay-slot"
+                ),
+            },
+        )
+
+
 class ModuleWarningTests(ModuleApiTestCase):
     def test_a_size_mismatch_is_a_warning_of_the_module(self):
         self.store_face(
@@ -176,7 +241,7 @@ class ModuleWarningTests(ModuleApiTestCase):
         )
         self.assertEqual(nm2["representation"], "artwork")
 
-    def test_a_finite_bay_with_a_placement_that_is_not_finite_is_an_outline(self):
+    def test_a_finite_bay_with_a_placement_that_is_not_finite_is_a_schematic(self):
         self.store_face(
             "acme/ch-4",
             "front.svg",
@@ -193,7 +258,7 @@ class ModuleWarningTests(ModuleApiTestCase):
                 [warning["code"] for warning in nm2["warnings"]],
             ),
             (
-                "outline",
+                "schematic",
                 None,
                 f"dv-a-d{self.device.pk}-m{self.inventory.nm2.pk}",
                 ["placement_not_finite"],
@@ -231,4 +296,21 @@ class DuplicateBayApiTests(ModuleApiTestCase):
                 for entry in entries
             ],
             [("bay-alias", ["duplicate_bay"])],
+        )
+
+
+class UnresolvedBayApiTests(ModuleApiTestCase):
+    def test_a_bay_whose_module_tokens_do_not_fit_the_depth_has_no_entry(self):
+        activate_unresolved_bay_revision(self)
+        inventory = self.inventory
+        self.assertEqual(
+            [
+                (entry["parent_module_id"], entry["bay_key"], entry["state"])
+                for entry in self.artwork()["bays"]
+                if entry["parent_module_id"] is not None
+            ],
+            [
+                (inventory.nm1.pk, "bay-slot", "installed"),
+                (inventory.nm2.pk, "bay-slot", "not_recorded"),
+            ],
         )

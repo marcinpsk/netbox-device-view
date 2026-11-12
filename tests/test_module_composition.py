@@ -181,11 +181,22 @@ class PlacementTests(CompositionTestCase):
         self.assertEqual(art(sfp).get("transform"), "matrix(1 0 0 1 40 10)")
         self.assertIsNone(self.group(front, self.inventory.nm2, self.inventory.sfp))
 
-    def test_an_empty_bay_draws_nothing_more(self):
+    def test_an_empty_bay_shows_that_no_module_is_recorded(self):
         front = self.front()
         spare = front.find(f".//*[@id='dv-o-d{self.device.pk}-front-bay-spare']")
-        # The spare bay is the last element of the face, and nothing follows it.
-        self.assertIsNone(spare.getnext())
+        # Only the mark follows the spare bay, the last element of the face.
+        mark = spare.getnext()
+        self.assertEqual(
+            mark.get("id"), f"dv-o-d{self.device.pk}-front--not-recorded-bay-spare"
+        )
+        self.assertEqual(mark.get("class"), "dv-art-not-recorded")
+        self.assertIsNone(mark.getnext())
+        rect = mark.find(f"{{{SVG_NS}}}rect")
+        self.assertEqual(
+            tuple(rect.get(name) for name in ("x", "y", "width", "height")),
+            ("70", "4", "20", "36"),
+        )
+        self.assertEqual(mark.find(f"{{{SVG_NS}}}text").text, "not recorded")
         modules = [
             g
             for g in front.iter(G)
@@ -294,10 +305,10 @@ class LinkTests(CompositionTestCase):
         # The stroke stays inside the bay.
         self.assertAlmostEqual(width + stroke, 1, places=6)
 
-    def test_a_module_without_artwork_is_an_outline_with_its_name_and_link(self):
+    def test_a_module_without_artwork_is_a_schematic_with_its_name_and_link(self):
         group = self.group(self.front(), self.inventory.fan)
         [body] = group.findall(f"{{{SVG_NS}}}a")
-        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
+        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
         self.assertEqual(body.get("href"), self.inventory.fan.get_absolute_url())
         rect = body.find(f"{{{SVG_NS}}}rect")
         self.assertEqual(
@@ -309,7 +320,7 @@ class LinkTests(CompositionTestCase):
             body.find(f"{{{SVG_NS}}}title").text, "Module ACME FAN-1 in FAN"
         )
 
-    def test_an_outline_drops_the_characters_that_xml_does_not_allow(self):
+    def test_a_schematic_drops_the_characters_that_xml_does_not_allow(self):
         # NetBox accepts these characters in a model name; lxml refuses them.
         type(self.inventory.fan.module_type).objects.filter(
             pk=self.inventory.fan.module_type_id
@@ -397,7 +408,9 @@ class WarningTests(CompositionTestCase):
         self.assertIsNotNone(self.group(front, self.inventory.nm1))
         self.assertNotIn("inf", etree.tostring(front, encoding="unicode"))
 
-    def test_a_finite_bay_with_a_placement_that_is_not_finite_shows_an_outline(self):
+    def test_a_finite_bay_with_a_placement_that_is_not_finite_shows_a_schematic(
+        self,
+    ):
         # The right edge x + width overflows to infinity.
         self.store_face(
             "acme/ch-4",
@@ -412,17 +425,17 @@ class WarningTests(CompositionTestCase):
             [
                 (
                     "ACME NM-2X in NM 2: the placement in bay bay-nm2 is not a finite"
-                    " number, so the module shows as an outline."
+                    " number, so the module shows as a schematic."
                 )
             ],
         )
         front = faces(content)[0]
         [body] = self.group(front, self.inventory.nm2).findall(f"{{{SVG_NS}}}a")
-        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
+        self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
         self.assertEqual(body.get("href"), self.inventory.nm2.get_absolute_url())
         self.assertNotIn("inf", etree.tostring(front, encoding="unicode"))
 
-    def test_damaged_module_artwork_is_an_outline_with_a_warning(self):
+    def test_damaged_module_artwork_is_a_schematic_with_a_warning(self):
         revision = self.inventory.revisions["acme/nm-2x"]
         blob = revision.files.get(path="installed.svg").blob
         path = settings.MEDIA_ROOT + "/" + blob.name
@@ -433,7 +446,7 @@ class WarningTests(CompositionTestCase):
         front = faces(content)[0]
         for module in (self.inventory.nm1, self.inventory.nm2):
             body = self.group(front, module).find(f"{{{SVG_NS}}}a")
-            self.assertEqual(body.get("class"), "dv-art-module-body dv-art-outline")
+            self.assertEqual(body.get("class"), "dv-art-module-body dv-art-schematic")
         self.assertEqual(
             [warning.split(":")[0] for warning in warnings(content)],
             ["ACME NM-2X in NM 1", "ACME NM-2X in NM 2"],
@@ -486,6 +499,29 @@ def activate_alias_revision(test):
     activation.activate(test.admin, imported.revision, test.inventory.nm_type)
 
 
+def activate_unresolved_bay_revision(test):
+    """Activate a network module revision with two more bays whose {module} tokens do not fit the depth of a network module."""
+    bay = '  bay-slot: {face: installed, module_bay: "Slot {module}"}'
+    files = {
+        "manifest.yaml": NM_MANIFEST.replace(
+            bay,
+            bay
+            + '\n  bay-two: {face: installed, module_bay: "Slot {module}/{module}"}'
+            + '\n  bay-three: {face: installed, module_bay: "{module}/{module}/{module}"}',
+        ),
+        "installed.svg": NM_SVG.replace(
+            '<rect id="bay-slot"',
+            '<rect id="bay-two" x="60" y="10" width="14" height="10"/>\n'
+            '  <rect id="bay-three" x="76" y="10" width="14" height="10"/>\n'
+            '  <rect id="bay-slot"',
+        ),
+    }
+    [imported] = import_bundle(
+        test.admin, "unresolved.zip", io.BytesIO(bundle(definition("NM", files)))
+    )
+    activation.activate(test.admin, imported.revision, test.inventory.nm_type)
+
+
 class DuplicateBayTests(CompositionTestCase):
     def test_two_bays_that_resolve_to_one_module_bay_draw_the_module_once(self):
         activate_alias_revision(self)
@@ -503,31 +539,59 @@ class DuplicateBayTests(CompositionTestCase):
         )
 
 
-class DepthTests(CompositionTestCase):
-    def test_a_module_deeper_than_the_limit_shows_as_an_outline_with_a_warning(self):
-        loop = Inventory.module_type(self.inventory.nm_type.manufacturer, "LOOP")
-        ModuleBayTemplate.objects.create(module_type=loop, name="Sub", position="1")
-        files = {
-            "manifest.yaml": manifest(
-                "acme/loop",
-                "module",
-                "  installed: {file: installed.svg}\n",
-                bays="  bay-sub: {face: installed, module_bay: Sub}",
-            ),
-            "installed.svg": (
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
-                '<rect id="bay-sub" width="8" height="8"/></svg>'
-            ),
-        }
-        [imported] = import_bundle(
-            self.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
+LOOP_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+    '<rect id="bay-sub" width="8" height="8"/></svg>'
+)
+
+
+def install_loop_chain(test, length):
+    """Install ``length`` LOOP modules in the Spare bay, each in the bay Sub of the one before; return them outermost first."""
+    loop = Inventory.module_type(test.inventory.nm_type.manufacturer, "LOOP")
+    ModuleBayTemplate.objects.create(module_type=loop, name="Sub", position="1")
+    files = {
+        "manifest.yaml": manifest(
+            "acme/loop",
+            "module",
+            "  installed: {file: installed.svg}\n",
+            bays="  bay-sub: {face: installed, module_bay: Sub}",
+        ),
+        "installed.svg": LOOP_SVG,
+    }
+    [imported] = import_bundle(
+        test.admin, "loop.zip", io.BytesIO(bundle(definition("LOOP", files)))
+    )
+    activation.activate(test.admin, imported.revision, loop)
+    test.inventory.revisions["acme/loop"] = imported.revision
+    chain = []
+    bay = ModuleBay.objects.get(device=test.device, name="Spare")
+    for _level in range(length):
+        chain.append(test.inventory.install(bay, loop))
+        bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
+    return chain
+
+
+class UnresolvedBayTests(CompositionTestCase):
+    def test_a_bay_whose_module_tokens_do_not_fit_the_depth_is_not_drawn(self):
+        activate_unresolved_bay_revision(self)
+        content = self.tab()
+        front = faces(content)[0]
+        self.assertEqual(
+            [i for i in ids(front) if "--not-recorded-" in i],
+            [
+                f"{self.part_id(self.inventory.nm2)}-installed--not-recorded-bay-slot",
+                f"{self.part_id()}-front--not-recorded-bay-spare",
+            ],
         )
-        activation.activate(self.admin, imported.revision, loop)
-        chain = []
-        bay = ModuleBay.objects.get(device=self.device, name="Spare")
-        for _level in range(MAX_MODULE_DEPTH + 1):
-            chain.append(self.inventory.install(bay, loop))
-            bay = ModuleBay.objects.get(module=chain[-1], name="Sub")
+        self.assertIsNotNone(self.group(front, self.inventory.nm1, self.inventory.sfp))
+        self.assertEqual(warnings(content), [])
+
+
+class DepthTests(CompositionTestCase):
+    def test_a_module_deeper_than_the_limit_shows_as_a_schematic_with_a_warning(
+        self,
+    ):
+        chain = install_loop_chain(self, MAX_MODULE_DEPTH + 1)
 
         content = self.tab()
 
@@ -536,10 +600,10 @@ class DepthTests(CompositionTestCase):
         deepest = self.group(front, *chain)
         self.assertEqual(
             deepest.find(f"{{{SVG_NS}}}a").get("class"),
-            "dv-art-module-body dv-art-outline",
+            "dv-art-module-body dv-art-schematic",
         )
         self.assertIn(
             f"ACME LOOP in Sub: the module is more than {MAX_MODULE_DEPTH} modules"
-            " deep, so it shows as an outline.",
+            " deep, so it shows as a schematic, and the modules in it do not show.",
             warnings(content),
         )
