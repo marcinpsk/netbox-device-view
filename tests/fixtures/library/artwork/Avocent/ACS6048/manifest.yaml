@@ -1,0 +1,342 @@
+schema: 1
+key: avocent/acs6048
+kind: device
+title: Avocent ACS6048 (dual AC)
+hardware:
+  manufacturer: Avocent
+  sku: ACS6048DAC-G2
+  references:
+    - title: Avocent ACS6000 Advanced Console Server Installer/User Guide
+      edition: 590-1764-501A
+      figure: "2.2, tables 2.1 and A.1"
+      url: https://www.vertiv.com/globalassets/products/monitoring-control-and-management/serial-consoles-and-gateways/avocent-acs-6000-advanced-console-server-installeruser-guide.pdf
+license: MIT
+authors: [Marcin Zieba]
+faces:
+  front: {file: front.svg}
+  rear: {file: rear.svg}
+connectors:
+  con-ps1:
+    face: rear
+    type: iec-60320-c14
+    label: "PS1"
+    bindings:
+      - {component: powerport, name: ps1}
+  con-ps2:
+    face: rear
+    type: iec-60320-c14
+    label: "PS2"
+    bindings:
+      - {component: powerport, name: ps2}
+  con-ttys1:
+    face: rear
+    type: rj45
+    label: "1"
+    bindings:
+      - {component: consoleserverport, name: ttyS1}
+  con-ttys2:
+    face: rear
+    type: rj45
+    label: "2"
+    bindings:
+      - {component: consoleserverport, name: ttyS2}
+  con-ttys3:
+    face: rear
+    type: rj45
+    label: "3"
+    bindings:
+      - {component: consoleserverport, name: ttyS3}
+  con-ttys4:
+    face: rear
+    type: rj45
+    label: "4"
+    bindings:
+      - {component: consoleserverport, name: ttyS4}
+  con-ttys5:
+    face: rear
+    type: rj45
+    label: "5"
+    bindings:
+      - {component: consoleserverport, name: ttyS5}
+  con-ttys6:
+    face: rear
+    type: rj45
+    label: "6"
+    bindings:
+      - {component: consoleserverport, name: ttyS6}
+  con-ttys7:
+    face: rear
+    type: rj45
+    label: "7"
+    bindings:
+      - {component: consoleserverport, name: ttyS7}
+  con-ttys8:
+    face: rear
+    type: rj45
+    label: "8"
+    bindings:
+      - {component: consoleserverport, name: ttyS8}
+  con-ttys9:
+    face: rear
+    type: rj45
+    label: "9"
+    bindings:
+      - {component: consoleserverport, name: ttyS9}
+  con-ttys10:
+    face: rear
+    type: rj45
+    label: "10"
+    bindings:
+      - {component: consoleserverport, name: ttyS10}
+  con-ttys11:
+    face: rear
+    type: rj45
+    label: "11"
+    bindings:
+      - {component: consoleserverport, name: ttyS11}
+  con-ttys12:
+    face: rear
+    type: rj45
+    label: "12"
+    bindings:
+      - {component: consoleserverport, name: ttyS12}
+  con-ttys13:
+    face: rear
+    type: rj45
+    label: "13"
+    bindings:
+      - {component: consoleserverport, name: ttyS13}
+  con-ttys14:
+    face: rear
+    type: rj45
+    label: "14"
+    bindings:
+      - {component: consoleserverport, name: ttyS14}
+  con-ttys15:
+    face: rear
+    type: rj45
+    label: "15"
+    bindings:
+      - {component: consoleserverport, name: ttyS15}
+  con-ttys16:
+    face: rear
+    type: rj45
+    label: "16"
+    bindings:
+      - {component: consoleserverport, name: ttyS16}
+  con-ttys17:
+    face: rear
+    type: rj45
+    label: "17"
+    bindings:
+      - {component: consoleserverport, name: ttyS17}
+  con-ttys18:
+    face: rear
+    type: rj45
+    label: "18"
+    bindings:
+      - {component: consoleserverport, name: ttyS18}
+  con-ttys19:
+    face: rear
+    type: rj45
+    label: "19"
+    bindings:
+      - {component: consoleserverport, name: ttyS19}
+  con-ttys20:
+    face: rear
+    type: rj45
+    label: "20"
+    bindings:
+      - {component: consoleserverport, name: ttyS20}
+  con-ttys21:
+    face: rear
+    type: rj45
+    label: "21"
+    bindings:
+      - {component: consoleserverport, name: ttyS21}
+  con-ttys22:
+    face: rear
+    type: rj45
+    label: "22"
+    bindings:
+      - {component: consoleserverport, name: ttyS22}
+  con-ttys23:
+    face: rear
+    type: rj45
+    label: "23"
+    bindings:
+      - {component: consoleserverport, name: ttyS23}
+  con-ttys24:
+    face: rear
+    type: rj45
+    label: "24"
+    bindings:
+      - {component: consoleserverport, name: ttyS24}
+  con-ttys25:
+    face: rear
+    type: rj45
+    label: "25"
+    bindings:
+      - {component: consoleserverport, name: ttyS25}
+  con-ttys26:
+    face: rear
+    type: rj45
+    label: "26"
+    bindings:
+      - {component: consoleserverport, name: ttyS26}
+  con-ttys27:
+    face: rear
+    type: rj45
+    label: "27"
+    bindings:
+      - {component: consoleserverport, name: ttyS27}
+  con-ttys28:
+    face: rear
+    type: rj45
+    label: "28"
+    bindings:
+      - {component: consoleserverport, name: ttyS28}
+  con-ttys29:
+    face: rear
+    type: rj45
+    label: "29"
+    bindings:
+      - {component: consoleserverport, name: ttyS29}
+  con-ttys30:
+    face: rear
+    type: rj45
+    label: "30"
+    bindings:
+      - {component: consoleserverport, name: ttyS30}
+  con-ttys31:
+    face: rear
+    type: rj45
+    label: "31"
+    bindings:
+      - {component: consoleserverport, name: ttyS31}
+  con-ttys32:
+    face: rear
+    type: rj45
+    label: "32"
+    bindings:
+      - {component: consoleserverport, name: ttyS32}
+  con-ttys33:
+    face: rear
+    type: rj45
+    label: "33"
+    bindings:
+      - {component: consoleserverport, name: ttyS33}
+  con-ttys34:
+    face: rear
+    type: rj45
+    label: "34"
+    bindings:
+      - {component: consoleserverport, name: ttyS34}
+  con-ttys35:
+    face: rear
+    type: rj45
+    label: "35"
+    bindings:
+      - {component: consoleserverport, name: ttyS35}
+  con-ttys36:
+    face: rear
+    type: rj45
+    label: "36"
+    bindings:
+      - {component: consoleserverport, name: ttyS36}
+  con-ttys37:
+    face: rear
+    type: rj45
+    label: "37"
+    bindings:
+      - {component: consoleserverport, name: ttyS37}
+  con-ttys38:
+    face: rear
+    type: rj45
+    label: "38"
+    bindings:
+      - {component: consoleserverport, name: ttyS38}
+  con-ttys39:
+    face: rear
+    type: rj45
+    label: "39"
+    bindings:
+      - {component: consoleserverport, name: ttyS39}
+  con-ttys40:
+    face: rear
+    type: rj45
+    label: "40"
+    bindings:
+      - {component: consoleserverport, name: ttyS40}
+  con-ttys41:
+    face: rear
+    type: rj45
+    label: "41"
+    bindings:
+      - {component: consoleserverport, name: ttyS41}
+  con-ttys42:
+    face: rear
+    type: rj45
+    label: "42"
+    bindings:
+      - {component: consoleserverport, name: ttyS42}
+  con-ttys43:
+    face: rear
+    type: rj45
+    label: "43"
+    bindings:
+      - {component: consoleserverport, name: ttyS43}
+  con-ttys44:
+    face: rear
+    type: rj45
+    label: "44"
+    bindings:
+      - {component: consoleserverport, name: ttyS44}
+  con-ttys45:
+    face: rear
+    type: rj45
+    label: "45"
+    bindings:
+      - {component: consoleserverport, name: ttyS45}
+  con-ttys46:
+    face: rear
+    type: rj45
+    label: "46"
+    bindings:
+      - {component: consoleserverport, name: ttyS46}
+  con-ttys47:
+    face: rear
+    type: rj45
+    label: "47"
+    bindings:
+      - {component: consoleserverport, name: ttyS47}
+  con-ttys48:
+    face: rear
+    type: rj45
+    label: "48"
+    bindings:
+      - {component: consoleserverport, name: ttyS48}
+  con-eth0:
+    face: rear
+    type: rj45
+    label: "ETH 0"
+    bindings:
+      - {component: interface, name: eth0}
+  con-eth1:
+    face: rear
+    type: rj45
+    label: "ETH 1"
+    bindings:
+      - {component: interface, name: eth1}
+  con-console:
+    face: rear
+    type: rj45
+    label: "CONSOLE"
+    bindings:
+      - {component: consoleport, name: console}
+  con-aux:
+    face: rear
+    type: rj45
+    label: "AUX/MODEM"
+    bindings:
+      - {component: consoleport, name: aux}
