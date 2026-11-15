@@ -441,6 +441,42 @@ class AmbiguousKeyTests(ResolverTestBase):
                 page.wait_for_selector("dialog[open]", state="hidden")
                 self.assertTrue(cell.evaluate("el => el === document.activeElement"))
 
+    def test_closing_details_does_not_steal_later_focus(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        next_port = Interface.objects.get(
+            device=self.device, name="Gi1"
+        ).get_absolute_url()
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.keyboard.press("Enter")
+            dialog = page.locator("dialog[open]")
+            dialog.wait_for(state="visible")
+            dialog.evaluate(
+                "dialog => dialog.addEventListener('close', () => window.detailsClosed = true)"
+            )
+            next_cell = page.locator(f'.device-view-port[href="{next_port}"]')
+            next_cell.evaluate(
+                "next => { document.querySelector('[data-dv-details-close]').click(); next.focus(); }"
+            )
+            page.wait_for_function("window.detailsClosed === true")
+            self.assertEqual(
+                page.evaluate("document.activeElement.getAttribute('href')"), next_port
+            )
+
+    def test_details_close_restores_focus_when_the_page_has_none(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            page.evaluate("document.activeElement.blur()")
+            cell.evaluate("el => el.click()")
+            page.wait_for_selector("dialog[open]", state="visible")
+            page.locator("[data-dv-details-close]").click()
+            page.wait_for_function(
+                "document.activeElement.matches('[data-connection-state=ambiguous]')"
+            )
+            self.assertTrue(cell.evaluate("el => el === document.activeElement"))
+
     def test_api_lists_the_key_as_ambiguous_with_both_candidates(self):
         (panel,) = self._api()["panels"]
         self.assertEqual(

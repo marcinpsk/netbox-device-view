@@ -95,8 +95,10 @@
   document.addEventListener(
     "close",
     function (event) {
-      if (!event.target.matches("dialog.dv-details") || returnFocus === null) return;
-      returnFocus.focus();
+      if (!event.target.matches("dialog.dv-details") || event.target.open || returnFocus === null) return;
+      if (document.activeElement === document.body || document.activeElement === document.documentElement) {
+        returnFocus.focus({ preventScroll: true });
+      }
       returnFocus = null;
     },
     true
