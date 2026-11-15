@@ -207,3 +207,9 @@ def test_module_order_is_documented_by_face_then_by_sibling_bay():
     assert "The list follows face order." in text
     assert "Within each face, it lists parents before their children" in text
     assert "sorts sibling bays by key" in text
+
+
+def test_visibility_documentation_distinguishes_artwork_bays_and_schematic_slots():
+    text = (ROOT / "docs" / "how-it-works.md").read_text()
+    assert "A bay drawn by artwork shows **not recorded**" in text
+    assert "A schematic omits a module bay that you cannot view." in text
