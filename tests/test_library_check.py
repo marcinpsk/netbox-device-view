@@ -5,6 +5,7 @@ import errno
 import io
 import os
 import shutil
+import signal
 import tempfile
 import tracemalloc
 from io import StringIO
@@ -128,6 +129,31 @@ class LibraryCheckTests(SimpleTestCase):
 
     def check_names(self):
         return self.check(str(self.library), "--device-types", str(self.community))
+
+    def test_a_community_fifo_is_rejected_without_opening_it(self):
+        type_file = self.community / "device-types/ACME/SW-24.yaml"
+        type_file.unlink()
+        os.mkfifo(type_file)
+
+        def blocked(signum, frame):
+            raise AssertionError("The community FIFO blocked the command.")
+
+        previous = signal.signal(signal.SIGALRM, blocked)
+        signal.setitimer(signal.ITIMER_REAL, 2)
+        try:
+            _, problems = self.check_names()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+        self.assertEqual(
+            problems,
+            [
+                (
+                    "artwork/ACME/SW-24/manifest.yaml: The community type"
+                    f" device-types/ACME/SW-24.yaml is {NOT_REGULAR}"
+                )
+            ],
+        )
 
     def test_a_valid_library_passes(self):
         summary, problems = self.check_names()
@@ -306,7 +332,7 @@ class LibraryCheckTests(SimpleTestCase):
             [
                 (
                     "artwork/ACME/SW-24/manifest.yaml: The community type"
-                    " device-types/ACME/SW-24.yaml cannot be read: Is a directory."
+                    f" device-types/ACME/SW-24.yaml is {NOT_REGULAR}"
                 )
             ],
         )
