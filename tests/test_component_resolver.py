@@ -291,6 +291,34 @@ class AmbiguousKeyTests(ResolverTestBase):
         gi3.save()
         Cable(a_terminations=[gi1], b_terminations=[gi2]).save()
 
+    def test_tab_leaves_a_port_after_its_popover_was_dismissed(self):
+        for mode in (RenderMode.CSS, RenderMode.SVG):
+            DeviceView.objects.update(render_mode=mode)
+            with self.subTest(mode), browser_page(self._tab()) as page:
+                cell = page.locator('[data-connection-state="ambiguous"]')
+                cell.focus()
+                page.wait_for_selector(".popover", state="visible")
+                page.keyboard.press("Escape")
+                page.wait_for_selector(".popover", state="hidden")
+                page.keyboard.press("Tab")
+                self.assertFalse(cell.evaluate("el => el === document.activeElement"))
+
+    def test_tab_from_the_last_candidate_continues_to_the_next_port(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        next_port = Interface.objects.get(
+            device=self.device, name="Gi1"
+        ).get_absolute_url()
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.wait_for_selector(".popover", state="visible")
+            for _ in range(3):
+                page.keyboard.press("Tab")
+            self.assertEqual(
+                page.evaluate("document.activeElement.getAttribute('href')"),
+                next_port,
+            )
+
     def test_keyboard_users_can_reach_both_ambiguous_candidates(self):
         for mode in (RenderMode.CSS, RenderMode.SVG):
             DeviceView.objects.update(render_mode=mode)
@@ -299,6 +327,7 @@ class AmbiguousKeyTests(ResolverTestBase):
                 cell.focus()
                 self.assertTrue(cell.evaluate("el => el === document.activeElement"))
                 page.wait_for_selector(".popover", state="visible")
+                popover = cell.get_attribute("aria-describedby")
                 page.keyboard.press("Tab")
                 self.assertEqual(
                     page.locator(":focus").get_attribute("href"),
@@ -310,7 +339,7 @@ class AmbiguousKeyTests(ResolverTestBase):
                     self.console_port.get_absolute_url(),
                 )
                 page.keyboard.press("Tab")
-                page.wait_for_selector(".popover", state="hidden")
+                page.wait_for_selector(f'[id="{popover}"]', state="hidden")
 
     def test_api_lists_the_key_as_ambiguous_with_both_candidates(self):
         (panel,) = self._api()["panels"]
