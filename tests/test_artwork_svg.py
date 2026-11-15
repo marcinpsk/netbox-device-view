@@ -541,6 +541,25 @@ def test_reference_cycles(body, line):
     rejected(svg(body, OPEN_XLINK), "cycle", line)
 
 
+def test_long_gradient_chain_validation_scales_with_its_size():
+    elapsed = []
+    for size in (1000, 16000):
+        data = svg(
+            "".join(
+                f'<linearGradient id="g{i}" href="#g{i + 1}"/>' for i in range(size - 1)
+            )
+            + f'<linearGradient id="g{size - 1}"/>'
+        )
+        samples = []
+        for _ in range(3):
+            start = time.process_time()
+            parse_face(PATH, data)
+            samples.append(time.process_time() - start)
+        elapsed.append(min(samples))
+    # Sixteen times the input permits four times the linear CPU work.
+    assert elapsed[1] < 64 * elapsed[0], elapsed
+
+
 def fan_out(levels: int, width: int = 10) -> str:
     symbols = ['<symbol id="s0"><rect/></symbol>']
     for level in range(1, levels + 1):

@@ -843,9 +843,10 @@ class _Validator:
             if start in done:
                 continue
             path, stack = [start], [iter(start_edges)]
+            active = {start}
             while stack:
                 for target, via in stack[-1]:
-                    if target in path:
+                    if target in active:
                         found = True
                         self.add(
                             via.sourceline,
@@ -854,10 +855,13 @@ class _Validator:
                         )
                     elif target not in done:
                         path.append(target)
+                        active.add(target)
                         stack.append(iter(edges.get(target, ())))
                         break
                 else:
-                    done.add(path.pop())
+                    last = path.pop()
+                    active.remove(last)
+                    done.add(last)
                     stack.pop()
         return found
 

@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
+from extras.validators import CustomValidator
 from rest_framework.test import APIClient
 from users.models import ObjectPermission, User
 
@@ -369,6 +370,24 @@ class ApiTests(ArtworkTestCase):
         self.assertFalse(RevisionFile.objects.exists())
         self.assertFalse(RevisionImport.objects.exists())
         self.assertEqual(ArtworkBlob.objects.count(), 3)
+
+    def test_api_delete_reports_a_native_protection_rule_rejection(self):
+        self.post(bundle())
+        revision = DefinitionRevision.objects.get()
+        url = reverse(
+            "plugins-api:netbox_device_view-api:definitionrevision-detail",
+            args=[revision.pk],
+        )
+        rules = {
+            "netbox_device_view.definitionrevision": [
+                CustomValidator({"digest": {"eq": "protected"}})
+            ]
+        }
+        with override_settings(PROTECTION_RULES=rules):
+            response = self.api().delete(url)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("protection rule", response.json()["detail"])
+        self.assertTrue(DefinitionRevision.objects.filter(pk=revision.pk).exists())
 
 
 class ImmutabilityTests(ArtworkTestCase):

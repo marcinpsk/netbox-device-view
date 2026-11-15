@@ -1,7 +1,8 @@
 from dcim.models import Device
 from netbox.api.authentication import TokenPermissions
-from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
-from rest_framework import mixins, status
+from netbox.api.viewsets import NetBoxModelViewSet
+from rest_framework import status
+from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.generics import RetrieveAPIView
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -56,7 +57,7 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
         return Response(compose_rendered_layout(device, request.user))
 
 
-class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelViewSet):
+class DefinitionRevisionViewSet(NetBoxModelViewSet):
     """Read and delete definition revisions; a stored revision cannot be changed."""
 
     queryset = models.DefinitionRevision.objects.select_related(
@@ -64,6 +65,10 @@ class DefinitionRevisionViewSet(mixins.DestroyModelMixin, NetBoxReadOnlyModelVie
     ).prefetch_related("files__blob", "imports")
     serializer_class = DefinitionRevisionSerializer
     filterset_class = DefinitionRevisionFilterSet
+    http_method_names = ("get", "delete", "head", "options")
+
+    def bulk_destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method)
 
 
 class ArtworkBundleUploadView(APIView):
