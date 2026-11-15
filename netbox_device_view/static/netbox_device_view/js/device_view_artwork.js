@@ -106,7 +106,7 @@
     if (!show(part, ident)) return;
     var previous = lastFocus[ident];
     if (!visible(previous)) previous = part.querySelector('.dv-art-nav [data-dv-focus="' + ident + '"]');
-    if (visible(previous)) previous.focus();
+    if (visible(previous)) previous.focus({ preventScroll: true });
   }
 
   // A click on a navigation item takes the focus before the view changes, so record the focus inside each view.
