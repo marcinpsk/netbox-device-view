@@ -198,3 +198,10 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
 def test_each_json_example_parses(path):
     for example in re.findall(r"```json\n(.*?)```", path.read_text(), re.DOTALL):
         json.loads(example)
+
+
+def test_module_order_is_documented_by_face_then_by_sibling_bay():
+    text = (ROOT / "docs" / "artwork-api.md").read_text()
+    assert "The list follows face order." in text
+    assert "Within each face, it lists parents before their children" in text
+    assert "sorts sibling bays by key" in text

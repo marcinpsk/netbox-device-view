@@ -179,7 +179,7 @@ Each fact is its own field, and no field combines them. A disabled interface wit
 | `connectors` | array | The connectors of the module, as [Connector](#connector), with the `{module}` names resolved for this module. Empty without artwork. A module that is not drawn gives each connector `element_id: null`. |
 | `warnings` | array | The [warnings](#warning) of the placement. |
 
-The list has the parents before their children, in the order of the bay keys. A module that the user cannot view, or a module in a module bay that the user cannot view, has no entry, and its bay shows no module. An empty bay has no entry.
+The list follows face order. Within each face, it lists parents before their children and sorts sibling bays by key. A module that the user cannot view, or a module in a module bay that the user cannot view, has no entry, and its bay shows no module. An empty bay has no entry.
 
 ### Warning
 
