@@ -319,6 +319,47 @@ class AmbiguousKeyTests(ResolverTestBase):
                 next_port,
             )
 
+    def test_tab_during_popover_dismissal_keeps_focus_in_the_page(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        next_port = Interface.objects.get(
+            device=self.device, name="Gi1"
+        ).get_absolute_url()
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Escape")
+            page.keyboard.press("Tab")
+            page.wait_for_timeout(250)
+            self.assertEqual(
+                page.evaluate("document.activeElement.getAttribute('href')"), next_port
+            )
+
+    def test_keyboard_dismissal_cancels_a_pending_hover_open(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.hover()
+            cell.focus()
+            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(700)
+            self.assertEqual(page.locator(".popover:visible").count(), 0)
+
+    def test_hovering_the_port_keeps_focus_on_an_open_candidate(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        candidate = self.interface.get_absolute_url()
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Tab")
+            cell.hover()
+            page.wait_for_timeout(700)
+            self.assertEqual(
+                page.evaluate("document.activeElement.getAttribute('href')"), candidate
+            )
+
     def test_keyboard_users_can_reach_both_ambiguous_candidates(self):
         for mode in (RenderMode.CSS, RenderMode.SVG):
             DeviceView.objects.update(render_mode=mode)

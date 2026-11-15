@@ -48,6 +48,8 @@ function dvInitPopover(el, opts) {
   if (typeof Popover === "undefined") return;
   var pop = new Popover(el, {
     trigger: "manual",
+    // Dismissal removes the links before another key can focus them.
+    animation: false,
     html: true,
     container: "body",
     placement: "top",
@@ -58,21 +60,29 @@ function dvInitPopover(el, opts) {
   var hideTimer = null;
   var showTimer = null;
   var tip = null;
+  function show() {
+    clearTimeout(showTimer);
+    clearTimeout(hideTimer);
+    if (!el.hasAttribute("aria-describedby")) pop.show();
+  }
+  function hide() {
+    clearTimeout(showTimer);
+    clearTimeout(hideTimer);
+    pop.hide();
+  }
   function scheduleHide() {
     clearTimeout(showTimer);
+    clearTimeout(hideTimer);
     hideTimer = setTimeout(function () {
-      if (!el.contains(document.activeElement) && !(tip && tip.contains(document.activeElement))) pop.hide();
+      if (!el.contains(document.activeElement) && !(tip && tip.contains(document.activeElement))) hide();
     }, 500);
   }
   function cancelHide() {
     clearTimeout(hideTimer);
   }
-  el.addEventListener("mouseenter", function () { cancelHide(); showTimer = setTimeout(function () { pop.show(); }, 500); });
+  el.addEventListener("mouseenter", function () { cancelHide(); clearTimeout(showTimer); showTimer = setTimeout(show, 500); });
   el.addEventListener("mouseleave", scheduleHide);
-  el.addEventListener("focusin", function () {
-    cancelHide();
-    if (!el.hasAttribute("aria-describedby")) pop.show();
-  });
+  el.addEventListener("focusin", show);
   el.addEventListener("focusout", scheduleHide);
   el.addEventListener("keydown", function (event) {
     tip = document.getElementById(el.getAttribute("aria-describedby"));
@@ -81,7 +91,7 @@ function dvInitPopover(el, opts) {
       event.preventDefault();
       link.focus();
     }
-    if (event.key === "Escape") pop.hide();
+    if (event.key === "Escape") hide();
   });
   el.addEventListener("inserted.bs.popover", function () {
     tip = Popover.getInstance(el) && Popover.getInstance(el)._tip;
@@ -103,9 +113,9 @@ function dvInitPopover(el, opts) {
         }
         if (event.key === "Tab" && !event.shiftKey && event.target === links[links.length - 1]) {
           el.focus({ preventScroll: true });
-          pop.hide();
+          hide();
         }
-        if (event.key === "Escape") { el.focus(); pop.hide(); }
+        if (event.key === "Escape") { el.focus(); hide(); }
       });
     }
   });
