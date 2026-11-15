@@ -41,13 +41,21 @@ def can_import(user) -> bool:
     return user.has_perm(PERMISSION)
 
 
-def _key_owner_name(visual: VisualDefinition) -> str:
-    if visual.key_owner is None:
+def _key_owner_name(visual: VisualDefinition, user) -> str:
+    if visual.key_owner_id is None:
         return "the offline uploads"
+    if (
+        not DataSource.objects.restrict(user, "view")
+        .filter(pk=visual.key_owner_id)
+        .exists()
+    ):
+        return "another Data Source"
     return f"the Data Source {visual.key_owner.name}"
 
 
-def _definition(item: Definition, key_owner: DataSource | None) -> VisualDefinition:
+def _definition(
+    item: Definition, key_owner: DataSource | None, user
+) -> VisualDefinition:
     kind = item.manifest.data["kind"]
     visual, _ = VisualDefinition.objects.select_related("key_owner").get_or_create(
         key=item.manifest.data["key"], defaults={"kind": kind, "key_owner": key_owner}
@@ -58,7 +66,7 @@ def _definition(item: Definition, key_owner: DataSource | None) -> VisualDefinit
             [Issue(item.manifest_path, item.manifest.line("kind"), message)]
         )
     if visual.key_owner_id != (key_owner.pk if key_owner else None):
-        message = f"The key {visual.key} belongs to {_key_owner_name(visual)}."
+        message = f"The key {visual.key} belongs to {_key_owner_name(visual, user)}."
         raise ArtworkError(
             [Issue(item.manifest_path, item.manifest.line("key"), message)]
         )
@@ -66,9 +74,9 @@ def _definition(item: Definition, key_owner: DataSource | None) -> VisualDefinit
 
 
 def _revision(
-    item: Definition, key_owner: DataSource | None
+    item: Definition, key_owner: DataSource | None, user
 ) -> tuple[DefinitionRevision, bool]:
-    visual = _definition(item, key_owner)
+    visual = _definition(item, key_owner, user)
     # The digest locks of _import_all() serialize two imports of one revision. The
     # row lock makes a delete wait until this import commits its provenance.
     revision = (
@@ -157,7 +165,9 @@ def _import_all(
             {d for item in definitions for d in item.file_digests.values()}
         ):
             lock_digest(digest)
-        revisions = [_revision(item, provenance.data_source) for item in definitions]
+        revisions = [
+            _revision(item, provenance.data_source, user) for item in definitions
+        ]
         # A rollback does not remove media files, so check the constraints before the writes.
         pks = {revision.pk for revision, _ in revisions}
         permitted = DefinitionRevision.objects.restrict(user, "add").filter(pk__in=pks)

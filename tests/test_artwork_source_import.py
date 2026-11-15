@@ -12,6 +12,7 @@ from core.choices import DataSourceStatusChoices
 from core.models import DataFile, DataSource
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.db.models import ProtectedError
 from django.test import RequestFactory, override_settings
@@ -438,6 +439,26 @@ class OwnershipTests(SourceTestCase):
             "The key acme/sw-24 belongs to the Data Source Artwork.",
             status_code=400,
         )
+
+    def test_offline_imports_do_not_name_an_owner_the_importer_cannot_view(self):
+        self.source.name = "Restricted source owner"
+        self.source.save()
+        self.sync()
+        self.import_source()
+        self.user = User.objects.create_user(username="offline-importer")
+        self.grant(DefinitionRevision, "add", "view")
+        self.client.force_login(self.user)
+        ui = self.upload()
+        api = self.api().post(
+            reverse("plugins-api:netbox_device_view-api:artwork_bundle_upload"),
+            {"bundle": SimpleUploadedFile("offline.zip", bundle())},
+            format="multipart",
+        )
+        for endpoint, response in (("UI", ui), ("API", api)):
+            with self.subTest(endpoint):
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(self.source.name in response.content.decode())
+                self.assertIn("another Data Source", response.content.decode())
 
     def test_a_source_cannot_add_to_an_offline_key(self):
         self.upload()
