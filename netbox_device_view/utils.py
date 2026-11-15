@@ -186,6 +186,7 @@ class PageCell:
     fill: str | None
     popover_title: str
     popover_content: str
+    enabled: bool | None = None
 
     @property
     def partial(self):
@@ -193,7 +194,7 @@ class PageCell:
 
     @property
     def disabled(self):
-        return self.connection_state == DISABLED
+        return self.enabled is False
 
     def port_cell(self):
         """Return the SVG state markup of this cell."""
@@ -261,6 +262,7 @@ def _page_cell(binding, cable_colors):
         fill=fill,
         popover_title=title,
         popover_content=format_html('<a href="{}trace/">Trace</a>', url),
+        enabled=state.enabled,
     )
 
 

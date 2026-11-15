@@ -20,6 +20,7 @@
 	{% for cell in cells %}
 	<a
 		{% if cell.href %}href="{{ cell.href }}"{% endif %}
+		{% if not cell.href %}tabindex="0"{% endif %}
 		class="device-view-port {{ cell.classes|join:' ' }}"
 		data-connection-state="{{ cell.connection_state }}"
 		data-bs-title="{{ cell.popover_title|force_escape }}"
@@ -56,17 +57,31 @@ function dvInitPopover(el, opts) {
   });
   var hideTimer = null;
   var showTimer = null;
+  var tip = null;
   function scheduleHide() {
     clearTimeout(showTimer);
-    hideTimer = setTimeout(function () { pop.hide(); }, 500);
+    hideTimer = setTimeout(function () {
+      if (!el.contains(document.activeElement) && !(tip && tip.contains(document.activeElement))) pop.hide();
+    }, 500);
   }
   function cancelHide() {
     clearTimeout(hideTimer);
   }
   el.addEventListener("mouseenter", function () { cancelHide(); showTimer = setTimeout(function () { pop.show(); }, 500); });
   el.addEventListener("mouseleave", scheduleHide);
+  el.addEventListener("focusin", function () { cancelHide(); pop.show(); });
+  el.addEventListener("focusout", scheduleHide);
+  el.addEventListener("keydown", function (event) {
+    tip = document.getElementById(el.getAttribute("aria-describedby")) || tip;
+    var link = tip && tip.querySelector("a[href]");
+    if (event.key === "Tab" && !event.shiftKey && link) {
+      event.preventDefault();
+      link.focus();
+    }
+    if (event.key === "Escape") pop.hide();
+  });
   el.addEventListener("shown.bs.popover", function () {
-    var tip = Popover.getInstance(el) && Popover.getInstance(el)._tip;
+    tip = Popover.getInstance(el) && Popover.getInstance(el)._tip;
     if (!tip) {
       // fallback: grab the most recently appended popover in body
       var popovers = document.querySelectorAll(".popover");
@@ -75,6 +90,15 @@ function dvInitPopover(el, opts) {
     if (tip) {
       tip.addEventListener("mouseenter", cancelHide);
       tip.addEventListener("mouseleave", scheduleHide);
+      tip.addEventListener("focusin", cancelHide);
+      tip.addEventListener("focusout", scheduleHide);
+      tip.addEventListener("keydown", function (event) {
+        if (event.key === "Tab" && event.shiftKey && event.target === tip.querySelector("a[href]")) {
+          event.preventDefault();
+          el.focus();
+        }
+        if (event.key === "Escape") { el.focus(); pop.hide(); }
+      });
     }
   });
 }

@@ -1,5 +1,6 @@
 """The Device View tab, the device page panel and the rendered-layout API resolve components the same way."""
 
+import re
 from html.parser import HTMLParser
 
 from core.models import ObjectType
@@ -31,6 +32,8 @@ from users.models import ObjectPermission, Token, User
 
 from netbox_device_view.components import BINDABLE_MODELS, device_components, find
 from netbox_device_view.models import DeviceView, RenderMode
+
+from .browser import browser_page
 
 SINGLE_VIEW_PATCH_PANEL = """
 version: 1
@@ -181,6 +184,18 @@ class PageMatchesApiTests(ResolverTestBase):
         gi3.save()
         Cable(a_terminations=[gi1], b_terminations=[gi2], color="ff0000").save()
 
+    def test_css_keeps_the_disabled_icon_on_a_cabled_interface(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        Interface.objects.filter(device=self.device, name="Gi1").update(enabled=False)
+        for page, content in self._pages().items():
+            with self.subTest(page):
+                interface = Interface.objects.get(device=self.device, name="Gi1")
+                [cell] = re.findall(
+                    rf'<a\s+href="{interface.get_absolute_url()}"[^>]*data-connection-state="connected"[^>]*>\s*<span[^>]*><i class="mdi ([^"]+)"',
+                    content,
+                )
+                self.assertEqual(cell, "mdi-close-thick")
+
     def test_page_and_api_bind_the_same_components_in_the_same_state(self):
         api = {
             Interface.objects.get(pk=hotspot["object_id"]).get_absolute_url(): hotspot[
@@ -275,6 +290,27 @@ class AmbiguousKeyTests(ResolverTestBase):
         gi3.enabled = False
         gi3.save()
         Cable(a_terminations=[gi1], b_terminations=[gi2]).save()
+
+    def test_keyboard_users_can_reach_both_ambiguous_candidates(self):
+        for mode in (RenderMode.CSS, RenderMode.SVG):
+            DeviceView.objects.update(render_mode=mode)
+            with self.subTest(mode), browser_page(self._tab()) as page:
+                cell = page.locator('[data-connection-state="ambiguous"]')
+                cell.focus()
+                self.assertTrue(cell.evaluate("el => el === document.activeElement"))
+                page.wait_for_selector(".popover", state="visible")
+                page.keyboard.press("Tab")
+                self.assertEqual(
+                    page.locator(":focus").get_attribute("href"),
+                    self.interface.get_absolute_url(),
+                )
+                page.keyboard.press("Tab")
+                self.assertEqual(
+                    page.locator(":focus").get_attribute("href"),
+                    self.console_port.get_absolute_url(),
+                )
+                page.keyboard.press("Tab")
+                page.wait_for_selector(".popover", state="hidden")
 
     def test_api_lists_the_key_as_ambiguous_with_both_candidates(self):
         (panel,) = self._api()["panels"]

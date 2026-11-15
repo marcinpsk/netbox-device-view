@@ -93,7 +93,9 @@ jobs:
       - name: Install plugin and test dependencies
         run: |
           uv pip install --python /opt/netbox/venv/bin/python \
-            --no-cache pytest pytest-django -e .
+            --no-cache pytest pytest-django playwright -e .
+          apt-get update -qq && apt-get install -y -qq libatomic1
+          /opt/netbox/venv/bin/playwright install --with-deps chromium
 
       - name: Enable NetBox Branching
         if: matrix.branching
