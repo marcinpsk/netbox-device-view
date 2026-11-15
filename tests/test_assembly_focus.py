@@ -1,6 +1,7 @@
 """The assembly navigation lists the drawn modules of a device; a focus view draws a module with artwork in its own coordinates."""
 
 import copy
+import io
 import re
 from collections import Counter
 
@@ -14,9 +15,13 @@ from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import Token, User
 
+from netbox_device_view.artwork.errors import ArtworkError
+from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.details import details_id
 
-from .module_samples import Inventory
+from .artwork_samples import bundle, definition
+from .browser import browser_page
+from .module_samples import CHASSIS_MANIFEST, CHASSIS_SVG, Inventory
 from .permissions import grant
 from .test_api_artwork import API_URL
 from .test_artwork_device_view import SVG_NS, faces, ids, links, references
@@ -75,6 +80,49 @@ class AssemblyTestCase(CompositionTestCase):
 
 
 class NavigationTests(AssemblyTestCase):
+    def test_returning_to_overview_restores_focus_without_changing_its_scroll(self):
+        with browser_page(self.tab()) as page:
+            overview = page.locator(f'[id="{self.overview()}"]')
+            viewport = overview.locator(".dv-art-viewport").first
+            connector = overview.locator("[data-dv-details]").first
+            for _ in range(3):
+                overview.locator('[data-dv-zoom="in"]').first.click()
+            connector.focus()
+            saved = viewport.evaluate(
+                "el => { el.scrollLeft = el.scrollWidth; return el.scrollLeft; }"
+            )
+            self.assertGreater(saved, 0)
+            page.locator(
+                f'.dv-art-nav button[data-dv-focus="{self.view(1, self.inventory.nm1)}"]'
+            ).click()
+            page.keyboard.press("Escape")
+            self.assertTrue(connector.evaluate("el => el === document.activeElement"))
+            self.assertAlmostEqual(
+                viewport.evaluate("el => el.scrollLeft"), saved, delta=1
+            )
+
+    def test_import_rejects_a_module_bay_repeated_across_faces(self):
+        manifest = (
+            CHASSIS_MANIFEST.replace(
+                "  front: {file: front.svg}",
+                "  front: {file: front.svg}\n  rear: {file: rear.svg}",
+            )
+            + "\n  bay-rear-nm1: {face: rear, module_bay: NM 1}\n"
+        )
+        rear = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 44">'
+            '<rect id="bay-rear-nm1" x="200" y="7" width="100" height="30"/>'
+            "</svg>"
+        )
+        files = {"manifest.yaml": manifest, "front.svg": CHASSIS_SVG, "rear.svg": rear}
+        with self.assertRaises(ArtworkError) as caught:
+            import_bundle(
+                self.admin, "two-faces.zip", io.BytesIO(bundle(definition("CH", files)))
+            )
+        self.assertIn(
+            "The module bay NM 1 is also mapped by bay-nm1.", str(caught.exception)
+        )
+
     def test_the_navigation_nests_the_drawn_modules_under_the_chassis(self):
         nav = self.nav(self.page())
         self.assertEqual(
