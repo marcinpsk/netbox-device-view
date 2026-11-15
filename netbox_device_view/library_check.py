@@ -209,7 +209,7 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
         if any(
             community.joinpath(*parts[:n]).is_symlink()
             for n in range(1, len(parts) + 1)
-        ):
+        ) or not stat.S_ISREG((community / type_path).lstat().st_mode):
             message = f"The community type {type_path} is {NOT_REGULAR}"
             return [Issue(path, None, message)]
         names, bays = _community_names(community / type_path)
