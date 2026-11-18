@@ -147,7 +147,7 @@ A Virtual Chassis device returns one set of panels per member, in rack order (sa
 
 ## Performance
 
-The component resolver (`netbox_device_view.components`) prefetches cable terminations and cable-trace path objects for every component up front, using the same prefetch shapes NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` use (`dcim/api/views.py`). One request never issues a query per port. This is covered by a regression test (`tests/test_api_rendered_layout.py::QueryCountTests`) that asserts query count doesn't scale with interface count.
+The component resolver (`netbox_device_view.components`) prefetches the cable terminations, the wireless links and the cable-trace path objects of every component up front. For cable terminations and paths it uses the same prefetch shapes as NetBox's own `InterfaceViewSet`/`ConsolePortViewSet`/`ConsoleServerPortViewSet`/`FrontPortViewSet`/`RearPortViewSet` (`dcim/api/views.py`). Regression tests (`tests/test_api_rendered_layout.py::QueryCountTests`) check that the query count does not grow with the number of cabled interfaces, cabled console ports, cabled front ports and wireless-linked interfaces. The tests do not cover other connection types.
 
 No caching (`ETag`/`Last-Modified`) is applied — connection state and cable colour can change at any time, and a stale cached response would show wrong data. This may be revisited if it becomes a real bottleneck.
 

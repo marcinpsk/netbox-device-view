@@ -50,6 +50,13 @@ _TEMPLATE_MODELS = {
 logger = logging.getLogger(__name__)
 _HEX_COLOR_RE = re.compile(r"^[0-9A-Fa-f]{6}$")
 _EXCLUDED_TYPES = {Interface: ("virtual", "lag")}
+# Interface.link_peers reads the wireless link of an interface without a cable.
+_LINK_RELATIONS = {
+    Interface: (
+        "wireless_link__interface_a__device",
+        "wireless_link__interface_b__device",
+    )
+}
 _FACES = {FrontPort: "front", RearPort: "rear"}
 
 CONNECTED = "connected"
@@ -208,7 +215,7 @@ def _queryset(model, device, user):
             Q(module__isnull=True) | Q(module__in=Module.objects.restrict(user, "view"))
         )
         .exclude(type__in=_EXCLUDED_TYPES.get(model, ("virtual",)))
-        .select_related("cable")
+        .select_related("cable", *_LINK_RELATIONS.get(model, ()))
         .prefetch_related(
             GenericPrefetch("cable__terminations__termination", _peer_querysets())
         )
