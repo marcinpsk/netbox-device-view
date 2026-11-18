@@ -572,11 +572,19 @@ class VirtualChassisTests(ResolverTestBase):
             FrontPort.objects.create(device=member, name="Port 1", type="8p8c")
 
     def test_page_and_api_bind_the_front_ports_of_every_member(self):
-        api = {
-            (hotspot["object_type"], hotspot["object_id"])
-            for hotspot in self._hotspots(self._api())
-        }
-        self.assertEqual(len(api), 4)
+        panels = {panel["key"]: panel for panel in self._api()["panels"]}
+        for member in (self.device, self.member):
+            with self.subTest(member.name):
+                self.assertEqual(
+                    {
+                        (hotspot["object_type"], hotspot["object_id"])
+                        for hotspot in panels[f"member-{member.pk}-front"]["hotspots"]
+                    },
+                    {
+                        ("dcim.interface", Interface.objects.get(device=member).pk),
+                        ("dcim.frontport", FrontPort.objects.get(device=member).pk),
+                    },
+                )
         expected = {
             component.get_absolute_url()
             for model in (Interface, FrontPort)
