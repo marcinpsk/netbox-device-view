@@ -479,7 +479,12 @@ class PermissionTests(ArtworkTestCase):
     def test_an_importer_sees_the_import_button(self):
         self.grant(DefinitionRevision, "view", "add")
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
-        self.assertContains(self.client.get(reverse(LIST_URL)), reverse(IMPORT_URL))
+        # The navigation menu links the same URL, so match the list action markup.
+        self.assertContains(
+            self.client.get(reverse(LIST_URL)),
+            f'<a href="{reverse(IMPORT_URL)}" class="btn btn-primary" role="button">',
+            count=1,
+        )
 
     def test_an_importer_without_view_finds_the_import_in_the_menu(self):
         self.grant(DefinitionRevision, "add")
