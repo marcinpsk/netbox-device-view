@@ -34,9 +34,10 @@ SVG mode requires:
 
 1. The DeviceView has **Render Mode → SVG** set
 2. The DeviceView has a non-empty **YAML Layout** field
-3. The device is **not** part of a Virtual Chassis
 
 If any of these conditions are not met, the plugin silently falls back to CSS rendering.
+
+A Virtual Chassis shows one SVG panel for each member. When the device type of a member has no DeviceView, the tab shows no device view, in both modes.
 
 ---
 
