@@ -34,8 +34,14 @@
             <tbody>
               {% for result in results %}
                 <tr>
-                  <td><a href="{{ result.revision.get_absolute_url }}">{{ result.revision.definition.key }}</a></td>
-                  <td class="font-monospace text-break">{{ result.revision.digest }}</td>
+                  <td>
+                    {% if result.visible %}
+                      <a href="{% url 'plugins:netbox_device_view:definitionrevision' pk=result.pk %}">{{ result.key }}</a>
+                    {% else %}
+                      {{ result.key }}
+                    {% endif %}
+                  </td>
+                  <td class="font-monospace text-break">{{ result.digest }}</td>
                   <td>
                     {% if result.created %}
                       <span class="badge text-bg-success">{% trans "Imported" %}</span>
@@ -55,7 +61,9 @@
         <div class="card-body">
           {% render_field form.bundle %}
           <div class="text-end">
-            <a href="{% url 'plugins:netbox_device_view:definitionrevision_list' %}" class="btn btn-outline-secondary">{% trans "Artwork revisions" %}</a>
+            {% if can_view_list %}
+              <a href="{% url 'plugins:netbox_device_view:definitionrevision_list' %}" class="btn btn-outline-secondary">{% trans "Artwork revisions" %}</a>
+            {% endif %}
             <button type="submit" class="btn btn-primary">{% trans "Import" %}</button>
           </div>
         </div>

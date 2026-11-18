@@ -1,3 +1,5 @@
+import secrets
+
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -392,27 +394,63 @@ class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
     """Upload an offline artwork bundle and import its definitions as candidate revisions."""
 
     template_name = "netbox_device_view/artwork_import.html"
+    # The session keeps the results of the last import for the receipt page.
+    receipt_key = "netbox_device_view.artwork_import_receipt"
 
     def get_required_permission(self):
         return artwork_importing.PERMISSION
 
-    def get(self, request):
+    def page(self, request, form, status=200, **context):
         return render(
-            request, self.template_name, {"form": forms.ArtworkBundleImportForm()}
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "can_view_list": request.user.has_perm(
+                    "netbox_device_view.view_definitionrevision"
+                ),
+                **context,
+            },
+            status=status,
         )
+
+    def get(self, request):
+        receipt = request.session.get(self.receipt_key, {})
+        results = []
+        if receipt and request.GET.get("receipt") == receipt["token"]:
+            visible = set(
+                models.DefinitionRevision.objects.restrict(request.user, "view")
+                .filter(pk__in=[result["pk"] for result in receipt["results"]])
+                .values_list("pk", flat=True)
+            )
+            results = [
+                {**result, "visible": result["pk"] in visible}
+                for result in receipt["results"]
+            ]
+        return self.page(request, forms.ArtworkBundleImportForm(), results=results)
 
     def post(self, request):
         form = forms.ArtworkBundleImportForm(request.POST, request.FILES)
         if not form.is_valid():
-            return render(request, self.template_name, {"form": form}, status=400)
+            return self.page(request, form, status=400)
         upload = form.cleaned_data["bundle"]
         try:
             results = artwork_importing.import_bundle(request.user, upload.name, upload)
         except ArtworkError as exc:
-            return render(
-                request,
-                self.template_name,
-                {"form": form, "issues": exc.issues},
-                status=400,
-            )
-        return render(request, self.template_name, {"form": form, "results": results})
+            return self.page(request, form, status=400, issues=exc.issues)
+        # A reload of the receipt page must not upload the bundle again.
+        token = secrets.token_urlsafe(16)
+        request.session[self.receipt_key] = {
+            "token": token,
+            "results": [
+                {
+                    "pk": result.revision.pk,
+                    "key": result.revision.definition.key,
+                    "digest": result.revision.digest,
+                    "created": result.created,
+                }
+                for result in results
+            ],
+        }
+        url = reverse("plugins:netbox_device_view:definitionrevision_import")
+        return redirect(f"{url}?{urlencode({'receipt': token})}")

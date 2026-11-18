@@ -136,6 +136,7 @@ class ArtworkBranchTestCase(TransactionTestCase):
         return self.client.post(
             reverse(ARTWORK_IMPORT_URL),
             {"bundle": SimpleUploadedFile("sw24.zip", bundle())},
+            follow=True,
         )
 
 

@@ -7,9 +7,10 @@ from pathlib import Path
 
 from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+from django.contrib.sessions.backends.db import SessionStore
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, connection, transaction
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
@@ -27,6 +28,7 @@ from netbox_device_view.models import (
     RevisionImport,
     VisualDefinition,
 )
+from netbox_device_view.views import ArtworkBundleImportView
 
 from .artwork_samples import (
     DEVICE_FILES,
@@ -74,10 +76,11 @@ class ArtworkTestCase(TestCase):
         permission.users.add(user or self.user)
         permission.object_types.add(ObjectType.objects.get_for_model(model))
 
-    def upload(self, data=None, name="sw24.zip"):
+    def upload(self, data=None, name="sw24.zip", follow=True):
         return self.client.post(
             reverse(IMPORT_URL),
             {"bundle": SimpleUploadedFile(name, bundle() if data is None else data)},
+            follow=follow,
         )
 
     def api(self):
@@ -119,6 +122,37 @@ class UploadTests(ArtworkTestCase):
         self.assertEqual(
             (event.user, event.user_name, event.source_name, event.path),
             (self.user, "importer", "sw24.zip", DEVICE_DIR),
+        )
+
+    def test_an_import_redirects_to_a_receipt_that_a_reload_does_not_repeat(self):
+        response = self.upload(follow=False)
+        self.assertEqual(response.status_code, 302)
+        receipt = response["Location"]
+        self.assertTrue(receipt.startswith(f"{reverse(IMPORT_URL)}?receipt="), receipt)
+        revision = DefinitionRevision.objects.get()
+        for _reload in range(2):
+            page = self.client.get(receipt)
+            self.assertContains(page, "Imported revisions")
+            self.assertContains(page, revision.get_absolute_url())
+            self.assertContains(page, revision.digest)
+        self.assertEqual(RevisionImport.objects.count(), 1)
+        for url in (reverse(IMPORT_URL), f"{reverse(IMPORT_URL)}?receipt=other"):
+            with self.subTest(url=url):
+                self.assertNotContains(self.client.get(url), "Imported revisions")
+
+    def test_the_receipt_redirect_does_not_use_the_request_path(self):
+        request = RequestFactory().post(
+            reverse(IMPORT_URL),
+            {"bundle": SimpleUploadedFile("sw24.zip", bundle())},
+            PATH_INFO="//evil.example/",
+        )
+        request.user, request.session = self.user, SessionStore()
+        response = ArtworkBundleImportView.as_view()(request)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            response["Location"].startswith(f"{reverse(IMPORT_URL)}?receipt="),
+            response["Location"],
         )
 
     def test_list_and_detail_pages_show_identity_provenance_and_licensing(self):
@@ -550,6 +584,28 @@ class PermissionTests(ArtworkTestCase):
         self.grant(DefinitionRevision, "add")
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
         self.assertContains(self.client.get(reverse("home")), reverse(IMPORT_URL))
+
+    def test_an_importer_without_view_gets_no_revision_links(self):
+        self.grant(DefinitionRevision, "add")
+        form = self.client.get(reverse(IMPORT_URL))
+        self.assertNotContains(form, f'href="{reverse(LIST_URL)}"')
+        receipt = self.upload()
+        revision = DefinitionRevision.objects.get()
+        self.assertNotContains(receipt, f'href="{reverse(LIST_URL)}"')
+        self.assertNotContains(receipt, revision.get_absolute_url())
+        for text in ("acme/sw-24", revision.digest, "Imported"):
+            self.assertContains(receipt, text)
+
+    def test_a_constrained_viewer_gets_no_link_to_a_revision_outside_the_view(self):
+        self.grant(DefinitionRevision, "add")
+        self.grant(
+            DefinitionRevision, "view", constraints={"definition__key": "acme/other"}
+        )
+        receipt = self.upload()
+        revision = DefinitionRevision.objects.get()
+        self.assertContains(receipt, f'href="{reverse(LIST_URL)}"')
+        self.assertNotContains(receipt, revision.get_absolute_url())
+        self.assertContains(receipt, "acme/sw-24")
 
     def test_add_constraints_apply_to_the_imported_revisions(self):
         self.grant(DefinitionRevision, "view")
