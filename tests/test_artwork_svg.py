@@ -245,6 +245,8 @@ GRADIENT = '<linearGradient id="g"/><clipPath id="c"/>'
         ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 5e400">', "number"),
         ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0,0,100,">', "number"),
         ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1mm 1">', "viewBox"),
+        ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10+10">', "separate"),
+        ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0+10 10">', "separate"),
         (
             (
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 9 9" '

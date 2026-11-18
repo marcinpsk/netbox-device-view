@@ -137,6 +137,11 @@ class _Scanner:
         """Skip an optional comma-wsp; return True when it held a comma."""
         return "," in self.skip(_COMMA_WSP)
 
+    def separator(self):
+        """Skip a required comma-wsp."""
+        if not self.skip(_COMMA_WSP):
+            raise _Invalid(f"separate numbers with whitespace or a comma {self.where()}")
+
     def starts_number(self) -> bool:
         return _NUMBER.match(self.text, self.pos) is not None
 
@@ -148,12 +153,15 @@ class _Scanner:
         return _bounded(match.group())
 
 
-def _number_list(value: str) -> list[float]:
-    """Return the numbers of a list separated by whitespace and/or commas."""
+def _number_list(value: str, separated: bool) -> list[float]:
+    """Return the numbers of a list; separated=False also lets a sign separate two numbers."""
     scanner = _Scanner(value)
     numbers = [scanner.number()]
     while not scanner.at_end():
-        scanner.comma_wsp()
+        if separated:
+            scanner.separator()
+        else:
+            scanner.comma_wsp()
         numbers.append(scanner.number())
     return numbers
 
@@ -211,7 +219,7 @@ def _keywords_or(words: str, other: Callable[[str], object]) -> Callable[[str], 
 
 
 def _view_box(value: str) -> tuple[float, float, float, float]:
-    numbers = _number_list(value)
+    numbers = _number_list(value, separated=True)
     if len(numbers) != 4:
         raise _Invalid("must be four numbers: min-x, min-y, width, height")
     if not all(MIN_VIEWBOX_SIZE <= size <= MAX_VIEWBOX_SIZE for size in numbers[2:]):
@@ -227,7 +235,8 @@ def _aspect(value: str):
 
 
 def _points(value: str):
-    numbers = _number_list(value)
+    # Points use the path data grammar, as in SVG 2.
+    numbers = _number_list(value, separated=False)
     if len(numbers) < 4 or len(numbers) % 2:
         raise _Invalid("must be an even count of at least 4 numbers")
 
