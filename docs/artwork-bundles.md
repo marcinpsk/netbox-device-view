@@ -220,7 +220,7 @@ A `PUT` must name `key_owner`. A bulk `PATCH` of the list URL with `[{"id": 12, 
 
 An association links a device type to one revision of a device definition. That revision is the active artwork of the type. The Device View tab and the device page panel of each device of the type then show the artwork instead of the layout.
 
-In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to show the layout of the type again. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
+In the UI, go to **Plugins → Artwork Revisions**, open the revision and click **Activate**. Select the **Device type** and click **Activate**. A type that already has an active revision changes to the selected one. **Plugins → Artwork Associations** lists the active revision of each type. Delete an association to remove the active artwork of the type. The devices of the type then show the layout of the type, if you can view a DeviceView for it. Without such a DeviceView, the devices have no Device View tab. A revision that an association uses cannot be deleted. The API answers such a delete with 409.
 
 The artwork view shows:
 
@@ -231,7 +231,7 @@ The artwork view shows:
 
 Decorative artwork has no link. A connector whose component does not exist, or that you cannot view, has no link. When a stored artwork file is missing or does not match its SHA-256, the device shows **Artwork damaged** instead of the artwork. Import the revision again to repair the file.
 
-A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts.
+A virtual chassis shows the artwork of each member when every member that you can view has active artwork. Otherwise it shows the layouts, but only when every member that you can view has a DeviceView that you can view. If a member has neither, the virtual chassis shows no artwork and no layout.
 
 ### Permissions
 
