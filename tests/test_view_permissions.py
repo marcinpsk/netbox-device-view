@@ -3,6 +3,7 @@
 import json
 import re
 
+from core.models import DataSource
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -29,7 +30,12 @@ from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token, User
 
 from netbox_device_view.layout.renderers.svg import COLOUR_PORT_DEFAULT
-from netbox_device_view.models import DeviceView, RenderMode
+from netbox_device_view.models import (
+    Association,
+    DeviceView,
+    RenderMode,
+    VisualDefinition,
+)
 
 from .permissions import grant
 
@@ -338,3 +344,50 @@ class ViewPermissionTests(TestCase):
         self.assertIn("Deviceview sw1<", self._device_page_panel())
         grant(self.user, VirtualChassis, "view")
         self.assertIn("Deviceview vc1<", self._device_page_panel())
+
+
+class FilterFormPermissionTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.manufacturer = Manufacturer.objects.create(
+            name="Hidden Maker", slug="hidden-maker"
+        )
+        cls.device_type = DeviceType.objects.create(
+            manufacturer=cls.manufacturer, model="Hidden Model", slug="hidden-model"
+        )
+        cls.source = DataSource.objects.create(
+            name="Hidden Source", type="local", source_url="file:///hidden"
+        )
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="viewer")
+        for model in (DeviceView, Association, VisualDefinition):
+            grant(self.user, model, "view")
+        self.client.force_login(self.user)
+
+    def filtered_lists(self):
+        """Yield (list name, page) for each list filtered by the hidden objects."""
+        for name, query in (
+            (
+                "deviceview_list",
+                f"manufacturer_id={self.manufacturer.pk}&device_type_id={self.device_type.pk}",
+            ),
+            ("association_list", f"device_type_id={self.device_type.pk}"),
+            ("visualdefinition_list", f"key_owner_id={self.source.pk}"),
+        ):
+            url = reverse(f"plugins:netbox_device_view:{name}")
+            yield name, self.client.get(f"{url}?{query}").content.decode()
+
+    def test_a_list_filter_does_not_name_an_object_that_the_user_cannot_view(self):
+        for name, page in self.filtered_lists():
+            with self.subTest(name):
+                for hidden in ("Hidden Maker", "Hidden Model", "Hidden Source"):
+                    self.assertNotIn(hidden, page)
+
+    def test_a_list_filter_names_an_object_that_the_user_can_view(self):
+        for model in (Manufacturer, DeviceType, DataSource):
+            grant(self.user, model, "view")
+        pages = dict(self.filtered_lists())
+        self.assertIn("Hidden Maker", pages["deviceview_list"])
+        self.assertIn("Hidden Model", pages["association_list"])
+        self.assertIn("Hidden Source", pages["visualdefinition_list"])
