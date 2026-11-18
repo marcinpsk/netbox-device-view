@@ -300,19 +300,23 @@ class ActivationRaceTests(TransactionTestCase):
             finally:
                 connection.close()
 
-        with transaction.atomic():
-            Association.objects.create(
-                device_type=self.device_type, revision=self.revision
-            )
-            thread = threading.Thread(target=run)
-            thread.start()
-            deadline = time.monotonic() + 10
-            while waiting_row_locks() < 1 and thread.is_alive():
-                self.assertLess(
-                    time.monotonic(), deadline, "the activation did not wait"
+        thread = threading.Thread(target=run)
+        try:
+            with transaction.atomic():
+                Association.objects.create(
+                    device_type=self.device_type, revision=self.revision
                 )
-                time.sleep(0.05)
-        thread.join(30)
+                thread.start()
+                deadline = time.monotonic() + 10
+                while waiting_row_locks() < 1 and thread.is_alive():
+                    self.assertLess(
+                        time.monotonic(), deadline, "the activation did not wait"
+                    )
+                    time.sleep(0.05)
+        finally:
+            # The rollback releases the lock first, so the worker can end before the flush.
+            if thread.ident is not None:
+                thread.join(30)
 
         self.assertContains(result["response"], "Try again", status_code=409)
         self.assertEqual(Association.objects.count(), 1)
