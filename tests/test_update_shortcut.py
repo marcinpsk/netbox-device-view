@@ -24,7 +24,10 @@ class UpdateShortcutTests(ReviewTestCase):
 
     def assertShortcut(self, response, *pairs, device=None):
         url = review_url(*pairs, return_url=(device or self.device).get_absolute_url())
-        self.assertContains(response, f'href="{escape(url)}"', count=1)
+        # The shortcut opens the review page, so it keeps the semantics of a link.
+        self.assertContains(
+            response, f'<a href="{escape(url)}" class="btn btn-primary">', count=1
+        )
         return url
 
     def test_the_shortcut_opens_the_review_of_the_newer_revision_with_its_full_impact(
