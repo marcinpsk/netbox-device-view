@@ -1,13 +1,18 @@
+from core.models import ObjectChange
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, router, transaction
 from django.urls import reverse
+from django.utils.text import Truncator
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
 from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .layout.parser import LayoutParseError, parse
+
+# NetBox Branching copies str() of a branch object to a column of this size without a cut.
+MAX_REPR = ObjectChange._meta.get_field("object_repr").max_length
 
 
 class RenderMode(models.TextChoices):
@@ -49,7 +54,9 @@ class DeviceView(NetBoxModel):
         ordering = ("device_type",)
 
     def __str__(self):
-        return f"{self.device_type.manufacturer} {self.device_type.model}"
+        return Truncator(
+            f"{self.device_type.manufacturer} {self.device_type.model}"
+        ).chars(MAX_REPR)
 
     def clean_fields(self, exclude=None):
         # A field-level check, so full_clean(exclude=["yaml_layout"]) skips the parse.
@@ -213,7 +220,10 @@ class Association(ChangeLoggedModel):
         )
 
     def __str__(self):
-        return f"{self.hardware_type.full_name} → {self.revision}"
+        # The type comes first: it identifies the association.
+        return Truncator(f"{self.hardware_type.full_name} → {self.revision}").chars(
+            MAX_REPR
+        )
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:association", args=[self.pk])

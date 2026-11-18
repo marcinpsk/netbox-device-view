@@ -26,6 +26,7 @@ from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.models import (
+    MAX_REPR,
     Association,
     DefinitionRevision,
     DeviceView,
@@ -130,6 +131,35 @@ class CatalogueModelTests(SimpleTestCase):
             labels - CATALOGUE,
             {"netbox_device_view.deviceview", "netbox_device_view.association"},
         )
+
+
+def long_device_type(save=False):
+    """Return a device type whose manufacturer name and model have the maximum length."""
+    manufacturer = Manufacturer(name="M" * 100, slug="m" * 100)
+    device_type = DeviceType(manufacturer=manufacturer, model="X" * 100, slug="x" * 100)
+    if save:
+        manufacturer.save()
+        device_type.manufacturer = manufacturer
+        device_type.save()
+    return device_type
+
+
+class BranchObjectTextTests(SimpleTestCase):
+    def test_the_text_of_each_branch_object_fits_its_change_record(self):
+        # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
+        device_type = long_device_type()
+        revision = DefinitionRevision(
+            definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
+        )
+        for obj in (
+            DeviceView(device_type=device_type),
+            Association(device_type=device_type, revision=revision),
+        ):
+            with self.subTest(type(obj).__name__):
+                self.assertLessEqual(len(str(obj)), MAX_REPR)
+                self.assertTrue(
+                    str(obj).startswith(device_type.full_name[: MAX_REPR - 1])
+                )
 
 
 @unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
@@ -260,6 +290,34 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
         self.source.sync()
 
         self.assertContains(self.import_source(), "Imported")
+
+
+class LongNameActivationInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        self.device_type = long_device_type(save=True)
+        super().setUp()
+
+    def test_an_activation_for_a_type_with_long_names_has_its_change_record(self):
+        from netbox_branching.models import ChangeDiff
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        diff = ChangeDiff.objects.using("default").get(
+            object_type=ObjectType.objects.get_for_model(Association)
+        )
+        self.assertTrue(
+            diff.object_repr.startswith(self.device_type.full_name[: MAX_REPR - 1])
+        )
 
 
 class KeyTransferInBranchTests(ArtworkBranchTestCase):
