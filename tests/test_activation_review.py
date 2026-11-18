@@ -28,6 +28,7 @@ from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils.http import urlencode
+from netbox.context import events_queue
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork import pins, review
@@ -38,6 +39,7 @@ from netbox_device_view.models import (
     DefinitionRevision,
     InstancePin,
     active_revisions,
+    write_transaction,
 )
 
 from .activation import activate
@@ -1082,3 +1084,22 @@ class EntryTests(ReviewTestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+
+class WriteTransactionTests(TestCase):
+    """The events of a write reach event rules only when the write commits."""
+
+    def queue(self):
+        token = events_queue.set({"queued": "event"})
+        self.addCleanup(events_queue.reset, token)
+
+    def test_a_failed_write_drops_its_queued_events(self):
+        self.queue()
+        with self.assertRaises(ValueError), write_transaction(Association):
+            raise ValueError("the write failed")
+        self.assertEqual(events_queue.get(), {})
+
+    def test_a_write_that_commits_keeps_its_queued_events(self):
+        self.queue()
+        with write_transaction(Association):
+            pass
+        self.assertEqual(events_queue.get(), {"queued": "event"})
