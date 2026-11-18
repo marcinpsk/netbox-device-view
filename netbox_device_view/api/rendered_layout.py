@@ -122,7 +122,7 @@ def member_panels(
     """
     normalized = parse_layout(device_view.yaml_layout)
     member_modules = list(member.modules.restrict(user, "view"))
-    variant = _detect_variant(member_modules, device_view)
+    variant = _detect_variant(member_modules, normalized)
     states = device_components(member, user)
     panels = []
     for face, view in face_views(normalized):

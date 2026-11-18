@@ -35,7 +35,7 @@ from .details import Details, key_details
 from .layout import (
     LayoutParseError,
     get_css_for_device_view,
-    get_svg_for_device_view,
+    render_svg,
 )
 from .layout import (
     parse as parse_layout,
@@ -150,12 +150,9 @@ def active_panel_key(obj):
     return obj.vc_position
 
 
-def _detect_variant(member_modules, device_view) -> str | None:
-    """Return the first installed module model name that matches a known variant,
+def _detect_variant(member_modules, layout) -> str | None:
+    """Return the first installed module model name that matches a variant of the parsed ``layout``,
     or None if no variant applies."""
-    if not device_view.has_yaml_layout:
-        return None
-    layout = parse_layout(device_view.yaml_layout)
     view = layout.front or layout.rear
     if view is None or not view.variants:
         return None
@@ -359,16 +356,18 @@ def prepare_svg(obj, user, cable_colors=False):
             member_modules = list(member.modules.restrict(user, "view"))
             modules[key] = member_modules
             states = device_components(member, user)
-            variant = _detect_variant(member_modules, device_view)
-            drawn = (
-                drawn_keys(parse_layout(device_view.yaml_layout), variant)
-                if device_view.has_yaml_layout
-                else {}
-            )
-            cells, details = _svg_cells(states, cable_colors, f"dv-s{member.pk}", drawn)
-            svg = get_svg_for_device_view(
-                device_view, variant_name=variant, cells=cells
-            )
+            if device_view.has_yaml_layout:
+                layout = parse_layout(device_view.yaml_layout)
+                variant = _detect_variant(member_modules, layout)
+                cells, details = _svg_cells(
+                    states,
+                    cable_colors,
+                    f"dv-s{member.pk}",
+                    drawn_keys(layout, variant),
+                )
+                svg = render_svg(layout, variant_name=variant, cells=cells)
+            else:
+                svg, details = "", []
             if states:
                 svg_views[key] = (svg, details)
     except ObjectDoesNotExist:

@@ -1,5 +1,7 @@
 """Request-level tests for the plugin's helper views."""
 
+from unittest import mock
+
 from dcim.models import (
     Cable,
     Device,
@@ -17,6 +19,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from users.models import User
 
+from netbox_device_view.layout import parser
 from netbox_device_view.models import DeviceView, RenderMode
 
 INTERFACES_URL = "plugins:netbox_device_view:devicetype_interfaces"
@@ -112,9 +115,14 @@ class DeviceViewTabTests(TestCase):
         )
         for device in (self.device, other):
             Interface.objects.create(device=device, name="Gi1", type="1000base-t")
-        response = self._tab(RenderMode.SVG)
+        # A spy on the real compiler: each parse of the layout compiles its views once.
+        with mock.patch.object(
+            parser, "_compile_views", wraps=parser._compile_views
+        ) as compile_views:
+            response = self._tab(RenderMode.SVG)
         self.assertContains(response, 'id="dv-svg-wrapper-1"', count=1)
         self.assertContains(response, 'id="dv-svg-wrapper-2"', count=1)
+        self.assertEqual(compile_views.call_count, 2)
 
     def test_a_member_without_a_device_view_hides_the_virtual_chassis_view(self):
         chassis = VirtualChassis.objects.create(name="vc")
