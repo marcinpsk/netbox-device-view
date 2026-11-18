@@ -24,6 +24,7 @@ _LICENSING = get_spdx_licensing()
 FACES = tuple(SCHEMA["$defs"]["face_name"]["enum"])
 _URL = URLValidator(schemes=["https"])
 _INT_TAG = "tag:yaml.org,2002:int"
+_STR_TAG = "tag:yaml.org,2002:str"
 MAX_INTEGER_LENGTH = 16
 # The manifest has no floats, so the float tag (and its YAML 1.1 forms) is not core here.
 _CORE_TAGS = {
@@ -99,6 +100,18 @@ def _line_map(node, path=(), lines=None):
     return lines
 
 
+def _non_string_key_lines(node):
+    """Yield the line of each mapping key that is not a string."""
+    if isinstance(node, yaml.MappingNode):
+        for key_node, value_node in node.value:
+            if key_node.tag != _STR_TAG:
+                yield key_node.start_mark.line + 1
+            yield from _non_string_key_lines(value_node)
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from _non_string_key_lines(item)
+
+
 def _load(path: str, data: bytes) -> tuple[Any, dict]:
     if len(data) > MAX_MANIFEST_BYTES:
         raise ArtworkError(
@@ -121,7 +134,9 @@ def _load(path: str, data: bytes) -> tuple[Any, dict]:
             node = loader.get_single_node()
             if node is None:
                 raise _LoadError("The manifest is empty.", 1)
-            return loader.construct_document(node), _line_map(node)
+            key_lines = sorted(_non_string_key_lines(node))
+            if not key_lines:
+                return loader.construct_document(node), _line_map(node)
         except (ValueError, OverflowError) as exc:
             # The PyYAML scanner converts escapes and directive numbers with chr() and int().
             raise _LoadError(
@@ -135,6 +150,9 @@ def _load(path: str, data: bytes) -> tuple[Any, dict]:
         mark = getattr(exc, "problem_mark", None)
         line = mark.line + 1 if mark else None
         raise ArtworkError([Issue(path, line, f"Invalid YAML: {exc}")]) from exc
+    raise ArtworkError(
+        [Issue(path, line, "Mapping keys must be strings.") for line in key_lines]
+    )
 
 
 def _strings(value, at=()):
@@ -143,8 +161,7 @@ def _strings(value, at=()):
         yield at, value
     elif isinstance(value, dict):
         for key, item in value.items():
-            if isinstance(key, str):
-                yield at, key
+            yield at, key
             yield from _strings(item, (*at, key))
     elif isinstance(value, list):
         for index, item in enumerate(value):

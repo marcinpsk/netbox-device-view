@@ -192,6 +192,25 @@ def test_a_url_with_a_valid_explicit_port_passes():
     parse_manifest("m.yaml", text.encode())
 
 
+@pytest.mark.parametrize(
+    "text, line",
+    [
+        (DEVICE_MANIFEST + "1: value\nextra: value\n", 34),
+        (replace("  sku: SW-24-AC\n", "  sku: SW-24-AC\n  ~: x\n  true: y\n"), 8),
+        (replace("bays:\n  bay-nm:", "bays:\n  ? [bay-nm]\n  :"), 31),
+    ],
+)
+def test_mapping_keys_must_be_strings(text, line):
+    found = issues(text)
+    assert found[0].line == line
+    assert all(issue.message == "Mapping keys must be strings." for issue in found)
+
+
+def test_every_non_string_key_has_an_issue():
+    text = replace("  sku: SW-24-AC\n", "  sku: SW-24-AC\n  ~: x\n  true: y\n")
+    assert [issue.line for issue in issues(text)] == [8, 9]
+
+
 def test_a_face_that_the_manifest_does_not_declare():
     found = issues(replace("  rear: {file: rear.svg}\n", ""))
     assert found[0].message == "connectors.con-psu.face: The face rear is not in faces."
