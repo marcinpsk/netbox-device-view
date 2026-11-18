@@ -12,6 +12,7 @@ import inspect
 from dcim.models import DeviceType, Manufacturer
 from django import forms as django_forms
 from django.test import TestCase
+from utilities.forms import FilterForm
 from utilities.forms.fields.dynamic import DynamicModelChoiceMixin
 
 from netbox_device_view import forms
@@ -74,7 +75,9 @@ def test_every_device_type_picker_names_the_manufacturer():
     pickers = [
         (form.__name__, name, field)
         for form in vars(forms).values()
-        if inspect.isclass(form) and issubclass(form, django_forms.BaseForm)
+        if inspect.isclass(form)
+        and issubclass(form, django_forms.BaseForm)
+        and form.__module__ == forms.__name__
         for name, field in form.base_fields.items()
         if isinstance(field, DynamicModelChoiceMixin)
         and field.queryset.model is DeviceType
@@ -82,3 +85,17 @@ def test_every_device_type_picker_names_the_manufacturer():
     assert pickers
     for form, name, field in pickers:
         assert field.context.get("parent") == "manufacturer", f"{form}.{name}"
+
+
+def test_every_filter_form_restricts_its_object_choices():
+    # NetBox renders the objects that a list query names with the queryset of the filter field.
+    filter_forms = [
+        form
+        for form in vars(forms).values()
+        if inspect.isclass(form)
+        and issubclass(form, FilterForm)
+        and form.__module__ == forms.__name__
+    ]
+    assert filter_forms
+    for form in filter_forms:
+        assert issubclass(form, forms.RestrictedFilterFormMixin), form.__name__

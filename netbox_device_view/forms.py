@@ -3,6 +3,8 @@ from dcim.models import DeviceType, Manufacturer
 from django import forms
 from django.utils.text import capfirst, format_lazy
 from django.utils.translation import gettext_lazy as _
+from extras.models import SavedFilter
+from netbox.context import current_request
 from netbox.forms import (
     NetBoxModelFilterSetForm,
     NetBoxModelForm,
@@ -16,11 +18,34 @@ from utilities.forms.fields import (
     DynamicModelMultipleChoiceField,
     TagFilterField,
 )
+from utilities.forms.fields.dynamic import DynamicModelChoiceMixin
 from utilities.forms.rendering import FieldSet
 
 from . import datasource_import
 from .models import Association, DeviceView, VisualDefinition
 from .utils import normalize_grid_template_area
+
+
+class RestrictedFilterFormMixin:
+    """Restrict each object choice of a filter form to the objects that the user can view."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # NetBox builds a filter form from the query alone, so the user comes from the request.
+        request = current_request.get()
+        if request is None:
+            raise RuntimeError("A filter form needs the current request.")
+        for field in self.fields.values():
+            # NetBox decides which saved filters a user can apply.
+            if (
+                isinstance(field, DynamicModelChoiceMixin)
+                and field.queryset.model is not SavedFilter
+            ):
+                field.queryset = field.queryset.restrict(request.user, "view")
+                # A filter modifier widget renders the selection from the choices of its inner widget.
+                inner = getattr(field.widget, "original_widget", None)
+                if inner is not None:
+                    inner.choices = field.choices
 
 
 class SanitizeGridTemplateAreaMixin:
@@ -51,7 +76,7 @@ class DeviceViewImportForm(SanitizeGridTemplateAreaMixin, NetBoxModelImportForm)
         fields = ("device_type", "grid_template_area", "yaml_layout", "render_mode")
 
 
-class DeviceViewFilterForm(NetBoxModelFilterSetForm):
+class DeviceViewFilterForm(RestrictedFilterFormMixin, NetBoxModelFilterSetForm):
     model = DeviceView
     fieldsets = (
         FieldSet("q", "filter_id", "tag"),
@@ -204,7 +229,7 @@ class ActivateRevisionForm(forms.Form):
         self.fields["device_type"].queryset = DeviceType.objects.restrict(user, "view")
 
 
-class AssociationFilterForm(SavedFiltersMixin, FilterForm):
+class AssociationFilterForm(RestrictedFilterFormMixin, SavedFiltersMixin, FilterForm):
     model = Association
     fieldsets = (FieldSet("q", "filter_id"), FieldSet("device_type_id"))
     device_type_id = DynamicModelMultipleChoiceField(
@@ -215,7 +240,9 @@ class AssociationFilterForm(SavedFiltersMixin, FilterForm):
     )
 
 
-class VisualDefinitionFilterForm(SavedFiltersMixin, FilterForm):
+class VisualDefinitionFilterForm(
+    RestrictedFilterFormMixin, SavedFiltersMixin, FilterForm
+):
     model = VisualDefinition
     fieldsets = (FieldSet("q", "filter_id"), FieldSet("key_owner_id"))
     key_owner_id = DynamicModelMultipleChoiceField(
