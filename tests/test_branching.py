@@ -3,14 +3,21 @@
 import shutil
 import tempfile
 import unittest
+import uuid
 
 from core.models import ObjectChange, ObjectType
-from dcim.models import DeviceType
+from dcim.models import DeviceType, Manufacturer
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase, TransactionTestCase, override_settings
+from django.test import (
+    RequestFactory,
+    SimpleTestCase,
+    TransactionTestCase,
+    override_settings,
+)
 from django.urls import reverse
+from netbox.context_managers import event_tracking
 from users.models import ObjectPermission, User
 
 from netbox_device_view import datasource_import
@@ -154,8 +161,26 @@ class ArtworkImportInBranchTests(ArtworkBranchTestCase):
         self.assertEqual(revision.imports.get().source_name, "sw24.zip")
 
     def test_a_branch_merge_leaves_the_imported_revision_in_main(self):
+        from netbox_branching.choices import BranchStatusChoices
+        from netbox_branching.utilities import activate_branch
+
         self.upload()
+        revision = DefinitionRevision.objects.get()
+        # Branch.merge() replays nothing without a staged change, so stage one.
+        request = RequestFactory().get(reverse("home"))
+        request.id, request.user = uuid.uuid4(), self.user
+        with activate_branch(self.branch), event_tracking(request):
+            Manufacturer.objects.create(name="Branch Only", slug="branch-only")
 
         self.branch.merge(user=self.user)
 
-        self.assertEqual(DefinitionRevision.objects.get().definition.key, "acme/sw-24")
+        self.branch.refresh_from_db()
+        self.assertEqual(self.branch.status, BranchStatusChoices.MERGED)
+        self.assertTrue(Manufacturer.objects.filter(slug="branch-only").exists())
+        self.assertEqual(DefinitionRevision.objects.get(), revision)
+        self.assertEqual(
+            sorted(revision.files.values_list("path", flat=True)),
+            ["front.svg", "manifest.yaml", "rear.svg"],
+        )
+        self.assertEqual(revision.imports.get().source_name, "sw24.zip")
+
