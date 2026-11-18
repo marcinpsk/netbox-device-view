@@ -333,8 +333,6 @@ def _transform_arguments(scanner: _Scanner) -> list[float]:
 
 def _transform_items(value: str):
     """Yield (name, numbers) of each function of a valid transform list."""
-    if len(value.encode()) > MAX_TRANSFORM_BYTES:
-        raise _Bound(f"transform list is longer than {MAX_TRANSFORM_BYTES} bytes")
     scanner = _Scanner(value)
     while not scanner.at_end():
         where = scanner.where()
@@ -357,6 +355,9 @@ def _transform_items(value: str):
 
 
 def _transform(value: str):
+    # The import bounds the stored value; a canonical form of it can be longer.
+    if len(value.encode()) > MAX_TRANSFORM_BYTES:
+        raise _Bound(f"transform list is longer than {MAX_TRANSFORM_BYTES} bytes")
     for _ in _transform_items(value):
         pass
 

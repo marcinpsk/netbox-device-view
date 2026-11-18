@@ -220,6 +220,26 @@ class ArtworkTestCase(TestCase):
 
 
 class ArtworkTabTests(ArtworkTestCase):
+    def test_a_long_transform_that_the_import_accepts_renders(self):
+        # The canonical form of each number is longer than the stored form.
+        transform = " ".join(["translate(1e-4)"] * 64)
+        self.assertEqual(len(transform.encode()), 1023)
+        files = {
+            **FILES,
+            "front.svg": FRONT_SVG.replace(
+                '<g transform="translate(10 10)">', f'<g transform="{transform}">'
+            ),
+        }
+        admin = User.objects.get(username="admin")
+        [imported] = import_bundle(
+            admin, "long.zip", io.BytesIO(bundle(definition("ACME/SW-24", files)))
+        )
+        Association.objects.create(
+            device_type=self.device_type, revision=imported.revision
+        )
+        front = faces(self.tab())[0]
+        self.assertIn(f"dv-o-d{self.device.pk}-front-con-eth1", links(front))
+
     def test_import_alone_changes_no_view(self):
         DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
         grant(self.user, DeviceView, "view")
