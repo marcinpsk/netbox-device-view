@@ -114,6 +114,8 @@ The import stops at these limits before it does more work:
 
 Each error names the file and, where one applies, the line. The import shows at most 50 errors.
 
+The HTTP server or a proxy in front of NetBox can refuse a large upload before the plugin reads it, with HTTP `413`. For example, the nginx configuration of the NetBox installation guide sets `client_max_body_size 25m`. To upload bundles up to the 50 MiB limit, set the request body limit above 50 MiB, with room for the multipart overhead.
+
 ---
 
 ## Revision identity
