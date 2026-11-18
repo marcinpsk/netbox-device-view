@@ -21,7 +21,7 @@ from netbox.object_actions import (
     ObjectAction,
 )
 from netbox.views import generic
-from netbox.views.generic import BulkImportView
+from netbox.views.generic import BulkImportView, ObjectChangeLogView
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
@@ -33,6 +33,7 @@ from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
 from .artwork import importing as artwork_importing
+from .artwork.branching import main_schema
 from .artwork.errors import ArtworkError
 from .utils import (
     device_view_context,
@@ -384,6 +385,15 @@ class DefinitionRevisionView(generic.ObjectView):
             "files": instance.files.select_related("blob"),
             "imports": instance.imports.all(),
         }
+
+
+class DefinitionRevisionChangeLogView(ObjectChangeLogView):
+    """The change log of a revision, read from main also in an active branch."""
+
+    def get(self, request, model, **kwargs):
+        # The catalogue and its change records are in main, not in the branch schema.
+        with main_schema():
+            return super().get(request, model, **kwargs)
 
 
 class DefinitionRevisionDeleteView(generic.ObjectDeleteView):

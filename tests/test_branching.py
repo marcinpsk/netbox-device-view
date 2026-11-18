@@ -184,3 +184,23 @@ class ArtworkImportInBranchTests(ArtworkBranchTestCase):
         )
         self.assertEqual(revision.imports.get().source_name, "sw24.zip")
 
+    def test_the_revision_change_log_reads_main_in_a_branch(self):
+        del self.client.cookies["active_branch"]
+        self.upload()
+        self.client.cookies["active_branch"] = self.branch.schema_id
+        self.grant(ObjectChange, "view")
+        revision = DefinitionRevision.objects.get()
+        change = ObjectChange.objects.using("default").get(
+            changed_object_type=ObjectType.objects.get_for_model(DefinitionRevision),
+            changed_object_id=revision.pk,
+        )
+
+        response = self.client.get(
+            reverse(
+                "plugins:netbox_device_view:definitionrevision_changelog",
+                args=[revision.pk],
+            )
+        )
+
+        self.assertContains(response, change.get_absolute_url())
+        self.assertContains(response, self.branch.name)

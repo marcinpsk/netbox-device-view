@@ -70,7 +70,7 @@ urlpatterns = (
     ),
     path(
         "artwork-revisions/<int:pk>/changelog/",
-        ObjectChangeLogView.as_view(),
+        views.DefinitionRevisionChangeLogView.as_view(),
         name="definitionrevision_changelog",
         kwargs={"model": models.DefinitionRevision},
     ),

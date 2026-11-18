@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from core.models import ObjectType
+from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.sessions.backends.db import SessionStore
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -191,6 +191,28 @@ class UploadTests(ArtworkTestCase):
         ):
             with self.subTest(text=text):
                 self.assertContains(detail, text)
+
+    def test_the_change_log_lists_the_creation_within_both_view_restrictions(self):
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        change = ObjectChange.objects.get(
+            changed_object_type=ObjectType.objects.get_for_model(DefinitionRevision),
+            changed_object_id=revision.pk,
+        )
+        url = reverse(
+            "plugins:netbox_device_view:definitionrevision_changelog",
+            args=[revision.pk],
+        )
+        self.assertNotContains(self.client.get(url), change.get_absolute_url())
+        self.grant(ObjectChange, "view")
+        self.assertContains(self.client.get(url), change.get_absolute_url())
+        self.user = User.objects.create_user(username="outsider")
+        self.client.force_login(self.user)
+        self.grant(ObjectChange, "view")
+        self.grant(
+            DefinitionRevision, "view", constraints={"definition__key": "acme/other"}
+        )
+        self.assertEqual(self.client.get(url).status_code, 404)
 
     def test_the_provenance_table_scrolls_in_its_card(self):
         # Without the wrapper, the table widens a 390 px page.
