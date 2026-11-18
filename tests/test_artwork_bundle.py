@@ -350,6 +350,15 @@ def test_a_member_that_inflates_past_its_declared_size_is_read_with_bounded_memo
     assert peak < 4 * 1024 * 1024
 
 
+def test_a_negative_member_offset_fails_before_the_member_is_read():
+    data = bytearray(bundle())
+    end = data.rfind(b"PK\x05\x06")
+    # zipfile moves every member by the difference to the declared directory offset.
+    (offset,) = struct.unpack_from("<L", data, end + 16)
+    struct.pack_into("<L", data, end + 16, offset + 1000)
+    assert_rejected(bytes(data), "invalid local header offset")
+
+
 def test_unsupported_zip_features_fail_with_an_issue():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:

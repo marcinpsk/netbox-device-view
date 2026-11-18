@@ -85,6 +85,9 @@ def _member_issues(info: zipfile.ZipInfo) -> list[str]:
         found.append("encrypted members are not supported.")
     if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
         found.append("unsupported compression method; use stored or deflated.")
+    # zipfile adds the difference to the declared directory offset, which can go negative.
+    if info.header_offset < 0:
+        found.append("damaged archive member (invalid local header offset).")
     if info.file_size > MAX_SVG_BYTES:
         found.append(f"larger than {MAX_SVG_BYTES} bytes.")
     elif info.file_size > MAX_COMPRESSION_RATIO * max(info.compress_size, 1):
