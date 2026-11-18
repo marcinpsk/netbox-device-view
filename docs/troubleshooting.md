@@ -67,3 +67,4 @@ The server adds the yellow dot when an interface has `link_peers` but no `connec
 
 - The port's cable is actually attached in NetBox
 - The cable path genuinely has no far-end device (check via the port's trace view)
+- The port is not a grey, dashed cell. Such a cell has no dot, because its stylename is shared with another component, for example a console port with the same name. See [Shared stylenames](how-it-works.md#shared-stylenames)
