@@ -27,7 +27,8 @@ artwork/
 - A definition key can occur in only one directory of a bundle.
 - Archive members are stored or deflated, and not encrypted. The manifest and the SVG files are UTF-8.
 - The archive uses the classic zip format. A zip64 archive fails. A bundle fits the classic format, because of its size and member limits.
-- If one definition fails, the import stores nothing.
+- The import validates all definitions before it writes. If one definition fails, the import stores nothing.
+- If media storage fails during the writes, the import stores no revision. Files that the import wrote before the failure can stay in media storage. The cleanup job removes them (see [Storage](#storage)).
 
 ---
 
