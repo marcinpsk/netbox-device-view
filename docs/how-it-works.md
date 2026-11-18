@@ -12,7 +12,7 @@ When you visit a device of that type, the plugin:
 
 The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus a component that both the page and the API show has the same state on both. The page and the API do not always show the same components: in CSS mode, a virtual chassis member shows no front or rear ports (see [Shared stylenames](#shared-stylenames)), but the API draws them on their SVG faces.
 
-A device type with an active artwork revision shows that artwork instead of its layout. See [Activate a revision](artwork-bundles.md#activate-a-revision).
+A device type with an active artwork revision shows that artwork instead of its layout. A virtual chassis shows artwork only when every member that you can view has active artwork. See [Activate a revision](artwork-bundles.md#activate-a-revision).
 
 ---
 
@@ -88,7 +88,7 @@ The Device View tab and the device page panel show only the objects that you can
 - The Device View tab of a device that you cannot view is not found (`404`).
 - A virtual chassis member that you cannot view has no panel. The panel title shows the virtual chassis name only when you can view the virtual chassis.
 - A DeviceView that you cannot view counts as missing. Without active artwork, the device page then has no Device View tab. A device type with active artwork shows the tab without a DeviceView.
-- A port that you cannot view is not in the panel. A peer that you cannot view is not in the port's popover.
+- A port that you cannot view is not in a layout panel. In artwork, the connector of that port stays, but it has no link to the component, no component tooltip and no cable outline. A peer that you cannot view is not in the port's popover.
 - A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the popover.
 - A module that you cannot view does not select a module variant, and its ports are not in the panel.
 
