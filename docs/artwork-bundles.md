@@ -394,7 +394,7 @@ In the UI, go to **Plugins → Instance Pins** and click **Add**. Select the dev
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
-An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A review in a branch activates only in that branch. A binding override and an instance pin belong to the branch in the same way. A revision that an association in a branch uses cannot be deleted in main. The error names the branch, and the API answers with 409.
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A review in a branch activates only in that branch. A binding override and an instance pin belong to the branch in the same way. A revision that an association or an instance pin in a branch uses cannot be deleted in main. The error names the branch, and the API answers with 409.
 
 An activation in a branch writes the association to the branch schema and its change record to main, on two database connections. A failure between the two commits can leave the association without its change record, and a merge then does not apply it. NetBox Branching records every branch change in the same way.
 
