@@ -248,6 +248,8 @@ The artwork catalogue is global, as Data Sources are. With [NetBox Branching](ht
 
 An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A revision that an association in a branch uses cannot be deleted in main. The error names the branch, and the API answers with 409.
 
+An activation in a branch writes the association to the branch schema and its change record to main, on two database connections. A failure between the two commits can leave the association without its change record, and a merge then does not apply it. NetBox Branching records every branch change in the same way.
+
 ---
 
 ## Storage
