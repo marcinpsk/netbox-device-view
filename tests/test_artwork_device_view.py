@@ -34,9 +34,14 @@ from lxml import etree
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.render import (
+    ARTWORK,
+    active_revisions,
+    resolve_device,
+)
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.artwork.svg import transform_matrix
-from netbox_device_view.models import Association, DeviceView
+from netbox_device_view.models import Association, DefinitionRevision, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
 from .browser import browser_page
@@ -726,6 +731,30 @@ class DamagedArtworkTests(ArtworkTestCase):
         (self.media / self.revision.files.get(path="rear.svg").blob.name).unlink()
         with self.assertLogs("netbox_device_view.artwork.render", "WARNING"):
             self.assertIn("Artwork damaged", self.tab())
+
+    def test_an_active_revision_without_a_face_file_shows_the_part_as_damaged(self):
+        self.activate()
+        self.revision.files.filter(path="rear.svg").delete()
+        with self.assertLogs("netbox_device_view.artwork.render", "WARNING"):
+            self.assertIn("Artwork damaged", self.tab())
+
+    def test_a_revision_deleted_after_its_read_draws_the_active_revision(self):
+        # The page read the first revision, then an activation and a delete ran.
+        self.activate()
+        admin = User.objects.get(username="admin")
+        new_files = {**FILES, "front.svg": FRONT_SVG.replace("#555", "#666")}
+        [imported] = import_bundle(
+            admin, "new.zip", io.BytesIO(bundle(definition("ACME/SW-24", new_files)))
+        )
+        read = active_revisions([self.device_type.pk])[self.device_type.pk]
+        Association.objects.update(revision=imported.revision)
+        DefinitionRevision.objects.get(pk=read.pk).delete()
+        with self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"):
+            part = resolve_device(self.device, read, self.user)
+        self.assertEqual(
+            (part.representation, part.revision), (ARTWORK, imported.revision)
+        )
+        self.assertIn("#666", part.faces[0].svg)
 
 
 class LocalAssetTests(ArtworkTestCase):
