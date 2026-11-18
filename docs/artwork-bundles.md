@@ -128,7 +128,7 @@ Each import record keeps the provenance: the time, the user, the bundle file nam
 
 ## Import a bundle
 
-In the UI, go to **Plugins → Artwork Revisions** and click **Import bundle**. Then select the `.zip` file and click **Import**.
+In the UI, go to **Plugins → Artwork Revisions** and click **Import bundle**. A user with the add permission but no view permission does not see that page; use **Plugins → Import Artwork Bundle** instead. Then select the `.zip` file and click **Import**.
 
 With the REST API, send the file as the multipart field `bundle`:
 
