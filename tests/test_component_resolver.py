@@ -344,9 +344,9 @@ class AmbiguousKeyTests(ResolverTestBase):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         with browser_page(self._tab()) as page:
             cell = page.locator('[data-connection-state="ambiguous"]')
-            cell.hover()
             cell.focus()
             page.wait_for_selector(".popover", state="visible")
+            cell.hover()
             page.keyboard.press("Escape")
             page.wait_for_timeout(700)
             self.assertEqual(page.locator(".popover:visible").count(), 0)
