@@ -1,6 +1,7 @@
 """The Device View tab, the device page panel and the rendered-layout API resolve components the same way."""
 
 import re
+from collections import defaultdict
 from html.parser import HTMLParser
 
 from core.models import ObjectType
@@ -78,16 +79,24 @@ class _PortCells(HTMLParser):
     def __init__(self):
         super().__init__()
         self.cells = []
+        self.face = None
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = (attrs.get("class") or "").split()
+        if tag == "svg":
+            self.face = attrs.get("data-face")
         if (tag == "g" and "dv-port" in classes) or (
             tag == "a" and "device-view-port" in classes
         ):
-            self.cells.append(attrs)
+            # The data-face of the enclosing SVG; None for a CSS grid port.
+            self.cells.append({**attrs, "face": self.face})
         elif tag == "rect" and "dv-port-rect" in classes and self.cells:
             self.cells[-1]["rect-fill"] = attrs["fill"]
+
+    def handle_endtag(self, tag):
+        if tag == "svg":
+            self.face = None
 
 
 def page_cells(content):
@@ -510,17 +519,19 @@ class PatchPanelFaceTests(ResolverTestBase):
                 )
 
     def test_page_binds_the_ports_of_each_face(self):
+        expected = {
+            face: {
+                port.get_absolute_url()
+                for port in model.objects.filter(device=self.device)
+            }
+            for face, model in (("front", FrontPort), ("rear", RearPort))
+        }
         for page, content in self._pages().items():
             with self.subTest(page):
-                hrefs = {cell.get("data-href") for cell in page_cells(content)}
-                self.assertEqual(
-                    hrefs,
-                    {
-                        port.get_absolute_url()
-                        for model in (FrontPort, RearPort)
-                        for port in model.objects.filter(device=self.device)
-                    },
-                )
+                hrefs = defaultdict(set)
+                for cell in page_cells(content):
+                    hrefs[cell["face"]].add(cell.get("data-href"))
+                self.assertEqual(hrefs, expected)
 
 
 class SingleViewPatchPanelTests(PatchPanelFaceTests):
