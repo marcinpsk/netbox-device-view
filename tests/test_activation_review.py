@@ -615,7 +615,10 @@ class RollbackTests(ReviewTestCase):
         self.assertContains(page, self.revision.digest)
         url = page.context["rollback_url"]
         self.assertContains(page, "Roll back")
-        self.assertContains(page, url.replace("&", "&amp;"))
+        # The control opens the review page, so it keeps the semantics of a link.
+        self.assertContains(
+            page, f'<a href="{url.replace("&", "&amp;")}" class="btn btn-primary">'
+        )
 
         review_page = self.client.get(url)
         [target] = review_page.context["review"].targets
@@ -1078,3 +1081,4 @@ class EntryTests(ReviewTestCase):
             {"pk": [self.association.pk]},
         )
         self.assertEqual(response.status_code, 403)
+
