@@ -20,7 +20,7 @@
 	{% for cell in cells %}
 	<a
 		{% if cell.href %}href="{{ cell.href }}"{% endif %}
-		{% if not cell.href %}tabindex="0"{% endif %}
+		{% if not cell.href %}tabindex="0" role="button" aria-label="{{ cell.name }}: show the components with this key"{% endif %}
 		class="device-view-port {{ cell.classes|join:' ' }}"
 		data-connection-state="{{ cell.connection_state }}"
 		data-bs-title="{{ cell.popover_title|force_escape }}"

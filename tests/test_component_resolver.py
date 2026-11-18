@@ -364,6 +364,15 @@ class AmbiguousKeyTests(ResolverTestBase):
             self.assertFalse(cell.evaluate("el => el === document.activeElement"))
             self.assertTrue(popover.is_visible())
 
+    def test_an_ambiguous_css_cell_has_an_accessible_name(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        with browser_page(self._tab()) as page:
+            cell = page.get_by_role(
+                "button", name="console: show the components with this key"
+            )
+            self.assertEqual(cell.count(), 1)
+            self.assertEqual(cell.get_attribute("data-connection-state"), "ambiguous")
+
     def test_hovering_the_port_keeps_focus_on_an_open_candidate(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         candidate = self.interface.get_absolute_url()
