@@ -333,6 +333,7 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
 
     def test_a_rejected_activation_in_a_branch_leaves_no_change_record(self):
         from netbox_branching.models import ChangeDiff
+        from netbox_branching.utilities import activate_branch
 
         self.upload()
         revision = DefinitionRevision.objects.get()
@@ -351,6 +352,10 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+        with activate_branch(self.branch):
+            self.assertFalse(
+                Association.objects.filter(device_type=self.device_type).exists()
+            )
         self.assertFalse(
             ChangeDiff.objects.using("default")
             .filter(object_type=ObjectType.objects.get_for_model(Association))
