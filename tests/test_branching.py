@@ -9,10 +9,11 @@ import uuid
 from pathlib import Path
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
-from dcim.models import Device, DeviceType, Manufacturer
+from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models import ProtectedError
 from django.test import (
     RequestFactory,
     SimpleTestCase,
@@ -26,6 +27,7 @@ from users.constants import TOKEN_PREFIX
 from users.models import Token, User
 
 from netbox_device_view import datasource_import
+from netbox_device_view.artwork import pins
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.artwork.importing import import_bundle
@@ -353,6 +355,45 @@ class LongNameActivationInBranchTests(ArtworkBranchTestCase):
         self.assertTrue(
             diff.object_repr.startswith(self.device_type.full_name[: MAX_REPR - 1])
         )
+
+
+class PinInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        self.device = Device.objects.create(
+            name="sw1",
+            device_type=device_type,
+            role=DeviceRole.objects.create(name="Switch", slug="switch"),
+            site=Site.objects.create(name="Site", slug="site"),
+        )
+        super().setUp()
+
+    def test_a_revision_pinned_only_in_a_branch_cannot_be_deleted_in_main(self):
+        from netbox_branching.utilities import activate_branch
+
+        grant(self.user, InstancePin, "view", "add")
+        grant(self.user, Device, "view")
+        del self.client.cookies["active_branch"]
+        self.upload()
+        [pinned] = DefinitionRevision.objects.all()
+        files = {**DEVICE_FILES, "front.svg": FRONT_SVG.replace("#333", "#222")}
+        [newer] = import_bundle(
+            self.user, "newer.zip", io.BytesIO(bundle(definition(DEVICE_DIR, files)))
+        )
+        with activate_branch(self.branch):
+            Association.objects.create(
+                device_type=self.device.device_type, revision=newer.revision
+            )
+            pins.save(self.user, InstancePin(device=self.device, revision=pinned))
+
+        with self.assertRaises(ProtectedError):
+            pinned.delete()
+        self.assertTrue(DefinitionRevision.objects.filter(pk=pinned.pk).exists())
 
 
 class KeyTransferInBranchTests(ArtworkBranchTestCase):

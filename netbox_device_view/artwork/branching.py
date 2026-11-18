@@ -40,36 +40,37 @@ def register_with_netbox_branching():
 
 
 def protect_branch_revisions(sender, instance, using, **kwargs):
-    """Refuse to delete a revision that an association in a branch schema uses."""
-    # A branch schema has no foreign keys, so PROTECT on Association.revision does not see it.
+    """Refuse to delete a revision that an association or a pin in a branch schema uses."""
+    # A branch schema has no foreign keys, so PROTECT on the revision fields does not see it.
     from netbox_branching.models import Branch
 
-    from ..models import Association
+    from ..models import Association, InstancePin
 
     branches = {branch.schema_name: branch for branch in Branch.objects.using(using)}
     if not branches:
         return
-    table = Association._meta.db_table
-    column = Association._meta.get_field("revision").column
+    users = set()
     with connections[using].cursor() as cursor:
-        # A schema without the table is not provisioned or not migrated, so it has no associations.
-        cursor.execute(
-            "SELECT table_schema FROM information_schema.tables"
-            " WHERE table_name = %s AND table_schema = ANY(%s) ORDER BY table_schema",
-            [table, list(branches)],
-        )
-        schemas = [row[0] for row in cursor.fetchall()]
-        users = []
-        for schema in schemas:
+        for model in (Association, InstancePin):
+            table = model._meta.db_table
+            column = model._meta.get_field("revision").column
+            # A schema without the table is not provisioned or not migrated, so it has no rows.
             cursor.execute(
-                sql.SQL("SELECT EXISTS (SELECT 1 FROM {} WHERE {} = %s)").format(
-                    sql.Identifier(schema, table), sql.Identifier(column)
-                ),
-                [instance.pk],
+                "SELECT table_schema FROM information_schema.tables"
+                " WHERE table_name = %s AND table_schema = ANY(%s)"
+                " ORDER BY table_schema",
+                [table, list(branches)],
             )
-            if cursor.fetchone()[0]:
-                users.append(branches[schema])
+            for (schema,) in cursor.fetchall():
+                cursor.execute(
+                    sql.SQL("SELECT EXISTS (SELECT 1 FROM {} WHERE {} = %s)").format(
+                        sql.Identifier(schema, table), sql.Identifier(column)
+                    ),
+                    [instance.pk],
+                )
+                if cursor.fetchone()[0]:
+                    users.add(branches[schema])
     if users:
         raise ProtectedError(
-            _("The revision is the active artwork in a branch."), set(users)
+            _("The revision is the active or pinned artwork in a branch."), users
         )
