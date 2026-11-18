@@ -19,6 +19,12 @@ def _number(name: str) -> int:
     return int(name.split("_", 1)[0])
 
 
+def in_oldest_netbox(app: str, name: str) -> bool:
+    """Return True when NetBox 4.5.0 has the migration: a lower number, or the exact name of its last one."""
+    last = OLDEST_MIGRATIONS.get(app)
+    return last is not None and (name == last or _number(name) < _number(last))
+
+
 class MigrationDependencyTests(SimpleTestCase):
     def test_the_oldest_migrations_belong_to_the_minimum_netbox_version(self):
         self.assertEqual(apps.get_app_config(PLUGIN).min_version, OLDEST_NETBOX)
@@ -33,7 +39,11 @@ class MigrationDependencyTests(SimpleTestCase):
                 if dependency_app == PLUGIN or dependency == "__first__":
                     continue
                 with self.subTest(migration=name, dependency=dependency):
-                    self.assertIn(dependency_app, OLDEST_MIGRATIONS)
-                    self.assertLessEqual(
-                        _number(dependency), _number(OLDEST_MIGRATIONS[dependency_app])
-                    )
+                    self.assertTrue(in_oldest_netbox(dependency_app, dependency))
+
+    def test_a_later_migration_with_the_last_number_is_not_in_the_oldest_netbox(self):
+        self.assertTrue(in_oldest_netbox("dcim", "0225_gfk_indexes"))
+        self.assertTrue(in_oldest_netbox("dcim", "0172_larger_power_draw_values"))
+        self.assertFalse(in_oldest_netbox("dcim", "0225_new_on_later_release"))
+        self.assertFalse(in_oldest_netbox("dcim", "0226_gfk_indexes"))
+        self.assertFalse(in_oldest_netbox("ipam", "0001_initial"))
