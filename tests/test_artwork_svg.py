@@ -326,6 +326,11 @@ BAD_VALUES = [
     ('<rect fill="url(#g) red"/>', "fill"),
     ('<rect fill="javascript:alert(1)"/>', "fill"),
     ('<rect fill="bluish"/>', "fill"),
+    ('<rect fill="color()"/>', "fill"),
+    pytest.param(f'<rect fill="rgb({"9" * 4400} 0 0)"/>', "too long", id="long-fill"),
+    pytest.param(
+        f'<rect style="fill: rgb({"9" * 4400} 0 0)"/>', "too long", id="long-style"
+    ),
     ('<rect stroke="url(&quot;#g&quot;)"/>', "stroke"),
     ('<rect clip-path="inset(1px)"/>', "clip-path"),
     ('<stop stop-color="none"/>', "stop-color"),
@@ -365,6 +370,10 @@ BAD_VALUES = [
     ('<rect style="transform: scale(2)"/>', "transform"),
     ('<rect style="fill red"/>', "style"),
     ('<rect style="fill: bluish"/>', "fill"),
+    ('<rect style="fill: color()"/>', "fill"),
+    pytest.param(
+        f'<rect style="stroke-width: {"1" * 5000}"/>', "too long", id="long-width"
+    ),
     ('<rect style="stroke-width: -1px"/>', "stroke-width"),
     ('<rect style="fill: url(#g); {}"/>', "style"),
 ]
