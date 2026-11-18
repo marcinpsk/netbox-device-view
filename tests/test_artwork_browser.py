@@ -6,10 +6,18 @@ from dcim.models import Cable, DeviceType, Interface
 from PIL import Image
 
 from .browser import browser_page
-from .test_artwork_device_view import FRONT_SVG, ArtworkTestCase, faces, links
+from .test_artwork_device_view import (
+    FRONT_SVG,
+    REAR_SVG,
+    ArtworkTestCase,
+    faces,
+    links,
+)
 
 
-class CabledArtworkBrowserTests(ArtworkTestCase):
+class ArtworkBrowserTests(ArtworkTestCase):
+    """The artwork of a device whose eth1 has a cable."""
+
     def setUp(self):
         super().setUp()
         peer = self.make_device(
@@ -76,3 +84,30 @@ class CabledArtworkBrowserTests(ArtworkTestCase):
             )
         # The outline filter has its region in the same user space.
         self.assertEqual(offset, 10)
+
+    def test_zoom_keeps_the_point_of_a_narrow_face_at_the_centre(self):
+        # At zoom 1 the rear face is 450 px wide and 300 px high in a 500 px wide view.
+        self.store_face(
+            "rear.svg",
+            REAR_SVG.replace('viewBox="0 0 440 44"', 'viewBox="0 0 150 100"'),
+        )
+        with browser_page(self.tab()) as page:
+            point = """viewport => {
+                const port = viewport.getBoundingClientRect();
+                const face = viewport.querySelector(".dv-art-face").getBoundingClientRect();
+                const x = port.left + viewport.clientLeft + viewport.clientWidth / 2;
+                const y = port.top + viewport.clientTop + viewport.clientHeight / 2;
+                return [(x - face.left) / face.width, (y - face.top) / face.height];
+            }"""
+            panel = page.locator(".dv-art-panel").nth(1)
+            viewport = panel.locator(".dv-art-viewport")
+            viewport.evaluate("""viewport => {
+                    viewport.style.width = "500px";
+                    viewport.style.setProperty("--dv-max-height", "300px");
+                }""")
+            before = viewport.evaluate(point)
+            panel.locator('[data-dv-zoom="in"]').click()
+            after = viewport.evaluate(point)
+        self.assertAlmostEqual(before[0], 5 / 9, places=2)
+        for start, end in zip(before, after, strict=True):
+            self.assertAlmostEqual(start, end, places=2)

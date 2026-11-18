@@ -9,13 +9,27 @@
     var current = parseFloat(viewport.dataset.zoom) || 1;
     var next = action === "in" ? current * STEP : action === "out" ? current / STEP : 1;
     next = Math.min(MAX, Math.max(1, next));
-    // Keep the centre of the view in place.
-    var cx = (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth;
-    var cy = (viewport.scrollTop + viewport.clientHeight / 2) / viewport.scrollHeight;
+    // Keep the point of the face at the centre of the view; the face can be narrower than the view.
+    var face = viewport.querySelector(".dv-art-face");
+    var before = face.getBoundingClientRect();
+    var centre = centreOf(viewport);
+    var x = (centre.x - before.left) / before.width;
+    var y = (centre.y - before.top) / before.height;
     viewport.dataset.zoom = String(next);
     viewport.style.setProperty("--dv-zoom", String(next));
-    viewport.scrollLeft = cx * viewport.scrollWidth - viewport.clientWidth / 2;
-    viewport.scrollTop = cy * viewport.scrollHeight - viewport.clientHeight / 2;
+    var after = face.getBoundingClientRect();
+    // A scroll bar can appear, so the centre is measured again.
+    centre = centreOf(viewport);
+    viewport.scrollLeft += after.left + x * after.width - centre.x;
+    viewport.scrollTop += after.top + y * after.height - centre.y;
+  }
+
+  function centreOf(viewport) {
+    var box = viewport.getBoundingClientRect();
+    return {
+      x: box.left + viewport.clientLeft + viewport.clientWidth / 2,
+      y: box.top + viewport.clientTop + viewport.clientHeight / 2,
+    };
   }
 
   // A face at zoom 1 is as wide as the panel, but not taller than the panel's maximum height.
