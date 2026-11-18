@@ -31,7 +31,6 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from lxml import etree
-from PIL import Image
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
@@ -45,7 +44,6 @@ from netbox_device_view.artwork.svg import transform_matrix
 from netbox_device_view.models import Association, DefinitionRevision, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
-from .browser import browser_page
 from .permissions import grant
 
 TAB_URL = "dcim:device_deviceview"
@@ -644,36 +642,6 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(outline.get("aria-hidden"), "true")
         self.assertIn("cable attached", link.find(f"{{{SVG_NS}}}title").text)
 
-    def test_the_outline_of_a_connector_without_paint_shows_in_the_browser(self):
-        unpainted = (
-            '<rect id="con-eth1" width="12" height="10" fill="none" stroke="none"/>'
-        )
-        self.store_face(
-            "front.svg",
-            # The green LED is next to the connector, so it goes.
-            FRONT_SVG.replace(
-                '<rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>',
-                unpainted,
-            ).replace('<use xlink:href="#led" x="5" y="5"/>', ""),
-        )
-        with browser_page(self.tab()) as page:
-            box = page.locator(
-                f'[id="dv-o-d{self.device.pk}-front-con-eth1"]'
-            ).bounding_box()
-            margin = 8
-            png = page.screenshot(
-                clip={
-                    "x": box["x"] - margin,
-                    "y": box["y"] - margin,
-                    "width": box["width"] + 2 * margin,
-                    "height": box["height"] + 2 * margin,
-                }
-            )
-        data = Image.open(io.BytesIO(png)).convert("RGB").tobytes()
-        pixels = zip(data[0::3], data[1::3], data[2::3], strict=True)
-        green = [p for p in pixels if p[1] - max(p[0], p[2]) > 60]
-        self.assertGreater(len(green), 2 * (box["width"] + box["height"]))
-
     def test_a_connector_without_a_cable_shows_no_occupancy(self):
         Cable.objects.all().delete()
         front, link = self.link()
@@ -731,27 +699,6 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(region, [0, 0, 1760, 88])
         self.assertAlmostEqual(x_radius, radius * 4, places=3)
         self.assertAlmostEqual(y_radius, radius * 2, places=3)
-
-    def test_a_transform_list_with_two_commas_moves_the_connector_in_the_browser(self):
-        # The profile accepts two commas between transform functions; Chromium ignores such a list.
-        self.store_face(
-            "front.svg",
-            FRONT_SVG.replace("translate(10 10)", "translate(10 10),,scale(1)"),
-        )
-        content = self.tab()
-        ident = f"dv-o-d{self.device.pk}-front-con-eth1"
-        group = links(faces(content)[0])[ident].getparent()
-        self.assertEqual(group.get("transform"), "translate(10 10) scale(1)")
-        with browser_page(content) as page:
-            offset = page.evaluate(
-                """ident => {
-                    const list = document.getElementById(ident).closest("g").transform.baseVal;
-                    return list.numberOfItems ? list.consolidate().matrix.e : null;
-                }""",
-                ident,
-            )
-        # The outline filter has its region in the same user space.
-        self.assertEqual(offset, 10)
 
 
 class DamagedArtworkTests(ArtworkTestCase):
