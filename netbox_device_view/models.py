@@ -675,7 +675,8 @@ class InstancePin(ScopedRow, ChangeLoggedModel):
         )
 
     def __str__(self):
-        return f"{self.scope_label} → {self.revision}"
+        # The instance comes first: it identifies the pin.
+        return bounded_repr(f"{self.scope_label} → {self.revision}")
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:instancepin", args=[self.pk])
