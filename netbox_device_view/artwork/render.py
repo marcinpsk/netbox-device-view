@@ -130,19 +130,41 @@ def active_revisions(device_type_ids) -> dict[int, DefinitionRevision]:
 def resolve_device(device, revision, user, view=OVERVIEW) -> Part:
     """Return the artwork Part of ``device`` with the components that ``user`` can view."""
     states = device_components(device, user, BINDABLE_MODELS)
-    connectors = tuple(
+    try:
+        return _resolve(device, revision, states, view)
+    except DamagedBlob as exc:
+        current = active_revisions([device.device_type_id]).get(device.device_type_id)
+        if current is None or current.pk == revision.pk:
+            return _damaged(device, revision, states, exc)
+    # Another activation, then a delete of the revision, removed its files after the read.
+    try:
+        return _resolve(device, current, states, view)
+    except DamagedBlob as exc:
+        return _damaged(device, current, states, exc)
+
+
+def _connectors(revision, states) -> tuple[Connector, ...]:
+    return tuple(
         _connector(key, item, states)
         for key, item in sorted(revision.manifest["connectors"].items())
     )
+
+
+def _damaged(device, revision, states, exc) -> Part:
+    logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
+    return Part(device, DAMAGED, revision, (), _connectors(revision, states))
+
+
+def _resolve(device, revision, states, view) -> Part:
+    """Return the artwork Part of ``device``; raise DamagedBlob when a face file is damaged or missing."""
+    connectors = _connectors(revision, states)
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
-    try:
-        data = {
-            face: read_blob(blobs[revision.manifest["faces"][face]["file"]])
-            for face in revision.face_names
-        }
-    except DamagedBlob as exc:
-        logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
-        return Part(device, DAMAGED, revision, (), connectors)
+    data = {}
+    for face in revision.face_names:
+        path = revision.manifest["faces"][face]["file"]
+        if path not in blobs:
+            raise DamagedBlob(f"{path} is not a file of the revision.")
+        data[face] = read_blob(blobs[path])
     faces = tuple(
         RenderedFace(
             face,
