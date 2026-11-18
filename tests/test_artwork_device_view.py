@@ -661,14 +661,18 @@ class CableOccupancyTests(ArtworkTestCase):
     def test_a_cabled_connector_shows_its_occupancy(self):
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector dv-art-cable-connected")
-        self.assertIn(link.get("filter")[5:-1], ids(front))
+        # The link draws the connector as it is; a painted copy draws the marks.
+        self.assertIsNone(link.get("filter"))
+        [marks] = link.findall(f"{{{SVG_NS}}}g[@class='dv-art-marks']")
+        self.assertIn(marks.get("filter")[5:-1], ids(front))
+        self.assertEqual(marks.get("aria-hidden"), "true")
         self.assertIn("cable connected", link.find(f"{{{SVG_NS}}}title").text)
 
     def test_a_connector_without_a_cable_shows_no_occupancy(self):
         Cable.objects.all().delete()
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector")
-        self.assertIsNone(link.get("filter"))
+        self.assertEqual(link.findall(f"{{{SVG_NS}}}g[@class='dv-art-marks']"), [])
         rings = {
             ring.get("filter")
             for ring in front.iterfind(f".//{{{SVG_NS}}}g[@class='dv-art-focus-ring']")
@@ -683,11 +687,7 @@ class CableOccupancyTests(ArtworkTestCase):
     def outline(self, face, name, key):
         """Return (x, y, width, height, x radius, y radius) of the outline filter of a connector."""
         link = links(face)[f"dv-o-d{self.device.pk}-{name}-{key}"]
-        [found] = [
-            element
-            for element in face.iter(f"{{{SVG_NS}}}filter")
-            if element.get("id") == link.get("filter")[5:-1]
-        ]
+        found = mark_filter(face, link)
         radius = found.find(f"{{{SVG_NS}}}feMorphology").get("radius").split()
         return (
             *(float(found.get(name)) for name in ("x", "y", "width", "height")),
@@ -728,9 +728,10 @@ def wrapper(face, ident):
 
 def mark_filter(face, wrapped):
     """Return the filter that marks a wrapped connector, or None."""
-    reference = wrapped.get("filter")
-    if reference is None:
+    marks = wrapped.find(f"{{{SVG_NS}}}g[@class='dv-art-marks']")
+    if marks is None:
         return None
+    reference = marks.get("filter")
     [found] = [
         element
         for element in face.iter(f"{{{SVG_NS}}}filter")
