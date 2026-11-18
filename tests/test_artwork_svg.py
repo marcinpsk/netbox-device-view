@@ -15,7 +15,12 @@ from netbox_device_view.artwork.limits import (
     MAX_USE_DEPTH,
     MAX_USE_EXPANSION_NODES,
 )
-from netbox_device_view.artwork.svg import Face, parse_face
+from netbox_device_view.artwork.svg import (
+    CHILDREN,
+    ELEMENT_ATTRIBUTES,
+    Face,
+    parse_face,
+)
 
 PATH = "faces/front.svg"
 OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">'
@@ -204,6 +209,23 @@ def test_issue_count_is_bounded():
         (svg("<title>Front\n<g/></title>"), "<title> may contain only text", 3),
         (svg('<desc><rect id="con-eth1"/></desc>'), "<desc> may contain only text", 2),
         (svg("<desc><tspan>1</tspan></desc>"), "<desc> may contain only text", 2),
+        (
+            svg(
+                '<rect width="9" height="9">\n<rect id="con-a" width="1" height="1"/></rect>'
+            ),
+            "<rect> is not allowed inside <rect>",
+            3,
+        ),
+        (svg("<text><g/></text>"), "<g> is not allowed inside <text>", 2),
+        (svg("<use><circle/></use>"), "<circle> is not allowed inside <use>", 2),
+        (svg("<clipPath><g/></clipPath>"), "<g> is not allowed inside <clipPath>", 2),
+        (
+            svg("<linearGradient><rect/></linearGradient>"),
+            "<rect> is not allowed inside <linearGradient>",
+            2,
+        ),
+        (svg("<stop/>"), "<stop> is not allowed inside <svg>", 2),
+        (svg("<tspan>1</tspan>"), "<tspan> is not allowed inside <svg>", 2),
     ],
 )
 def test_structure_rejections(data, match, line):
@@ -222,10 +244,18 @@ def test_structure_rejections(data, match, line):
         "<linearGradient><stop/></linearGradient><radialGradient/>",
         "<path/><circle/><ellipse/><line/><polyline/><polygon/><use/>",
         "\n  <g>\n    <rect/>\n  </g>\n",
+        '<g><rect id="con-a" width="1" height="1"><title>Port</title></rect></g>',
+        "<text>a<tspan>b<tspan>c</tspan></tspan></text>",
+        "<clipPath><use/><text>x</text><circle/></clipPath>",
+        "<symbol><defs><linearGradient/></defs><symbol/></symbol>",
     ],
 )
 def test_structure_passes(body):
     parse_face(PATH, svg(body, OPEN_XLINK))
+
+
+def test_every_profile_element_has_a_content_model():
+    assert set(CHILDREN) == set(ELEMENT_ATTRIBUTES)
 
 
 # Value grammar.
@@ -414,8 +444,10 @@ GOOD_VALUES = [
         '<radialGradient cx="50%" cy="50%" r="50%" fx="1" fy="1"'
         ' gradientUnits="objectBoundingBox"/>'
     ),
-    '<stop offset="0.5" stop-color="#0a0" stop-opacity="0.3"/>',
-    '<stop offset="50%" stop-color="currentColor"/>',
+    (
+        '<linearGradient><stop offset="0.5" stop-color="#0a0" stop-opacity="0.3"/>'
+        '<stop offset="50%" stop-color="currentColor"/></linearGradient>'
+    ),
     '<rect fill="none" stroke="currentColor"/>',
     '<rect fill="url(#g)" stroke="rgb(0 0 0 / 50%)" clip-path="url(#c)"/>',
     '<rect fill="#abc" stroke="hsl(120 50% 50%)" clip-path="none"/>',
@@ -500,7 +532,11 @@ def test_transform_bound_fails_at_once():
         ('<linearGradient id="g"/>\n<use href="#g"/>', "<linearGradient>", 3),
         ('<defs id="d"/>\n<use href="#d"/>', "<defs>", 3),
         ('<clipPath id="c"/>\n<use href="#c"/>', "<clipPath>", 3),
-        ('<g><stop id="s"/></g>\n<use href="#s"/>', "<stop>", 3),
+        (
+            '<linearGradient><stop id="s"/></linearGradient>\n<use href="#s"/>',
+            "<stop>",
+            3,
+        ),
         ('<rect id="r"/>\n<linearGradient href="#r"/>', "<rect>", 3),
         ('<clipPath id="c"/>\n<rect fill="url(#c)"/>', "<clipPath>", 3),
         (
@@ -632,7 +668,7 @@ def test_use_must_not_copy_connectors_or_bays(body, match, line):
         ('<clipPath>\n<rect id="con-a"/></clipPath>', "<clipPath>", 3),
         (
             '<linearGradient><g>\n<rect id="con-a"/></g></linearGradient>',
-            "<linearGradient>",
+            "con-a is inside <linearGradient>",
             3,
         ),
         ('<g id="con-a">\n<rect id="con-b"/></g>', "con-a", 3),

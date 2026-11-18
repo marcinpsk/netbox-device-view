@@ -503,6 +503,17 @@ ELEMENT_ATTRIBUTES: dict[str, frozenset[str]] = {
     }.items()
 }
 COMMON_ATTRIBUTES = frozenset({"id", "style", "xml:space", *PROPERTIES})
+
+_CONTAINER_CHILDREN = CONNECTOR_ELEMENTS | DEFINITIONS | TEXT_ONLY
+# The child elements of each profile element, from the SVG 1.1 content models.
+CHILDREN: dict[str, frozenset[str]] = {
+    **dict.fromkeys(("svg", "g", "defs", "symbol"), _CONTAINER_CHILDREN),
+    "clipPath": SHAPES | {"use", "text"} | TEXT_ONLY,
+    **dict.fromkeys((*SHAPES, "use"), TEXT_ONLY),
+    **dict.fromkeys(("text", "tspan"), TEXT_ONLY | {"tspan"}),
+    **dict.fromkeys(GRADIENTS, TEXT_ONLY | {"stop"}),
+    **dict.fromkeys(("stop", *TEXT_ONLY), frozenset()),
+}
 _CHECKS = {**ATTRIBUTES, **PROPERTIES}
 
 
@@ -649,8 +660,20 @@ class _Validator:
                 if tag in TEXT_ONLY:
                     self.add(child.sourceline, f"<{tag}> may contain only text")
                 else:
+                    self.placement(child, tag)
                     self.element(child, element, inner)
             self.text(child.tail, tag, child.sourceline)
+
+    def placement(self, child: etree._Element, tag: str):
+        name = _tag(child)
+        # Other elements and the inner svg have their own issue in element().
+        if (
+            etree.QName(child).namespace == SVG_NS
+            and name in CHILDREN
+            and name != "svg"
+            and name not in CHILDREN[tag]
+        ):
+            self.add(child.sourceline, f"<{name}> is not allowed inside <{tag}>")
 
     def namespaces(self, element: etree._Element, parent: etree._Element | None):
         inherited = {} if parent is None else parent.nsmap
