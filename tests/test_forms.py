@@ -7,9 +7,14 @@ characters are invalid as row-token separators but are visually
 indistinguishable from a normal space in the NetBox UI.
 """
 
-from dcim.models import DeviceType, Manufacturer
-from django.test import TestCase
+import inspect
 
+from dcim.models import DeviceType, Manufacturer
+from django import forms as django_forms
+from django.test import TestCase
+from utilities.forms.fields.dynamic import DynamicModelChoiceMixin
+
+from netbox_device_view import forms
 from netbox_device_view.forms import DeviceViewForm
 
 
@@ -62,3 +67,18 @@ class SanitizeGridTemplateAreaTests(TestCase):
         # validation, but clean_grid_template_area itself must not raise.
         form.is_valid()
         self.assertIn("grid_template_area", form.errors)
+
+
+def test_every_device_type_picker_names_the_manufacturer():
+    # Types of two manufacturers can have the same model name. A field that __init__ adds is not checked.
+    pickers = [
+        (form.__name__, name, field)
+        for form in vars(forms).values()
+        if inspect.isclass(form) and issubclass(form, django_forms.BaseForm)
+        for name, field in form.base_fields.items()
+        if isinstance(field, DynamicModelChoiceMixin)
+        and field.queryset.model is DeviceType
+    ]
+    assert pickers
+    for form, name, field in pickers:
+        assert field.context.get("parent") == "manufacturer", f"{form}.{name}"

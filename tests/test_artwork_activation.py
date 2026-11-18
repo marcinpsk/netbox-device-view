@@ -1,6 +1,7 @@
 """Explicit activation of a definition revision for a device type, through the plugin pages."""
 
 import io
+import re
 import shutil
 import tempfile
 import threading
@@ -61,6 +62,15 @@ class ActivationTests(ActivationTestCase):
         page = self.client.get(reverse(REVISION_URL, args=[self.revision.pk]))
         self.assertNotContains(page, reverse(ACTIVATE_URL, args=[self.revision.pk]))
         self.assertFalse(Association.objects.exists())
+
+    def test_the_device_type_picker_names_the_manufacturer(self):
+        # Types of two manufacturers can have the same model name.
+        grant(self.user, Association, "add")
+        page = self.client.get(reverse(ACTIVATE_URL, args=[self.revision.pk]))
+        [select] = re.findall(
+            r'<select name="device_type"[^>]*>', page.content.decode()
+        )
+        self.assertIn('ts-parent-field="manufacturer"', select)
 
     def test_a_first_activation_needs_add_and_shows_the_artwork(self):
         grant(self.user, Association, "view", "add")

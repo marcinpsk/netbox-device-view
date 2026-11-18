@@ -65,6 +65,7 @@ class DeviceViewFilterForm(NetBoxModelFilterSetForm):
         required=False,
         query_params={"manufacturer_id": "$manufacturer_id"},
         label=_("Device type"),
+        context={"parent": "manufacturer"},
     )
     tag = TagFilterField(model)
 
@@ -194,6 +195,8 @@ class ActivateRevisionForm(forms.Form):
         queryset=DeviceType.objects.all(),
         label=_("Device type"),
         help_text=_("The Device View of every device of this type shows the revision."),
+        # Types of two manufacturers can have the same model name.
+        context={"parent": "manufacturer"},
     )
 
     def __init__(self, *args, user, **kwargs):
@@ -205,7 +208,10 @@ class AssociationFilterForm(SavedFiltersMixin, FilterForm):
     model = Association
     fieldsets = (FieldSet("q", "filter_id"), FieldSet("device_type_id"))
     device_type_id = DynamicModelMultipleChoiceField(
-        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+        queryset=DeviceType.objects.all(),
+        required=False,
+        label=_("Device type"),
+        context={"parent": "manufacturer"},
     )
 
 
