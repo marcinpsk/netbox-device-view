@@ -97,7 +97,7 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 | `bg-warning` | `<g>` | Partial connection (yellow) |
 | `bg-secondary` | `<g>` | Enabled, unconnected (grey) |
 | `bg-danger` | `<g>` | Disabled (red) |
-| `dv-ambiguous` | `<g>` | Two or more components share the stylename (grey, dashed). See [Shared stylenames](how-it-works.md#shared-stylenames) |
+| `dv-ambiguous` | `<g>` | Two or more components on this face share the stylename (grey, dashed). See [Shared stylenames](how-it-works.md#shared-stylenames) |
 | `nocolor` | `<g>` | Cable with no colour set (stripe pattern) |
 | `dv-partial-dot` | `<circle>` | Partial connection dot overlay |
 
