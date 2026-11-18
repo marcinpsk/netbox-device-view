@@ -334,20 +334,35 @@ def test_read_zip_returns_files_and_skips_directory_entries():
     assert entries == [("artwork/a.svg", b"x")]
 
 
-def test_a_member_that_inflates_past_its_declared_size_is_read_with_bounded_memory():
+@pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
+@pytest.mark.parametrize("crc_of", [b"A", b"AA"])
+def test_a_member_that_expands_past_its_declared_size_fails_with_bounded_memory(
+    compression, crc_of
+):
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(buffer, "w", compression) as archive:
         archive.writestr(f"{DEVICE_DIR}/front.svg", b"A" * (16 * 1024 * 1024))
+        # A CRC of the declared prefix passes a read that stops at the declared size.
         archive.filelist[0].file_size = 1
-        archive.filelist[0].CRC = zlib.crc32(b"A")
+        archive.filelist[0].CRC = zlib.crc32(crc_of)
+    data = buffer.getvalue()
     tracemalloc.start()
     try:
-        entries = read_zip(io.BytesIO(buffer.getvalue()))
+        with pytest.raises(ArtworkError) as caught:
+            read_zip(io.BytesIO(data))
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    assert entries == [(f"{DEVICE_DIR}/front.svg", b"A")]
+    assert "damaged archive member" in str(caught.value)
     assert peak < 4 * 1024 * 1024
+
+
+def test_a_member_shorter_than_its_declared_size_fails():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{DEVICE_DIR}/front.svg", FRONT_SVG)
+        archive.filelist[0].file_size += 10
+    assert_rejected(buffer.getvalue(), "less data than the declared size")
 
 
 def test_a_negative_member_offset_fails_before_the_member_is_read():

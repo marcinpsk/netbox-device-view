@@ -1,5 +1,6 @@
 """Read an offline bundle (.zip) and the definition directories of any (path, bytes) input."""
 
+import copy
 import hashlib
 import stat
 import struct
@@ -168,6 +169,22 @@ def _directory_issues(fileobj, size: int) -> list[Issue]:
     return []
 
 
+def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
+    """Return the bytes of a member whose stream has exactly its declared size."""
+    # zipfile stops at file_size, so ask for one byte more to see a longer stream.
+    probe = copy.copy(info)
+    probe.file_size = info.file_size + 1
+    # read(n) inflates at most n bytes; read() inflates the whole stream first.
+    with archive.open(probe) as member:
+        data = member.read(probe.file_size)
+    if len(data) > info.file_size:
+        raise zipfile.BadZipFile("more data than the declared size")
+    # A stream that ends early also ends the read, and zipfile has checked its CRC.
+    if len(data) < info.file_size:
+        raise zipfile.BadZipFile("less data than the declared size")
+    return data
+
+
 def read_zip(fileobj) -> list[tuple[str, bytes]]:
     """Return the (path, bytes) files of a zip bundle after the archive checks."""
     size = fileobj.seek(0, 2)
@@ -194,13 +211,7 @@ def read_zip(fileobj) -> list[tuple[str, bytes]]:
             if info.is_dir():
                 continue
             try:
-                # read(n) inflates at most n bytes; read() inflates the whole stream first.
-                with archive.open(info) as member:
-                    data = member.read(info.file_size)
-                    # The read at the end of the member makes zipfile check its CRC.
-                    if member.read(1):
-                        raise zipfile.BadZipFile("more data than the declared size")
-                entries.append((info.filename, data))
+                entries.append((info.filename, _read_member(archive, info)))
             except (
                 zipfile.BadZipFile,
                 zlib.error,
