@@ -667,7 +667,7 @@ class InstancePinForm(WriterSaveMixin, ChangelogMessageMixin, forms.ModelForm):
         return data
 
 
-class InstancePinFilterForm(SavedFiltersMixin, FilterForm):
+class InstancePinFilterForm(RestrictedFilterFormMixin, SavedFiltersMixin, FilterForm):
     model = InstancePin
     fieldsets = (
         FieldSet("q", "filter_id"),
