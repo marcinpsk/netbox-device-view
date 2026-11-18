@@ -29,6 +29,7 @@ from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.manifest import MAX_CONNECTOR_KEY_LENGTH
 from netbox_device_view.models import (
     MAX_REPR,
     Association,
@@ -168,12 +169,18 @@ class BranchObjectTextTests(SimpleTestCase):
 
     def assertTextsFit(self, device_type):
         # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
+        # An override names its scope by the pk of the scope.
+        device_type.pk = 1
         revision = DefinitionRevision(
             definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
         )
         for obj in (
             DeviceView(device_type=device_type),
             Association(device_type=device_type, revision=revision),
+            BindingOverride(
+                device_type=device_type,
+                connector_key="con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - 4),
+            ),
         ):
             with self.subTest(type(obj).__name__):
                 self.assertLessEqual(len(str(obj)), MAX_REPR)
