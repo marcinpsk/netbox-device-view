@@ -218,7 +218,7 @@ def _binding_issues(definition: Definition, community: Path) -> list[Issue]:
     except OSError as exc:
         message = f"The community type {type_path} cannot be read: {exc.strerror}."
         return [Issue(path, None, message)]
-    except (yaml.YAMLError, TypeError) as exc:
+    except (yaml.YAMLError, TypeError, ValueError) as exc:
         return [Issue(path, None, f"The community type {type_path} is invalid: {exc}")]
     issues = [
         Issue(

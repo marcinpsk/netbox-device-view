@@ -461,6 +461,19 @@ class LibraryCheckTests(SimpleTestCase):
             ],
         )
 
+    def test_a_community_type_with_an_impossible_date_is_an_error(self):
+        # PyYAML builds a date itself, so a month 13 raises ValueError, not YAMLError.
+        text = yaml.safe_dump(SW_24) + "comments: 2026-13-01\n"
+        write(self.community, {"device-types/ACME/SW-24.yaml": text})
+        _, problems = self.check_names()
+        invalid = (
+            "artwork/ACME/SW-24/manifest.yaml: The community type"
+            " device-types/ACME/SW-24.yaml is invalid: month must be in 1..12"
+        )
+        # Python 3.13 adds ", not 13" to the message.
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith(invalid), problems)
+
     def test_a_link_on_the_path_of_a_community_type_is_a_problem(self):
         outside = Path(self.enterContext(tempfile.TemporaryDirectory()))
         # The type behind each link lacks eth1, so a followed link gives a name problem.
