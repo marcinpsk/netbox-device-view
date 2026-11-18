@@ -390,7 +390,8 @@ class BindingOverride(ChangeLoggedModel):
         )
 
     def __str__(self):
-        return f"{self.scope_label} · {self.connector_key}"
+        # The scope comes first: it identifies the override.
+        return bounded_repr(f"{self.scope_label} · {self.connector_key}")
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:bindingoverride", args=[self.pk])
