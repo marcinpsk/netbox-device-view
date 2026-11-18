@@ -297,7 +297,10 @@ class AssociationFilterForm(RestrictedFilterFormMixin, SavedFiltersMixin, Filter
         context={"parent": "manufacturer"},
     )
     module_type_id = DynamicModelMultipleChoiceField(
-        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
+        queryset=ModuleType.objects.all(),
+        required=False,
+        label=_("Module type"),
+        context={"parent": "manufacturer"},
     )
 
 
