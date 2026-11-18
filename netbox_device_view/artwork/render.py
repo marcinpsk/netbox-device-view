@@ -287,8 +287,6 @@ def _link(element, state: ComponentState, outline, ring, prefix):
     if state.occupied:
         link.set("class", "dv-art-connector dv-art-occupied")
         title += ", cable attached"
-    if outline is not None:
-        link.set("filter", f"url(#{outline.get('id')})")
     # A browser shows the title nearest to the hovered element, so each title names the component.
     for own in element.iter(_TITLE):
         own.text = _xml_text(f"{own.text} · {title}" if own.text else title)
@@ -296,22 +294,30 @@ def _link(element, state: ComponentState, outline, ring, prefix):
     link.tail, element.tail = element.tail, None
     element.addprevious(link)
     link.append(element)
+    # A connector can have no paint, so each ring draws a painted copy of its shape.
+    if outline is not None:
+        _ring_copy(link, element, outline, "dv-art-occupied-outline", prefix)
     if ring is not None:
         # WebKit paints no outline on an SVG element, so the page CSS shows this ring on focus.
-        etree.SubElement(
-            link,
-            f"{{{SVG_NS}}}g",
-            {
-                "class": "dv-art-focus-ring",
-                "filter": f"url(#{ring.get('id')})",
-                "fill": "#000",
-                "stroke": "#000",
-                "fill-opacity": "1",
-                "stroke-opacity": "1",
-                "visibility": "visible",
-                "aria-hidden": "true",
-            },
-        ).append(_shape(element, ring.getparent(), prefix))
+        _ring_copy(link, element, ring, "dv-art-focus-ring", prefix)
+
+
+def _ring_copy(link, element, ring, css_class, prefix):
+    """Append to ``link`` a group that draws the ``ring`` filter around a painted copy of ``element``."""
+    etree.SubElement(
+        link,
+        f"{{{SVG_NS}}}g",
+        {
+            "class": css_class,
+            "filter": f"url(#{ring.get('id')})",
+            "fill": "#000",
+            "stroke": "#000",
+            "fill-opacity": "1",
+            "stroke-opacity": "1",
+            "visibility": "visible",
+            "aria-hidden": "true",
+        },
+    ).append(_shape(element, ring.getparent(), prefix))
 
 
 def _shape(element, defs, prefix):
@@ -448,17 +454,18 @@ def _grown(ident: str, region, radii, flood_class, flood_color) -> etree._Elemen
 
 
 def _outline(ident: str, region, radii) -> etree._Element:
-    """Return the filter that draws a connector with its occupied outline."""
-    outline = _grown(ident, region, radii, "dv-art-occupied-flood", "#2fb344")
-    merge = etree.SubElement(outline, f"{{{SVG_NS}}}feMerge")
-    for source in ("outline", "SourceGraphic"):
-        etree.SubElement(merge, f"{{{SVG_NS}}}feMergeNode", {"in": source})
-    return outline
+    """Return the filter that draws only the occupied outline around a connector."""
+    return _ring(ident, region, radii, "dv-art-occupied-flood", "#2fb344")
 
 
 def _focus_ring(ident: str, region, radii) -> etree._Element:
-    """Return the filter that draws only the ring around a connector, without the connector."""
-    ring = _grown(ident, region, radii, "dv-art-focus-flood", "#0d6efd")
+    """Return the filter that draws only the focus ring around a connector."""
+    return _ring(ident, region, radii, "dv-art-focus-flood", "#0d6efd")
+
+
+def _ring(ident: str, region, radii, flood_class, flood_color) -> etree._Element:
+    """Return a filter that draws only the ring around its source, without the source."""
+    ring = _grown(ident, region, radii, flood_class, flood_color)
     etree.SubElement(
         ring,
         f"{{{SVG_NS}}}feComposite",
