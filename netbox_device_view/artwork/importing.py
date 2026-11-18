@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from posixpath import splitext
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import NON_FIELD_ERRORS, PermissionDenied, ValidationError
 from django.db import transaction
 
 from ..models import (
@@ -43,10 +43,30 @@ def _definition(item: Definition) -> VisualDefinition:
 
 
 def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
-    return DefinitionRevision.objects.get_or_create(
-        digest=item.digest,
-        defaults={"definition": _definition(item), "manifest": item.manifest.data},
+    # The digest locks of import_bundle() serialize two imports of one revision.
+    revision = DefinitionRevision.objects.filter(digest=item.digest).first()
+    if revision is not None:
+        return revision, False
+    revision = DefinitionRevision(
+        definition=_definition(item), digest=item.digest, manifest=item.manifest.data
     )
+    try:
+        # full_clean() runs the CUSTOM_VALIDATORS of NetBox; save() does not.
+        revision.full_clean()
+    except ValidationError as exc:
+        raise ArtworkError(
+            [
+                Issue(
+                    item.manifest_path,
+                    None,
+                    message if field == NON_FIELD_ERRORS else f"{field}: {message}",
+                )
+                for field, messages in exc.message_dict.items()
+                for message in messages
+            ]
+        ) from exc
+    revision.save()
+    return revision, True
 
 
 def _import(

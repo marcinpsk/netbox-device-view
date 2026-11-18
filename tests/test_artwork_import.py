@@ -248,6 +248,43 @@ class UploadTests(ArtworkTestCase):
         )
         self.assertEqual(DefinitionRevision.objects.count(), 1)
 
+    def test_custom_validation_rejects_a_new_revision_before_any_write(self):
+        validators = {
+            "netbox_device_view.definitionrevision": [
+                CustomValidator({"digest": {"neq": expected_digest(DEVICE_FILES)}})
+            ]
+        }
+        with override_settings(CUSTOM_VALIDATORS=validators):
+            ui = self.upload()
+            api = self.api().post(
+                reverse(API_UPLOAD),
+                {"bundle": SimpleUploadedFile("api.zip", bundle())},
+                format="multipart",
+            )
+        failed = "Custom validation failed for digest"
+        self.assertContains(
+            ui, f"{DEVICE_DIR}/manifest.yaml: {failed}", status_code=400
+        )
+        self.assertEqual(api.status_code, 400, api.content)
+        [error] = api.json()["errors"]
+        self.assertEqual(error["path"], f"{DEVICE_DIR}/manifest.yaml")
+        self.assertIn(failed, error["message"])
+        self.assertFalse(DefinitionRevision.objects.exists())
+        self.assertFalse(VisualDefinition.objects.exists())
+        self.assertEqual(self.stored_files(), [])
+
+    def test_custom_validation_does_not_block_the_reuse_of_a_revision(self):
+        self.upload()
+        validators = {
+            "netbox_device_view.definitionrevision": [
+                CustomValidator({"digest": {"neq": expected_digest(DEVICE_FILES)}})
+            ]
+        }
+        with override_settings(CUSTOM_VALIDATORS=validators):
+            response = self.upload(name="again.zip")
+        self.assertContains(response, "Already imported")
+        self.assertEqual(DefinitionRevision.objects.get().imports.count(), 2)
+
     def test_import_repairs_a_damaged_blob(self):
         self.upload()
         blob = RevisionFile.objects.get(path="front.svg").blob
