@@ -597,6 +597,28 @@ class VirtualChassisTests(ResolverTestBase):
                     expected,
                 )
 
+    def test_a_member_without_a_yaml_layout_fails_the_api_but_not_the_page(self):
+        css_type = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="CSS", slug="css"
+        )
+        DeviceView.objects.create(
+            device_type=css_type, grid_template_area='"gi-1"', yaml_layout=""
+        )
+        Device.objects.filter(pk=self.member.pk).update(device_type=css_type)
+        body = self._api()
+        self.assertEqual(
+            (body["available"], body["reason"]), (False, "svg_layout_required")
+        )
+        panels = dict(
+            re.findall(
+                r'id="dv-svg-wrapper-(\d+)"\s+data-device="\d+">(.*?)</div>',
+                self._tab(),
+                re.DOTALL,
+            )
+        )
+        self.assertIn("<svg", panels["1"])
+        self.assertEqual(panels["2"].strip(), "")
+
 
 class TypedLookupTests(ResolverTestBase):
     """find() resolves a binding by component type, exact name and device or module scope."""
