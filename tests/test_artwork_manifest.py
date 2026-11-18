@@ -49,6 +49,7 @@ def test_connectors_and_bays_are_optional():
         (replace("authors: [Test Author]", "authors: &a [Test Author]"), 14, "anchors"),
         (replace("title: ACME SW-24\n", "title: !!binary aGk=\n"), 4, "tag"),
         (replace("title: ACME SW-24\n", "title: !custom x\n"), 4, "tag"),
+        (replace("title: ACME SW-24\n", "title: ! ACME SW-24\n"), 4, "tag"),
         (replace("license: MIT", "license: 2026-10-29"), 13, "tag"),
         (DEVICE_MANIFEST + "---\nschema: 1\n", None, "single document"),
         ("x: " + "[" * 40 + "]" * 40, 1, "nested too deeply"),

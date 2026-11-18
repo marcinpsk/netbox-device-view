@@ -61,7 +61,7 @@ class _ManifestLoader(DepthLimitedLoader):
         if isinstance(event, yaml.AliasEvent) or event.anchor is not None:
             raise _LoadError("YAML anchors and aliases are not allowed.", line)
         # An explicit tag can make the constructor raise; implicit tags resolve safely.
-        if getattr(event, "tag", None) not in (None, "!"):
+        if getattr(event, "tag", None) is not None:
             raise _LoadError(f"The explicit YAML tag {event.tag} is not allowed.", line)
         try:
             node = super().compose_node(parent, index)
