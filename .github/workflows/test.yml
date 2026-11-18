@@ -94,6 +94,11 @@ jobs:
         run: |
           uv pip install --python /opt/netbox/venv/bin/python \
             --no-cache pytest pytest-django playwright -e .
+
+      # The branching tests do not use a browser.
+      - name: Install Chromium
+        if: ${{ !matrix.branching }}
+        run: |
           apt-get update -qq && apt-get install -y -qq libatomic1
           /opt/netbox/venv/bin/playwright install --with-deps chromium
 
