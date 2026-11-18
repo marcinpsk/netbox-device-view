@@ -65,7 +65,11 @@ class ActivationTests(ActivationTestCase):
     def test_a_first_activation_needs_add_and_shows_the_artwork(self):
         grant(self.user, Association, "view", "add")
         page = self.client.get(reverse(REVISION_URL, args=[self.revision.pk]))
-        self.assertContains(page, reverse(ACTIVATE_URL, args=[self.revision.pk]))
+        # The control opens a form, so it keeps the semantics of a link.
+        self.assertContains(
+            page,
+            f'<a href="{reverse(ACTIVATE_URL, args=[self.revision.pk])}" class="btn btn-green">',
+        )
 
         response = self.post()
 

@@ -235,7 +235,9 @@ class ImportWorkflowTests(DataSourceImportTestBase):
         list_page = self.client.get(
             reverse("plugins:netbox_device_view:deviceview_list")
         )
-        self.assertContains(list_page, reverse(START_URL))
+        self.assertContains(
+            list_page, f'<a href="{reverse(START_URL)}" class="btn btn-cyan">'
+        )
 
         start = self.client.get(reverse(START_URL))
         self.assertContains(start, "Layouts")

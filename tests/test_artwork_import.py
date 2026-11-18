@@ -605,7 +605,7 @@ class PermissionTests(ArtworkTestCase):
         # The navigation menu links the same URL, so match the list action markup.
         self.assertContains(
             self.client.get(reverse(LIST_URL)),
-            f'<a href="{reverse(IMPORT_URL)}" class="btn btn-primary" role="button">',
+            f'<a href="{reverse(IMPORT_URL)}" class="btn btn-primary">',
             count=1,
         )
 
