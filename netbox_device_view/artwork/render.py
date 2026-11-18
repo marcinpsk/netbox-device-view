@@ -585,7 +585,17 @@ class _MarkFilter:
         )
 
     def cut(self, source, hole) -> str:
-        return self.add("feComposite", {"in": source, "in2": hole, "operator": "out"})
+        # Subtract the alpha: "out" keeps a·(1 − a) inside a translucent connector.
+        return self.add(
+            "feComposite",
+            {
+                "in": source,
+                "in2": hole,
+                "operator": "arithmetic",
+                "k2": "1",
+                "k3": "-1",
+            },
+        )
 
     def keep(self, source, mask) -> str:
         return self.add("feComposite", {"in": source, "in2": mask, "operator": "in"})

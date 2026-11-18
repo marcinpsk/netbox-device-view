@@ -111,3 +111,42 @@ class ArtworkBrowserTests(ArtworkTestCase):
         self.assertAlmostEqual(before[0], 5 / 9, places=2)
         for start, end in zip(before, after, strict=True):
             self.assertAlmostEqual(start, end, places=2)
+
+    def test_the_marks_of_a_translucent_connector_change_only_its_outline(self):
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace(
+                '<rect id="con-eth1" width="12" height="10" '
+                'style="fill:url(#metal);stroke:#000"/>',
+                '<rect id="con-eth1" width="120" height="30" fill="#000" '
+                'fill-opacity="0.5"/>',
+            ),
+        )
+        Interface.objects.filter(pk=self.eth1.pk).update(enabled=False)
+        ident = f"dv-o-d{self.device.pk}-front-con-eth1"
+        with browser_page(self.tab()) as page:
+            connector = page.locator(f'[id="{ident}"]')
+            box = connector.bounding_box()
+            # Five face units: well inside the outline band of one outline width.
+            inset = 5 * box["width"] / 120
+
+            def shots():
+                inner = {
+                    "x": box["x"] + inset,
+                    "y": box["y"] + inset,
+                    "width": box["width"] - 2 * inset,
+                    "height": box["height"] - 2 * inset,
+                }
+                outer = {
+                    "x": box["x"] - inset,
+                    "y": box["y"] - inset,
+                    "width": box["width"] + 2 * inset,
+                    "height": box["height"] + 2 * inset,
+                }
+                return page.screenshot(clip=inner), page.screenshot(clip=outer)
+
+            marked_inner, marked_outer = shots()
+            connector.evaluate("el => el.parentElement.removeAttribute('filter')")
+            plain_inner, plain_outer = shots()
+        self.assertEqual(marked_inner, plain_inner)
+        self.assertNotEqual(marked_outer, plain_outer)
