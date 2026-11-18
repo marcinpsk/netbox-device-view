@@ -330,7 +330,10 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
     """The scope and the connector of a new override, and the binding rows; only the rows change later."""
 
     device_type = DynamicModelChoiceField(
-        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+        queryset=DeviceType.objects.all(),
+        required=False,
+        label=_("Device type"),
+        context={"parent": "manufacturer"},
     )
     module_type = DynamicModelChoiceField(
         queryset=ModuleType.objects.all(), required=False, label=_("Module type")
@@ -419,7 +422,10 @@ class BindingOverrideFilterForm(
         FieldSet("definition_id", "connector_key", name=_("Connector")),
     )
     device_type_id = DynamicModelMultipleChoiceField(
-        queryset=DeviceType.objects.all(), required=False, label=_("Device type")
+        queryset=DeviceType.objects.all(),
+        required=False,
+        label=_("Device type"),
+        context={"parent": "manufacturer"},
     )
     module_type_id = DynamicModelMultipleChoiceField(
         queryset=ModuleType.objects.all(), required=False, label=_("Module type")
