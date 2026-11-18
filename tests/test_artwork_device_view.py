@@ -6,6 +6,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import pytest
 from dcim.models import (
@@ -708,12 +709,15 @@ class DamagedArtworkTests(ArtworkTestCase):
 class LocalAssetTests(ArtworkTestCase):
     def test_the_artwork_refers_only_to_the_page_and_to_netbox(self):
         self.activate()
+        page = "http://testserver" + reverse(TAB_URL, kwargs={"pk": self.device.pk})
         for face in faces(self.tab()):
             for element in face.iter():
                 self.assertNotIn(etree.QName(element).localname, ("image", "script"))
                 for name, value in element.attrib.items():
-                    if name == "href":
-                        self.assertRegex(value, r"^(#|/)")
+                    if etree.QName(name).localname == "href":
+                        target = urlsplit(urljoin(page, value))
+                        self.assertEqual(target.netloc, "testserver", value)
+                        self.assertEqual(target.scheme, "http", value)
                     self.assertNotRegex(value, r"url\((?!#)")
 
 
