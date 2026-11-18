@@ -3,6 +3,7 @@
 import ast
 from pathlib import Path
 
+import pytest
 from django.apps import apps
 
 from netbox_device_view.artwork.branching import CATALOGUE
@@ -14,14 +15,20 @@ MAIN_ONLY = {label.split(".")[1] for label in CATALOGUE} | {
 }
 
 
+_NO_USING = object()
+
+
 def _using(call):
+    """Return the using argument of a transaction.atomic() call, _NO_USING without one, else None."""
     if not (
         isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
         and call.func.attr == "atomic"
     ):
         return None
-    return next((k.value for k in call.keywords if k.arg == "using"), None)
+    if call.args:
+        return call.args[0]
+    return next((k.value for k in call.keywords if k.arg == "using"), _NO_USING)
 
 
 def _routed_model(call):
@@ -40,23 +47,33 @@ def _routed_model(call):
 
 def _on_main(call):
     using = _using(call)
-    return (isinstance(using, ast.Name) and using.id == "DEFAULT_DB_ALIAS") or (
-        isinstance(using, ast.Constant) and using.value == "default"
+    return (
+        using is _NO_USING
+        or (isinstance(using, ast.Name) and using.id == "DEFAULT_DB_ALIAS")
+        or (isinstance(using, ast.Constant) and using.value == "default")
     )
 
 
-def unpaired_branch_transactions(source):
-    """Return the line of each routed transaction of a branched model without a transaction on main beside it."""
-    found = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.With | ast.AsyncWith):
-            continue
-        calls = [item.context_expr for item in node.items]
-        on_main = any(_on_main(call) for call in calls)
-        for call in calls:
+def _visit(node, on_main, found):
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        # A function body runs later, outside the transaction that encloses its definition.
+        on_main = False
+    if isinstance(node, ast.With | ast.AsyncWith):
+        # Python exits the items in reverse order, so main covers only the items after it.
+        for item in node.items:
+            call = item.context_expr
             model = _routed_model(call)
             if model and model.lower() not in MAIN_ONLY and not on_main:
                 found.append(call.lineno)
+            on_main = on_main or _on_main(call)
+    for child in ast.iter_child_nodes(node):
+        _visit(child, on_main, found)
+
+
+def unpaired_branch_transactions(source):
+    """Return the line of each routed transaction of a branched model that no earlier transaction on main covers."""
+    found = []
+    _visit(ast.parse(source), False, found)
     return found
 
 
@@ -65,20 +82,31 @@ def test_every_branch_transaction_also_covers_main():
         assert unpaired_branch_transactions(path.read_text()) == [], path
 
 
-def test_the_guard_finds_a_branch_transaction_without_main():
-    alone = (
-        "with transaction.atomic(using=router.db_for_write(Association)):\n    pass\n"
-    )
-    assert unpaired_branch_transactions(alone) == [1]
-    paired = (
-        "with (\n"
-        "    transaction.atomic(using=DEFAULT_DB_ALIAS),\n"
-        "    transaction.atomic(using=router.db_for_write(models.DeviceView)),\n"
-        "):\n"
-        "    pass\n"
-    )
-    assert unpaired_branch_transactions(paired) == []
-    catalogue = "with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):\n    pass\n"
-    assert unpaired_branch_transactions(catalogue) == []
-    core = "with transaction.atomic(using=router.db_for_write(DataFile)):\n    pass\n"
-    assert unpaired_branch_transactions(core) == []
+ROUTED = "transaction.atomic(using=router.db_for_write(Association))"
+MAIN = "transaction.atomic(using=DEFAULT_DB_ALIAS)"
+UNPAIRED = {
+    "alone": f"with {ROUTED}:\n    pass\n",
+    "positional using": "with transaction.atomic(router.db_for_write(Association)):\n    pass\n",
+    "main after routed": f"with {ROUTED}, {MAIN}:\n    pass\n",
+    "after the main block": f"with {MAIN}:\n    pass\nwith {ROUTED}:\n    pass\n",
+    "in a function of the main block": f"with {MAIN}:\n    def f():\n        with {ROUTED}:\n            pass\n",
+    "beside an unrouted context": f"with lock, {ROUTED}:\n    pass\n",
+}
+PAIRED = {
+    "main first": f"with {MAIN}, {ROUTED}:\n    pass\n",
+    "default alias": f"with transaction.atomic(using='default'), {ROUTED}:\n    pass\n",
+    "main without using": f"with transaction.atomic(), {ROUTED}:\n    pass\n",
+    "enclosing main": f"with {MAIN}:\n    x = 1\n    with {ROUTED}:\n        pass\n",
+    "catalogue model": "with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):\n    pass\n",
+    "core model": "with transaction.atomic(using=router.db_for_write(DataFile)):\n    pass\n",
+}
+
+
+@pytest.mark.parametrize("source", UNPAIRED.values(), ids=UNPAIRED.keys())
+def test_the_guard_finds_a_branch_transaction_without_main(source):
+    assert len(unpaired_branch_transactions(source)) == 1
+
+
+@pytest.mark.parametrize("source", PAIRED.values(), ids=PAIRED.keys())
+def test_the_guard_accepts_a_branch_transaction_inside_main(source):
+    assert unpaired_branch_transactions(source) == []
