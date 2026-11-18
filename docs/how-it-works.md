@@ -10,7 +10,7 @@ When you visit a device of that type, the plugin:
 4. Finds the connection state of each port on the server
 5. Renders the layout using the configured render mode (CSS Grid or SVG), with the port status colours
 
-The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus the page and the API show the same component in the same state.
+The Device View tab, the device page panel and the [rendered-layout API](rendered-layout-api.md) use one module (`netbox_device_view.components`) for steps 2 to 4. Thus a component that both the page and the API show has the same state on both. The page and the API do not always show the same components: in CSS mode, a virtual chassis member shows no front or rear ports (see [Shared stylenames](#shared-stylenames)), but the API draws them on their SVG faces.
 
 ---
 

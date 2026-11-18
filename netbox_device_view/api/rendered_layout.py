@@ -5,8 +5,8 @@ Bridges the layout engine (``netbox_device_view.layout``, pure and NetBox-
 agnostic geometry) with the components that ``netbox_device_view.components``
 resolves, to produce the versioned JSON envelope consumed by API clients (e.g.
 the netbox-companion mobile app). The Device View tab and the device page
-panel use the same resolver, so the page and the API bind the same components
-in the same state.
+panel use the same resolver, so a component that the page and the API both
+bind has the same state.
 """
 
 from __future__ import annotations
