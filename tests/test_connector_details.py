@@ -29,6 +29,7 @@ from netbox_device_view.components import BINDABLE_MODELS
 from netbox_device_view.details import details_id
 from netbox_device_view.models import DeviceView, RenderMode
 
+from .browser import browser_page
 from .permissions import grant
 from .test_artwork_device_view import (
     ArtworkTestCase,
@@ -227,6 +228,21 @@ class LayoutDetailsTests(ResolverTestBase):
                 "grid-area: console": "console: several components",
             },
         )
+
+    def test_an_svg_port_names_its_component_and_its_state(self):
+        Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
+        Interface.objects.create(device=self.device, name="Console", type="1000base-t")
+        ConsolePort.objects.create(device=self.device, name="Console")
+        DeviceView.objects.update(render_mode=RenderMode.SVG)
+        with browser_page(self._tab()) as page:
+            for role, name in (
+                ("link", "Gi1: not connected"),
+                ("button", "console: several components"),
+            ):
+                with self.subTest(name):
+                    port = page.get_by_role(role, name=name, exact=True)
+                    self.assertEqual(port.count(), 1)
+                    self.assertEqual(port.evaluate("el => el.localName"), "g")
 
     def test_a_module_component_names_its_module(self):
         module = Module.objects.create(

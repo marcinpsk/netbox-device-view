@@ -213,6 +213,7 @@ class PageCell:
         attributes = {
             "data-connection-state": self.connection_state,
             "data-dv-details": self.details.ident,
+            "aria-label": self.label,
         }
         if self.href:
             attributes |= {"data-href": self.href, "role": "link"}
