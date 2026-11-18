@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, router, transaction
 from django.urls import reverse
 from netbox.models import ChangeLoggedModel, NetBoxModel
 from utilities.querysets import RestrictedQuerySet
@@ -142,6 +142,19 @@ class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:definitionrevision", args=[self.pk])
+
+    def delete(self, using=None, keep_parents=False):
+        using = using or router.db_for_write(type(self), instance=self)
+        with transaction.atomic(using=using):
+            # Lock first: the collector then sees the import record of a reimport that held the row.
+            list(
+                type(self)
+                .objects.using(using)
+                .select_for_update()
+                .filter(pk=self.pk)
+                .values_list("pk")
+            )
+            return super().delete(using=using, keep_parents=keep_parents)
 
     @property
     def face_names(self):

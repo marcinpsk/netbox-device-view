@@ -43,8 +43,13 @@ def _definition(item: Definition) -> VisualDefinition:
 
 
 def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
-    # The digest locks of import_bundle() serialize two imports of one revision.
-    revision = DefinitionRevision.objects.filter(digest=item.digest).first()
+    # The digest locks of import_bundle() serialize two imports of one revision. The
+    # row lock makes a delete wait until this import commits its provenance.
+    revision = (
+        DefinitionRevision.objects.select_for_update(no_key=True)
+        .filter(digest=item.digest)
+        .first()
+    )
     if revision is not None:
         return revision, False
     revision = DefinitionRevision(
