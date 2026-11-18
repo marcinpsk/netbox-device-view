@@ -165,11 +165,21 @@ def test_a_trailing_newline_does_not_pass_an_anchored_pattern():
             "also mapped by bay-nm",
         ),
         (replace("name: eth1", 'name: "eth{module}"'), "Only a module definition"),
+        (
+            replace("https://example.com/sw-24.pdf", "https://example.com:99999/a"),
+            "port",
+        ),
+        (replace("https://example.com/sw-24.pdf", "https://example.com:0/a"), "port"),
     ],
 )
 def test_rules_beyond_the_schema(text, message):
     found = issues(text)
     assert any(message in issue.message for issue in found), found
+
+
+def test_a_url_with_a_valid_explicit_port_passes():
+    text = replace("https://example.com/sw-24.pdf", "https://example.com:8443/a.pdf")
+    parse_manifest("m.yaml", text.encode())
 
 
 def test_a_face_that_the_manifest_does_not_declare():

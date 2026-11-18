@@ -178,8 +178,15 @@ def _licence_and_url_issues(manifest: dict) -> list[tuple[tuple, str]]:
         except ValidationError:
             issues.append((at, "Not a valid https URL."))
             continue
-        if "@" in urlsplit(reference["url"]).netloc:
+        parts = urlsplit(reference["url"])
+        if "@" in parts.netloc:
             issues.append((at, "The URL must not contain user information."))
+        try:
+            valid_port = parts.port != 0
+        except ValueError:
+            valid_port = False
+        if not valid_port:
+            issues.append((at, "The URL port must be 1 to 65535."))
     return issues
 
 
