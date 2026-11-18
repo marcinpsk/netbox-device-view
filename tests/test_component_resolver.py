@@ -692,6 +692,15 @@ class HiddenObjectTests(ResolverTestBase):
                     ["enabled"],
                 )
 
+    def test_a_hidden_far_end_does_not_complete_the_path(self):
+        for user, path_complete in (
+            (self.user, False),
+            (User.objects.get(username="admin"), True),
+        ):
+            with self.subTest(user.username):
+                (state,) = device_components(self.near, user)
+                self.assertIs(state.path_complete, path_complete)
+
     def test_a_component_of_a_hidden_module_is_absent(self):
         self.assertNotIn(
             self.module_interface.pk,

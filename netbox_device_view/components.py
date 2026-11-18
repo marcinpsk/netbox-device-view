@@ -318,7 +318,8 @@ def _state(component, link_peers, endpoints, cable_visible):
         cable=cable,
         marked_connected=component.mark_connected,
         path_complete=(
-            bool(linked and path and path.is_complete)
+            # A path is complete only to an endpoint that the user can view.
+            bool(linked and endpoints and path and path.is_complete)
             if isinstance(component, PathEndpoint)
             else None
         ),
