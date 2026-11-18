@@ -772,9 +772,9 @@ def test_issues_are_collected_across_the_file():
 
 @pytest.mark.parametrize("attribute", ["width", "x", "stroke-width", "opacity"])
 def test_a_long_invalid_number_fails_in_linear_time(attribute):
-    started = time.monotonic()
+    started = time.process_time()
     rejected(svg(f'<rect {attribute}="{"1" * 50_000}x" height="1"/>'), attribute)
-    assert time.monotonic() - started < 2
+    assert time.process_time() - started < 2
 
 
 @pytest.mark.parametrize(
