@@ -351,6 +351,19 @@ class AmbiguousKeyTests(ResolverTestBase):
             page.wait_for_timeout(700)
             self.assertEqual(page.locator(".popover:visible").count(), 0)
 
+    def test_the_popover_stays_open_while_the_pointer_is_on_it(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.wait_for_selector(".popover", state="visible")
+            popover = page.locator(f'[id="{cell.get_attribute("aria-describedby")}"]')
+            popover.hover()
+            page.keyboard.press("Shift+Tab")
+            page.wait_for_timeout(700)
+            self.assertFalse(cell.evaluate("el => el === document.activeElement"))
+            self.assertTrue(popover.is_visible())
+
     def test_hovering_the_port_keeps_focus_on_an_open_candidate(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         candidate = self.interface.get_absolute_url()

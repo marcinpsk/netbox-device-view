@@ -74,7 +74,10 @@ function dvInitPopover(el, opts) {
     clearTimeout(showTimer);
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () {
-      if (!el.contains(document.activeElement) && !(tip && tip.contains(document.activeElement))) hide();
+      var held = [el, tip].some(function (node) {
+        return node && (node.matches(":hover") || node.contains(document.activeElement));
+      });
+      if (!held) hide();
     }, 500);
   }
   function cancelHide() {
