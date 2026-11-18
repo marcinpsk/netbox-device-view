@@ -323,6 +323,8 @@ BAD_VALUES = [
     ('<g transform="perspective(1)"/>', "perspective"),
     ('<g transform="translate(1e400)"/>', "outside"),
     ('<g transform="translate(1,)"/>', "comma"),
+    ('<g transform="translate(10-5)"/>', "separate"),
+    ('<g transform="matrix(1 0 0 1 0-5)"/>', "separate"),
     ('<linearGradient gradientTransform="rotate(x)"/>', "gradientTransform"),
     ('<rect fill="url(http://evil/x)"/>', "fill"),
     ('<rect fill="url(#g) red"/>', "fill"),
@@ -402,6 +404,7 @@ GOOD_VALUES = [
     '<g transform="translate(1) scale(2, 3) rotate(45 1 1)"/>',
     '<g transform=" matrix(1,0,0,1,0,0),skewX(10) skewY( -5 ) "/>',
     '<g transform="translate(1 2),,scale(1)"/>',
+    '<g transform="translate(10 -5) translate(10,-5) translate( 10 , -5 )"/>',
     '<g transform=""/>',
     (
         '<linearGradient gradientTransform="rotate(10)" gradientUnits="userSpaceOnUse"'

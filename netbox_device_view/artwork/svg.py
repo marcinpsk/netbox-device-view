@@ -84,6 +84,7 @@ _COMMA_WSP = re.compile(r"[ \t\r\n]*,?[ \t\r\n]*")
 _LIST_SEPARATOR = re.compile(r"[ \t\r\n]*,[ \t\r\n]*|[ \t\r\n]+")
 _TRANSFORM_SEPARATOR = re.compile(r"[ \t\r\n,]*")
 _NAME = re.compile(r"[A-Za-z]*")
+_NO_SEPARATOR = "separate numbers with whitespace or a comma"
 _ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}")
 _MARKER_IDS = {
     kind: re.compile(SCHEMA["properties"][section]["propertyNames"]["pattern"][1:-1])
@@ -140,7 +141,7 @@ class _Scanner:
     def separator(self):
         """Skip a required comma-wsp."""
         if not self.skip(_COMMA_WSP):
-            raise _Invalid(f"separate numbers with whitespace or a comma {self.where()}")
+            raise _Invalid(f"{_NO_SEPARATOR} {self.where()}")
 
     def starts_number(self) -> bool:
         return _NUMBER.match(self.text, self.pos) is not None
@@ -306,14 +307,16 @@ def _transform_arguments(scanner: _Scanner) -> list[float]:
     scanner.skip(_WSP)
     numbers = [scanner.number()]
     while True:
-        comma = scanner.comma_wsp()
+        separator = scanner.skip(_COMMA_WSP)
         if scanner.peek() == ")":
-            if comma:
+            if "," in separator:
                 raise _Invalid(f"trailing comma {scanner.where()}")
             scanner.take()
             return numbers
-        if not comma and not scanner.starts_number():
+        if not scanner.starts_number() and "," not in separator:
             raise _Invalid(f'expected ")" {scanner.where()}')
+        if not separator:
+            raise _Invalid(f"{_NO_SEPARATOR} {scanner.where()}")
         numbers.append(scanner.number())
 
 
