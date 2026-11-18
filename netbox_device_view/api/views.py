@@ -57,12 +57,15 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
         return Response(compose_rendered_layout(device, request.user))
 
 
+REVISIONS = models.DefinitionRevision.objects.select_related(
+    "definition"
+).prefetch_related("files__blob", "imports")
+
+
 class DefinitionRevisionViewSet(NetBoxModelViewSet):
     """Read and delete definition revisions; a stored revision cannot be changed."""
 
-    queryset = models.DefinitionRevision.objects.select_related(
-        "definition"
-    ).prefetch_related("files__blob", "imports")
+    queryset = REVISIONS
     serializer_class = DefinitionRevisionSerializer
     filterset_class = DefinitionRevisionFilterSet
     http_method_names = ("get", "delete", "head", "options")
@@ -96,11 +99,12 @@ class ArtworkBundleUploadView(APIView):
                 {"errors": [vars(issue) for issue in exc.issues]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        visible = set(
-            models.DefinitionRevision.objects.restrict(request.user, "view")
-            .filter(pk__in=[result.revision.pk for result in results])
-            .values_list("pk", flat=True)
-        )
+        visible = {
+            revision.pk: revision
+            for revision in REVISIONS.restrict(request.user, "view").filter(
+                pk__in=[result.revision.pk for result in results]
+            )
+        }
         context = {"request": request}
         body = {
             "revisions": [
@@ -109,7 +113,7 @@ class ArtworkBundleUploadView(APIView):
                     # Without view permission, a known revision shows no earlier provenance.
                     "revision": (
                         DefinitionRevisionSerializer(
-                            result.revision, context=context
+                            visible[result.revision.pk], context=context
                         ).data
                         if result.revision.pk in visible
                         else {

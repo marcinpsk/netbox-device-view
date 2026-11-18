@@ -8,8 +8,9 @@ from pathlib import Path
 from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
 from extras.validators import CustomValidator
@@ -321,6 +322,28 @@ class ApiTests(ArtworkTestCase):
         self.assertEqual(
             [i["source_name"] for i in detail["imports"]], ["api.zip", "api.zip"]
         )
+
+    def test_the_response_reads_files_and_imports_once_for_all_revisions(self):
+        entries = {
+            **definition(DEVICE_DIR, DEVICE_FILES),
+            **definition("artwork/ACME/NM-2X", MODULE_FILES),
+        }
+        with CaptureQueriesContext(connection) as queries:
+            response = self.post(bundle(entries))
+        self.assertEqual(response.status_code, 201, response.content)
+        revisions = [r["revision"] for r in response.json()["revisions"]]
+        self.assertEqual([len(r["files"]) for r in revisions], [2, 3])
+        self.assertEqual([len(r["imports"]) for r in revisions], [1, 1])
+        # The import only inserts into these tables; the response selects from them.
+        for table in ("revisionfile", "revisionimport"):
+            selects = [
+                q["sql"]
+                for q in queries.captured_queries
+                if q["sql"].startswith("SELECT")
+                and f'FROM "netbox_device_view_{table}"' in q["sql"]
+            ]
+            with self.subTest(table=table):
+                self.assertEqual(len(selects), 1, selects)
 
     def test_a_reimport_does_not_show_provenance_the_user_cannot_view(self):
         self.post(bundle())
