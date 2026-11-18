@@ -94,7 +94,7 @@ The Device View tab and the device page panel use the same rule.
 | `width`, `height` | int | The SVG's pixel dimensions — matches the `viewBox`/`width`/`height` on the embedded `<svg>`. |
 | `svg` | string | Self-contained SVG markup (see [SVG output](#svg-output) below). |
 | `hotspots` | array | One entry per port-like element whose key matches exactly one real NetBox component. A front port binds only on the front face and a rear port only on the rear face (see [Shared stylenames](how-it-works.md#shared-stylenames)). |
-| `ambiguous` | array | One entry per port-like element whose key matches two or more components (see [Ambiguous elements](#ambiguous-elements)). Empty when there is none. |
+| `ambiguous` | array | One entry per port-like element whose key matches two or more components that can bind on the face of the panel (see [Ambiguous elements](#ambiguous-elements)). Empty when there is none. |
 
 ### Hotspot
 
@@ -112,7 +112,7 @@ The Device View tab and the device page panel use the same rule.
 
 ### Ambiguous elements
 
-When two or more components have the key of an element, the element names no single object. It has no hotspot. It gets one entry in the panel's `ambiguous` array instead. Its SVG element has the default port fill.
+When two or more components that can bind on the face of the panel have the key of an element, the element names no single object. It has no hotspot. It gets one entry in the panel's `ambiguous` array instead. Its SVG element has the default port fill.
 
 | Field | Type | Notes |
 |---|---|---|

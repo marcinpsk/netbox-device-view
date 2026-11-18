@@ -39,13 +39,13 @@ Each interface and port is mapped to a `stylename` used as the CSS grid-area nam
 
 ### Shared stylenames
 
-Two components can derive the same stylename, for example an interface `Console` and a console port `Console`. The plugin does not select one of them:
+Two components that can bind on one face can derive the same stylename, for example an interface `Console` and a console port `Console`. The plugin does not select one of them:
 
 - The element shows a neutral, dashed cell. It links to no component.
 - Its popover lists each component with a link.
 - The [rendered-layout API](rendered-layout-api.md#ambiguous-elements) gives no hotspot for the element. It lists the element in the panel's `ambiguous` array, with a `candidates` list.
 
-A front port binds only on the front face, and a rear port only on the rear face. Thus the front port `Port 1` and the rear port `Port 1` of a patch panel do not share a stylename when the layout has separate `front` and `rear` views. A layout with only a `rear` view draws the rear face; any other layout with one view draws the front face.
+A front port binds only on the front face, and a rear port only on the rear face. Thus the front port `Port 1` and the rear port `Port 1` of a patch panel share the stylename `port-1`, but they do not compete for one element when the layout has separate `front` and `rear` views. A layout with only a `rear` view draws the rear face; any other layout with one view draws the front face.
 
 In CSS mode, a device outside a virtual chassis shows its front ports and rear ports in separate **Front** and **Rear** grids. A virtual chassis member shows no front or rear ports in CSS mode, because one grid per member cannot hold both faces.
 

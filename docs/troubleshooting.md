@@ -57,7 +57,7 @@ The server writes the status classes (`bg-success`, `bg-warning`, `bg-secondary`
 python manage.py collectstatic --no-input
 ```
 
-A grey, dashed port is an ambiguous stylename: two or more components share it. See [Shared stylenames](how-it-works.md#shared-stylenames).
+A grey, dashed port is an ambiguous stylename: two or more components on that face share it. See [Shared stylenames](how-it-works.md#shared-stylenames).
 
 ---
 
