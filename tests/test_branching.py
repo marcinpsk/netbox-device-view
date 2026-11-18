@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
-from dcim.models import DeviceType, Manufacturer
+from dcim.models import Device, DeviceType, Manufacturer
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -36,6 +36,7 @@ from netbox_device_view.models import (
     BindingOverride,
     DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
 )
 
@@ -166,28 +167,37 @@ class BranchObjectTextTests(SimpleTestCase):
 
     def test_a_combining_mark_counts_in_the_text_of_a_branch_object(self):
         # The column counts code points, and a combining mark is one.
-        self.assertTextsFit(long_device_type(manufacturer_name="Q\u0301" * 50))
+        self.assertTextsFit(
+            long_device_type(manufacturer_name="Q\u0301" * 50),
+            device_name="D\u0301" * 32,
+        )
 
-    def assertTextsFit(self, device_type):
+    def assertTextsFit(self, device_type, device_name="D" * 64):
         # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
         # An override names its scope by the pk of the scope.
         device_type.pk = 1
         revision = DefinitionRevision(
             definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
         )
-        for obj in (
-            DeviceView(device_type=device_type),
-            Association(device_type=device_type, revision=revision),
-            BindingOverride(
-                device_type=device_type,
-                connector_key="con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - 4),
+        device = Device(pk=1, name=device_name, device_type=device_type)
+        for obj, start in (
+            (DeviceView(device_type=device_type), device_type.full_name),
+            (
+                Association(device_type=device_type, revision=revision),
+                device_type.full_name,
             ),
+            (
+                BindingOverride(
+                    device_type=device_type,
+                    connector_key="con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - 4),
+                ),
+                device_type.full_name,
+            ),
+            (InstancePin(device=device, revision=revision), device.name),
         ):
             with self.subTest(type(obj).__name__):
                 self.assertLessEqual(len(str(obj)), MAX_REPR)
-                self.assertTrue(
-                    str(obj).startswith(device_type.full_name[: MAX_REPR - 1])
-                )
+                self.assertTrue(str(obj).startswith(start[: MAX_REPR - 1]))
 
 
 @unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
