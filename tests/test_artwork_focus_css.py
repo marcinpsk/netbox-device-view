@@ -58,9 +58,29 @@ def test_each_focusable_svg_element_shows_its_focus_ring():
         assert found.get(selector, {}).get("display") == "inline", selector
 
 
-def test_each_focusable_svg_element_has_an_outline():
-    # Blink and Gecko paint the outline; WebKit shows only the ring.
+_STYLES = {
+    "auto",
+    "dotted",
+    "dashed",
+    "solid",
+    "double",
+    "groove",
+    "ridge",
+    "inset",
+    "outset",
+}
+_ZERO = re.compile(r"^0(\.0*)?([a-z]+)?$")
+
+
+def visible(outline):
+    """Return True when an outline shorthand paints a line: it has a visible style and no zero width."""
+    tokens = outline.lower().split()
+    return bool(_STYLES & set(tokens)) and not any(_ZERO.match(t) for t in tokens)
+
+
+def test_each_focusable_element_has_a_visible_outline():
+    # Blink and Gecko paint the outline of an SVG element; WebKit shows only the ring.
     found = dict(rules())
-    for name in SVG_CLASSES:
+    for name in (*SVG_CLASSES, *HTML_CLASSES):
         outline = found.get(f".{name}:focus-visible", {}).get("outline", "none")
-        assert outline != "none", name
+        assert visible(outline), name
