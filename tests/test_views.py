@@ -86,6 +86,16 @@ class DeviceViewTabTests(TestCase):
         self.assertContains(response, 'class="deviceview area dsw1', count=1)
         self.assertNotContains(response, 'class="dv-svg-wrapper')
 
+    def test_css_mode_keeps_the_interfaces_of_a_device_named_rear(self):
+        Device.objects.filter(pk=self.device.pk).update(name="Rear")
+        Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
+        RearPort.objects.create(
+            device=self.device, name="Port 1", type="8p8c", positions=1
+        )
+        response = self._tab(RenderMode.CSS)
+        self.assertContains(response, 'data-bs-title="Gi1"', count=1)
+        self.assertContains(response, 'data-bs-title="Port 1"', count=1)
+
     def test_svg_mode_renders_the_panel_of_the_device(self):
         Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
         response = self._tab(RenderMode.SVG)

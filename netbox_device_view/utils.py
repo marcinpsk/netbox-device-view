@@ -283,7 +283,8 @@ def _css_groups(obj, members, user):
             for key, face in ((obj.name, None), ("Front", "front"), ("Rear", "rear")):
                 group = [state for state in states if state.face == face]
                 if group:
-                    groups[key] = group
+                    # A device named Front or Rear shares the grid of that face.
+                    groups.setdefault(key, []).extend(group)
         else:
             group = [state for state in states if state.face is None]
             if group:
