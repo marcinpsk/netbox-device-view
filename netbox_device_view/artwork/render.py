@@ -369,8 +369,6 @@ def _wrap(element, connector, outer, inner, marks, ring, prefix):
         if inner:
             classes.append(f"dv-art-{DISABLED}")
         wrapper.set("class", " ".join(classes))
-    if marks is not None:
-        wrapper.set("filter", f"url(#{marks.get('id')})")
     title = _title(connector)
     # A browser shows the title nearest to the hovered element, so each title names the facts.
     for own in element.iter(_TITLE):
@@ -379,22 +377,30 @@ def _wrap(element, connector, outer, inner, marks, ring, prefix):
     wrapper.tail, element.tail = element.tail, None
     element.addprevious(wrapper)
     wrapper.append(element)
+    # A connector can have no paint, so each filter draws from a painted copy of its shape.
+    if marks is not None:
+        _painted_copy(wrapper, element, marks, "dv-art-marks", prefix)
     if ring is not None:
         # WebKit paints no outline on an SVG element, so the page CSS shows this ring on focus.
-        etree.SubElement(
-            wrapper,
-            f"{{{SVG_NS}}}g",
-            {
-                "class": "dv-art-focus-ring",
-                "filter": f"url(#{ring.get('id')})",
-                "fill": "#000",
-                "stroke": "#000",
-                "fill-opacity": "1",
-                "stroke-opacity": "1",
-                "visibility": "visible",
-                "aria-hidden": "true",
-            },
-        ).append(_shape(element, ring.getparent(), prefix))
+        _painted_copy(wrapper, element, ring, "dv-art-focus-ring", prefix)
+
+
+def _painted_copy(wrapper, element, found, css_class, prefix):
+    """Append to ``wrapper`` a group that draws the filter ``found`` from a painted copy of ``element``."""
+    etree.SubElement(
+        wrapper,
+        f"{{{SVG_NS}}}g",
+        {
+            "class": css_class,
+            "filter": f"url(#{found.get('id')})",
+            "fill": "#000",
+            "stroke": "#000",
+            "fill-opacity": "1",
+            "stroke-opacity": "1",
+            "visibility": "visible",
+            "aria-hidden": "true",
+        },
+    ).append(_shape(element, found.getparent(), prefix))
 
 
 def _shape(element, defs, prefix):
@@ -534,10 +540,10 @@ class _MarkFilter:
         self.results = 0
 
     def draw(self, outer, inner) -> etree._Element:
+        """Draw only the marks around and inside the source, without the source."""
         layers = []
         if outer is not None:
             layers.append(self.paint(self.outer_ring(outer), outer))
-        layers.append("SourceGraphic")
         if inner:
             band = self.cut("SourceAlpha", self.grow(1, "erode"))
             layers.append(self.paint(self.keep(band, self.checker(1.5)), DISABLED))
@@ -650,17 +656,19 @@ def legend() -> tuple[tuple[str, SafeString], ...]:
             nsmap={None: SVG_NS},
         )
         etree.SubElement(svg, f"{{{SVG_NS}}}defs").append(marks)
-        etree.SubElement(
-            svg,
-            f"{{{SVG_NS}}}rect",
-            {
-                "x": "8",
-                "y": "5",
-                "width": "16",
-                "height": "10",
-                "fill": "#6c757d",
-                "filter": f"url(#dv-legend-{mark})",
-            },
-        )
+        # As on a face, the filter draws the marks over the shape that it marks.
+        for paint in ({}, {"filter": f"url(#dv-legend-{mark})"}):
+            etree.SubElement(
+                svg,
+                f"{{{SVG_NS}}}rect",
+                {
+                    "x": "8",
+                    "y": "5",
+                    "width": "16",
+                    "height": "10",
+                    "fill": "#6c757d",
+                    **paint,
+                },
+            )
         items.append((label, mark_safe(etree.tostring(svg, encoding="unicode"))))
     return tuple(items)

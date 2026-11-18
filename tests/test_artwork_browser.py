@@ -146,7 +146,9 @@ class ArtworkBrowserTests(ArtworkTestCase):
                 return page.screenshot(clip=inner), page.screenshot(clip=outer)
 
             marked_inner, marked_outer = shots()
-            connector.evaluate("el => el.parentElement.removeAttribute('filter')")
+            connector.evaluate(
+                "el => el.parentElement.querySelector('.dv-art-marks').remove()"
+            )
             plain_inner, plain_outer = shots()
         self.assertEqual(marked_inner, plain_inner)
         self.assertNotEqual(marked_outer, plain_outer)

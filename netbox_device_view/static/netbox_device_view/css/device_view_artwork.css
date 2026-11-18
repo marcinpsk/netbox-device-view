@@ -69,6 +69,12 @@
     outline-offset: 1px;
 }
 
+/* The marks copy of a connector takes no clicks; the connector under it takes them. */
+.dv-art-marks,
+.dv-art-marks * {
+    pointer-events: none;
+}
+
 .dv-art-focus-ring {
     display: none;
     pointer-events: none;
