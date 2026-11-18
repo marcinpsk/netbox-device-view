@@ -409,7 +409,9 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         return data
 
 
-class BindingOverrideFilterForm(SavedFiltersMixin, FilterForm):
+class BindingOverrideFilterForm(
+    RestrictedFilterFormMixin, SavedFiltersMixin, FilterForm
+):
     model = BindingOverride
     fieldsets = (
         FieldSet("q", "filter_id"),
