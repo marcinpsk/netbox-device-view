@@ -276,7 +276,8 @@ class UploadTests(ArtworkTestCase):
         self.client.force_login(admin)
         before = self.device_view_card(tab)
         self.client.force_login(self.user)
-        self.upload()
+        self.assertContains(self.upload(), "Imported")
+        self.assertEqual(DefinitionRevision.objects.get().definition.key, "acme/sw-24")
         self.client.force_login(admin)
         self.assertEqual(self.device_view_card(tab), before)
 
