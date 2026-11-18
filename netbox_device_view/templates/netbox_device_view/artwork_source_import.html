@@ -64,6 +64,7 @@
             {% if can_view_list %}
               <a href="{% url 'plugins:netbox_device_view:definitionrevision_list' %}" class="btn btn-outline-secondary">{% trans "Artwork revisions" %}</a>
             {% endif %}
+            <button type="submit" name="_select" class="btn btn-outline-primary" formnovalidate>{% trans "Show Data Source" %}</button>
             <button type="submit" class="btn btn-primary">{% trans "Import" %}</button>
           </div>
         </div>

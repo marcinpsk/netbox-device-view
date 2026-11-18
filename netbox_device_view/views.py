@@ -527,13 +527,17 @@ class ArtworkSourceImportView(
         return render(request, self.template_name, context, status=status)
 
     @staticmethod
-    def _sync_url(source, form):
-        """Return NetBox's own sync URL; it comes back to this page with the same choice."""
-        here = urlencode(
-            {"data_source": source.pk, "prefix": form["prefix"].value() or ""}
-        )
+    def _page_url(data_source, prefix):
+        """Return the URL of this page with a Data Source and a prefix selected."""
+        here = urlencode({"data_source": data_source, "prefix": prefix})
         page = reverse("plugins:netbox_device_view:definitionrevision_source_import")
-        back = urlencode({"return_url": f"{page}?{here}"})
+        return f"{page}?{here}"
+
+    def _sync_url(self, source, form):
+        """Return NetBox's own sync URL; it comes back to this page with the same choice."""
+        back = urlencode(
+            {"return_url": self._page_url(source.pk, form["prefix"].value() or "")}
+        )
         return f"{reverse('core:datasource_sync', kwargs={'pk': source.pk})}?{back}"
 
     def get(self, request):
@@ -543,6 +547,13 @@ class ArtworkSourceImportView(
         return self._render(request, form, results=self.receipt_results(request))
 
     def post(self, request):
+        if "_select" in request.POST:
+            # Show the selected source, so that it can be synced before the first import.
+            return redirect(
+                self._page_url(
+                    request.POST.get("data_source", ""), request.POST.get("prefix", "")
+                )
+            )
         form = forms.ArtworkSourceImportForm(request.POST, user=request.user)
         if not form.is_valid():
             return self._render(request, form, status=400)
