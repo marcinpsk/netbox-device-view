@@ -31,6 +31,7 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from lxml import etree
+from PIL import Image
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
@@ -636,14 +637,50 @@ class CableOccupancyTests(ArtworkTestCase):
     def test_a_cabled_connector_shows_its_occupancy(self):
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector dv-art-occupied")
-        self.assertIn(link.get("filter")[5:-1], ids(front))
+        # The link draws the connector as it is; a painted copy draws the outline.
+        self.assertIsNone(link.get("filter"))
+        [outline] = link.findall(f"{{{SVG_NS}}}g[@class='dv-art-occupied-outline']")
+        self.assertIn(outline.get("filter")[5:-1], ids(front))
+        self.assertEqual(outline.get("aria-hidden"), "true")
         self.assertIn("cable attached", link.find(f"{{{SVG_NS}}}title").text)
+
+    def test_the_outline_of_a_connector_without_paint_shows_in_the_browser(self):
+        unpainted = (
+            '<rect id="con-eth1" width="12" height="10" fill="none" stroke="none"/>'
+        )
+        self.store_face(
+            "front.svg",
+            # The green LED is next to the connector, so it goes.
+            FRONT_SVG.replace(
+                '<rect id="con-eth1" width="12" height="10" style="fill:url(#metal);stroke:#000"/>',
+                unpainted,
+            ).replace('<use xlink:href="#led" x="5" y="5"/>', ""),
+        )
+        with browser_page(self.tab()) as page:
+            box = page.locator(
+                f'[id="dv-o-d{self.device.pk}-front-con-eth1"]'
+            ).bounding_box()
+            margin = 8
+            png = page.screenshot(
+                clip={
+                    "x": box["x"] - margin,
+                    "y": box["y"] - margin,
+                    "width": box["width"] + 2 * margin,
+                    "height": box["height"] + 2 * margin,
+                }
+            )
+        data = Image.open(io.BytesIO(png)).convert("RGB").tobytes()
+        pixels = zip(data[0::3], data[1::3], data[2::3], strict=True)
+        green = [p for p in pixels if p[1] - max(p[0], p[2]) > 60]
+        self.assertGreater(len(green), 2 * (box["width"] + box["height"]))
 
     def test_a_connector_without_a_cable_shows_no_occupancy(self):
         Cable.objects.all().delete()
         front, link = self.link()
         self.assertEqual(link.get("class"), "dv-art-connector")
-        self.assertIsNone(link.get("filter"))
+        self.assertEqual(
+            link.findall(f"{{{SVG_NS}}}g[@class='dv-art-occupied-outline']"), []
+        )
         rings = {
             ring.get("filter")
             for ring in front.iterfind(f".//{{{SVG_NS}}}g[@class='dv-art-focus-ring']")
@@ -658,10 +695,11 @@ class CableOccupancyTests(ArtworkTestCase):
     def outline(self, face, name, key):
         """Return (x, y, width, height, x radius, y radius) of the outline filter of a connector."""
         link = links(face)[f"dv-o-d{self.device.pk}-{name}-{key}"]
+        [outline] = link.findall(f"{{{SVG_NS}}}g[@class='dv-art-occupied-outline']")
         [found] = [
             element
             for element in face.iter(f"{{{SVG_NS}}}filter")
-            if element.get("id") == link.get("filter")[5:-1]
+            if element.get("id") == outline.get("filter")[5:-1]
         ]
         radius = found.find(f"{{{SVG_NS}}}feMorphology").get("radius").split()
         return (
