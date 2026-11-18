@@ -331,6 +331,25 @@ class SourceImportTests(SourceTestCase):
         self.assertEqual(self.source.status, DataSourceStatusChoices.QUEUED)
         self.assertEqual(queue.count, 1)
 
+    def test_show_data_source_shows_the_source_without_an_import(self):
+        self.grant(DataSource, "sync")
+        self.assertContains(
+            self.client.get(reverse(SOURCE_IMPORT_URL)), 'name="_select"'
+        )
+
+        response = self.client.post(
+            reverse(SOURCE_IMPORT_URL),
+            {"data_source": self.source.pk, "prefix": "artwork/", "_select": ""},
+        )
+
+        page_url = f"{reverse(SOURCE_IMPORT_URL)}?data_source={self.source.pk}&prefix=artwork%2F"
+        self.assertRedirects(response, page_url, fetch_redirect_response=False)
+        self.assertFalse(RevisionImport.objects.exists())
+        page = self.client.get(response.url)
+        self.assertContains(page, "None since the plugin was installed")
+        self.assertContains(page, "mdi-sync")
+        self.assertContains(page, 'value="artwork/"')
+
     def test_check_for_updates_follows_the_sync_permission_constraints(self):
         self.grant(DataSource, "sync", constraints={"name": "Other"})
         page = self.client.get(

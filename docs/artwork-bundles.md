@@ -158,7 +158,7 @@ The response is `201` with the revisions and a `created` flag for each one, or `
 
 A NetBox Data Source, for example a Git repository, can supply the same files as a bundle. A sync only fetches the files into NetBox. It does not change a revision. An import reads the synchronized files and stores each definition as a candidate revision, with the same validation as a bundle. The same files give the same revision as a bundle.
 
-In the UI, go to **Plugins → Artwork Revisions** and click **Import from Data Source**. Select the Data Source and the directory prefix. Every file below the prefix must be in a definition directory, so select the directory that holds the definitions. Click **Check for updates** to start the NetBox sync of the source, then click **Import** when the sync has completed.
+In the UI, go to **Plugins → Artwork Revisions** and click **Import from Data Source**. Select the Data Source and the directory prefix. Every file below the prefix must be in a definition directory, so select the directory that holds the definitions. Click **Show Data Source** to see the state and the last sync of the source. Click **Check for updates** to start the NetBox sync of the source, then click **Import** when the sync has completed.
 
 With the REST API, send the Data Source ID and the prefix:
 
