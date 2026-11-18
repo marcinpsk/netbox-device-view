@@ -336,7 +336,10 @@ class BindingOverrideForm(ChangelogMessageMixin, forms.ModelForm):
         context={"parent": "manufacturer"},
     )
     module_type = DynamicModelChoiceField(
-        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
+        queryset=ModuleType.objects.all(),
+        required=False,
+        label=_("Module type"),
+        context={"parent": "manufacturer"},
     )
     device = DynamicModelChoiceField(
         queryset=Device.objects.all(), required=False, selector=True, label=_("Device")
@@ -428,7 +431,10 @@ class BindingOverrideFilterForm(
         context={"parent": "manufacturer"},
     )
     module_type_id = DynamicModelMultipleChoiceField(
-        queryset=ModuleType.objects.all(), required=False, label=_("Module type")
+        queryset=ModuleType.objects.all(),
+        required=False,
+        label=_("Module type"),
+        context={"parent": "manufacturer"},
     )
     device_id = DynamicModelMultipleChoiceField(
         queryset=Device.objects.all(), required=False, label=_("Device")
