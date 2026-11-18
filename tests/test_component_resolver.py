@@ -30,7 +30,12 @@ from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token, User
 
-from netbox_device_view.components import BINDABLE_MODELS, device_components, find
+from netbox_device_view.components import (
+    BINDABLE_MODELS,
+    device_components,
+    find,
+    resolve_name,
+)
 from netbox_device_view.models import DeviceView, RenderMode
 
 from .browser import browser_page
@@ -604,8 +609,13 @@ class TypedLookupTests(ResolverTestBase):
         self.assertEqual(self._found(Interface, "Gi1", self.module), [])
 
     def test_a_name_with_more_module_tokens_than_bay_levels_finds_nothing(self):
-        # NetBox raises ValueError when the token count does not fit the depth.
+        self.assertIsNone(resolve_name(Interface, "Te{module}/{module}", self.module))
         self.assertEqual(self._found(Interface, "Te{module}/{module}", self.module), [])
+
+    def test_a_name_with_one_module_token_resolves_to_the_bay_position(self):
+        self.assertEqual(
+            resolve_name(Interface, "Te1/{module}/1", self.module), "Te1/1/1"
+        )
 
     def test_a_missing_component_is_not_found(self):
         self.assertEqual(self._found(Interface, "Gi2"), [])

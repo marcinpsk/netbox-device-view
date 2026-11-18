@@ -10,6 +10,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 
+from dcim.constants import MODULE_TOKEN
 from dcim.models import (
     Cable,
     ConsolePort,
@@ -346,9 +347,11 @@ def resolve_name(model, name, module) -> str | None:
     None when the ``{module}`` tokens do not fit the depth of the bay of ``module``.
     """
     try:
-        return _TEMPLATE_MODELS[model](name=name).resolve_name(module)
+        resolved = _TEMPLATE_MODELS[model](name=name).resolve_name(module)
     except ValueError:
         return None
+    # NetBox 4.5.0 leaves the extra tokens in the name instead of raising ValueError.
+    return None if MODULE_TOKEN in resolved else resolved
 
 
 def find(states, model, name, module=None):
