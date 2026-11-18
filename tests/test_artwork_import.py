@@ -383,7 +383,8 @@ class ApiTests(ArtworkTestCase):
                 CustomValidator({"digest": {"eq": "protected"}})
             ]
         }
-        with override_settings(PROTECTION_RULES=rules):
+        # NetBox 4.5 deletes without a savepoint; this block acts as the request transaction.
+        with override_settings(PROTECTION_RULES=rules), transaction.atomic():
             response = self.api().delete(url)
         self.assertEqual(response.status_code, 400)
         self.assertIn("protection rule", response.json()["detail"])
