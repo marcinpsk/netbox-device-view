@@ -89,7 +89,7 @@ Each face is one SVG file. The `viewBox` is in millimetres of the real face. The
 - Not allowed: scripts, `style` elements, `image`, links, masks, filters, patterns, markers, `foreignObject`, animation, event attributes, `class`, a DOCTYPE, entities and processing instructions. Only the SVG and XLink namespaces are allowed, so export plain SVG from your editor.
 - Styling: presentation attributes and `style` attributes with presentation properties only. A paint `url()` can name only a gradient in the same file. A `clip-path` can name only a `clipPath` in the same file.
 - References: `href` and `xlink:href` are `#id` references in the same file. Reference cycles fail.
-- A connector is one element whose `id` is its connector key. A bay is one `rect` whose `id` is its bay key, with unitless `x`, `y`, `width` and `height`. A bay and its ancestor groups have no `transform`.
+- A connector is one element whose `id` is its connector key. A bay is one `rect` whose `id` is its bay key. A bay must have `width` and `height`, as unitless numbers of at least 1. Its `x` and `y` are optional, and they are unitless when present. A bay and its ancestor groups have no `transform`.
 - The connector and bay keys of the manifest and the `con-` and `bay-` ids of each face must be equal.
 
 ---
