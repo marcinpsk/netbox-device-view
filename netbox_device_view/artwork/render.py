@@ -29,6 +29,7 @@ from .svg import (
     IDENTITY,
     SVG_NS,
     XLINK_NS,
+    canonical_transform,
     multiply,
     parse_view_box,
     safe_parser,
@@ -45,6 +46,7 @@ MISSING = "missing"
 OVERVIEW = "o"
 _URL = re.compile(r"url\(#([^)]*)\)")
 _URL_PROPERTIES = ("fill", "stroke", "clip-path")
+_TRANSFORMS = ("transform", "gradientTransform")
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
 _TITLE = f"{{{SVG_NS}}}title"
 _USE = f"{{{SVG_NS}}}use"
@@ -178,6 +180,11 @@ def _face_svg(data: bytes, prefix: str, connectors: list[Connector]) -> SafeStri
             elements[ident] = element
             element.set("id", prefix + ident)
         _rewrite_references(element, prefix)
+        # The filter regions use the same parsed transforms as the browser.
+        for name in _TRANSFORMS:
+            value = element.get(name)
+            if value is not None:
+                element.set(name, canonical_transform(value))
     view_box = parse_view_box(root.get("viewBox").strip())
     for name in ("x", "y", "width", "height"):
         root.attrib.pop(name, None)

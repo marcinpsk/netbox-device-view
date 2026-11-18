@@ -414,6 +414,15 @@ def transform_matrix(value: str):
     return matrix
 
 
+def canonical_transform(value: str) -> str:
+    """Return a valid transform list with one space between the functions and between the numbers."""
+    # A browser ignores a list that has two commas between functions; the profile accepts it.
+    return " ".join(
+        f"{name}({' '.join(repr(number).removesuffix('.0') for number in numbers)})"
+        for name, numbers in _transform_items(value.strip(_SPACE))
+    )
+
+
 def _url(value: str, kinds: frozenset[str]) -> _Reference | None:
     match = _URL.fullmatch(value)
     return None if match is None else _Reference(match.group(1), kinds)

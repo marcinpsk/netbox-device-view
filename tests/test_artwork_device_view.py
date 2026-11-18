@@ -39,6 +39,7 @@ from netbox_device_view.artwork.svg import transform_matrix
 from netbox_device_view.models import Association, DeviceView
 
 from .artwork_samples import DEVICE_MANIFEST, bundle, definition
+from .browser import browser_page
 from .permissions import grant
 
 TAB_URL = "dcim:device_deviceview"
@@ -687,6 +688,27 @@ class CableOccupancyTests(ArtworkTestCase):
         self.assertEqual(region, [0, 0, 1760, 88])
         self.assertAlmostEqual(x_radius, radius * 4, places=3)
         self.assertAlmostEqual(y_radius, radius * 2, places=3)
+
+    def test_a_transform_list_with_two_commas_moves_the_connector_in_the_browser(self):
+        # The profile accepts two commas between transform functions; Chromium ignores such a list.
+        self.store_face(
+            "front.svg",
+            FRONT_SVG.replace("translate(10 10)", "translate(10 10),,scale(1)"),
+        )
+        content = self.tab()
+        ident = f"dv-o-d{self.device.pk}-front-con-eth1"
+        group = links(faces(content)[0])[ident].getparent()
+        self.assertEqual(group.get("transform"), "translate(10 10) scale(1)")
+        with browser_page(content) as page:
+            offset = page.evaluate(
+                """ident => {
+                    const list = document.getElementById(ident).closest("g").transform.baseVal;
+                    return list.numberOfItems ? list.consolidate().matrix.e : null;
+                }""",
+                ident,
+            )
+        # The outline filter has its region in the same user space.
+        self.assertEqual(offset, 10)
 
 
 class DamagedArtworkTests(ArtworkTestCase):
