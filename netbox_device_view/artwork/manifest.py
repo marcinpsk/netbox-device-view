@@ -167,8 +167,14 @@ def _line(lines: dict, at) -> int | None:
 def _licence_and_url_issues(manifest: dict) -> list[tuple[tuple, str]]:
     issues = []
     try:
-        if _LICENSING.parse(manifest["license"], validate=True, strict=True) is None:
+        expression = _LICENSING.parse(manifest["license"], validate=True, strict=True)
+        if expression is None:
             issues.append((("license",), "The licence expression is empty."))
+        elif any(
+            key.lower().startswith("licenseref-")
+            for key in _LICENSING.license_keys(expression)
+        ):
+            issues.append((("license",), "A LicenseRef- identifier is not allowed."))
     except ExpressionError as exc:
         issues.append((("license",), f"Not a valid SPDX licence expression: {exc}"))
     for index, reference in enumerate(manifest["hardware"]["references"]):

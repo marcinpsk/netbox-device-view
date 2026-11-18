@@ -170,6 +170,16 @@ def test_a_trailing_newline_does_not_pass_an_anchored_pattern():
             "port",
         ),
         (replace("https://example.com/sw-24.pdf", "https://example.com:0/a"), "port"),
+        (
+            replace("license: MIT", "license: LicenseRef-scancode-3com-microcode"),
+            "LicenseRef",
+        ),
+        (
+            replace(
+                "license: MIT", "license: MIT OR LicenseRef-scancode-3com-microcode"
+            ),
+            "LicenseRef",
+        ),
     ],
 )
 def test_rules_beyond_the_schema(text, message):
