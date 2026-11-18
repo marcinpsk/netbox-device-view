@@ -20,7 +20,8 @@ from django.test import (
 )
 from django.urls import reverse
 from netbox.context_managers import event_tracking
-from users.models import User
+from users.constants import TOKEN_PREFIX
+from users.models import Token, User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
@@ -45,6 +46,8 @@ from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
 
 BRANCHING = "netbox_branching" in settings.PLUGINS
+REVISION_DELETE_URL = "plugins:netbox_device_view:definitionrevision_delete"
+REVISION_API_URL = "plugins-api:netbox_device_view-api:definitionrevision-detail"
 
 
 def provision_branch(name):
@@ -393,6 +396,49 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         self.branch.merge(user=self.user)
 
         self.assertEqual(Association.objects.get().device_type, self.device_type)
+
+    def test_a_revision_active_only_in_a_branch_cannot_be_deleted_in_main(self):
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
+        grant(self.user, DefinitionRevision, "delete")
+        activation = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+        self.assertEqual(activation.status_code, 302)
+        del self.client.cookies["active_branch"]
+
+        page = self.client.post(
+            reverse(REVISION_DELETE_URL, args=[revision.pk]),
+            {"confirm": True},
+            follow=True,
+        )
+        token = Token.objects.create(user=self.user)
+        api = self.client.delete(
+            reverse(REVISION_API_URL, args=[revision.pk]),
+            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}",
+        )
+
+        self.assertContains(page, "Unable to delete")
+        self.assertContains(page, self.branch.get_absolute_url())
+        self.assertEqual(api.status_code, 409)
+        self.assertIn(f"{self.branch} ({self.branch.pk})", api.json()["detail"])
+        self.assertTrue(DefinitionRevision.objects.filter(pk=revision.pk).exists())
+
+    def test_a_revision_that_no_branch_uses_can_be_deleted(self):
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, DefinitionRevision, "delete")
+        del self.client.cookies["active_branch"]
+
+        response = self.client.post(
+            reverse(REVISION_DELETE_URL, args=[revision.pk]), {"confirm": True}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(DefinitionRevision.objects.filter(pk=revision.pk).exists())
 
     def test_a_rejected_activation_in_a_branch_leaves_no_change_record(self):
         from netbox_branching.models import ChangeDiff

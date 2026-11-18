@@ -246,7 +246,7 @@ A virtual chassis shows the artwork of each member when every member that you ca
 
 The artwork catalogue is global, as Data Sources are. With [NetBox Branching](https://github.com/netboxlabs/netbox-branching), an import or a key transfer in an active branch changes main at once. A branch merge does not change the catalogue.
 
-An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main.
+An association links to a device type, so it belongs to the branch: an activation in a branch changes only that branch, and a merge applies it to main. A revision that an association in a branch uses cannot be deleted in main. The error names the branch, and the API answers with 409.
 
 ---
 
