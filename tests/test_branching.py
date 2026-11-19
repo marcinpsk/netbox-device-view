@@ -135,9 +135,9 @@ class CatalogueModelTests(SimpleTestCase):
         )
 
 
-def long_device_type(save=False):
+def long_device_type(save=False, manufacturer_name="M" * 100):
     """Return a device type whose manufacturer name and model have the maximum length."""
-    manufacturer = Manufacturer(name="M" * 100, slug="m" * 100)
+    manufacturer = Manufacturer(name=manufacturer_name, slug="m" * 100)
     device_type = DeviceType(manufacturer=manufacturer, model="X" * 100, slug="x" * 100)
     if save:
         manufacturer.save()
@@ -148,8 +148,14 @@ def long_device_type(save=False):
 
 class BranchObjectTextTests(SimpleTestCase):
     def test_the_text_of_each_branch_object_fits_its_change_record(self):
+        self.assertTextsFit(long_device_type())
+
+    def test_a_combining_mark_counts_in_the_text_of_a_branch_object(self):
+        # The column counts code points, and a combining mark is one.
+        self.assertTextsFit(long_device_type(manufacturer_name="Q\u0301" * 50))
+
+    def assertTextsFit(self, device_type):
         # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
-        device_type = long_device_type()
         revision = DefinitionRevision(
             definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
         )

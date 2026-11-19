@@ -3,7 +3,6 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, router, transaction
 from django.urls import reverse
-from django.utils.text import Truncator
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
@@ -13,6 +12,12 @@ from .layout.parser import LayoutParseError, parse
 
 # NetBox Branching copies str() of a branch object to a column of this size without a cut.
 MAX_REPR = ObjectChange._meta.get_field("object_repr").max_length
+
+
+def bounded_repr(text: str) -> str:
+    """Return ``text`` cut to MAX_REPR code points, with an ellipsis when it is cut."""
+    # The column counts code points, so a combining mark counts as one.
+    return text if len(text) <= MAX_REPR else text[: MAX_REPR - 1] + "…"
 
 
 class RenderMode(models.TextChoices):
@@ -54,9 +59,7 @@ class DeviceView(NetBoxModel):
         ordering = ("device_type",)
 
     def __str__(self):
-        return Truncator(
-            f"{self.device_type.manufacturer} {self.device_type.model}"
-        ).chars(MAX_REPR)
+        return bounded_repr(f"{self.device_type.manufacturer} {self.device_type.model}")
 
     def clean_fields(self, exclude=None):
         # A field-level check, so full_clean(exclude=["yaml_layout"]) skips the parse.
@@ -221,9 +224,7 @@ class Association(ChangeLoggedModel):
 
     def __str__(self):
         # The type comes first: it identifies the association.
-        return Truncator(f"{self.hardware_type.full_name} → {self.revision}").chars(
-            MAX_REPR
-        )
+        return bounded_repr(f"{self.hardware_type.full_name} → {self.revision}")
 
     def get_absolute_url(self):
         return reverse("plugins:netbox_device_view:association", args=[self.pk])
