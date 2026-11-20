@@ -16,7 +16,7 @@ from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
 from extras.validators import CustomValidator
 from rest_framework.test import APIClient
-from users.models import ObjectPermission, User
+from users.models import User
 
 from netbox_device_view.artwork.storage import DamagedBlob, read_blob
 from netbox_device_view.models import (
@@ -37,6 +37,7 @@ from .artwork_samples import (
     bundle,
     definition,
 )
+from .permissions import grant
 
 IMPORT_URL = "plugins:netbox_device_view:definitionrevision_import"
 LIST_URL = "plugins:netbox_device_view:definitionrevision_list"
@@ -67,15 +68,6 @@ class ArtworkTestCase(TestCase):
         self.user = User.objects.create_user(username="importer")
         self.client.force_login(self.user)
 
-    def grant(self, model, *actions, constraints=None, user=None):
-        permission = ObjectPermission.objects.create(
-            name=f"{model._meta.model_name}-{ObjectPermission.objects.count()}",
-            actions=list(actions),
-            constraints=constraints,
-        )
-        permission.users.add(user or self.user)
-        permission.object_types.add(ObjectType.objects.get_for_model(model))
-
     def upload(self, data=None, name="sw24.zip", follow=True):
         return self.client.post(
             reverse(IMPORT_URL),
@@ -99,7 +91,7 @@ class ArtworkTestCase(TestCase):
 class UploadTests(ArtworkTestCase):
     def setUp(self):
         super().setUp()
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
 
     def test_a_valid_bundle_becomes_a_candidate_revision(self):
         response = self.upload()
@@ -204,13 +196,16 @@ class UploadTests(ArtworkTestCase):
             args=[revision.pk],
         )
         self.assertNotContains(self.client.get(url), change.get_absolute_url())
-        self.grant(ObjectChange, "view")
+        grant(self.user, ObjectChange, "view")
         self.assertContains(self.client.get(url), change.get_absolute_url())
         self.user = User.objects.create_user(username="outsider")
         self.client.force_login(self.user)
-        self.grant(ObjectChange, "view")
-        self.grant(
-            DefinitionRevision, "view", constraints={"definition__key": "acme/other"}
+        grant(self.user, ObjectChange, "view")
+        grant(
+            self.user,
+            DefinitionRevision,
+            "view",
+            constraints={"definition__key": "acme/other"},
         )
         self.assertEqual(self.client.get(url).status_code, 404)
 
@@ -385,7 +380,7 @@ class UploadTests(ArtworkTestCase):
 class ApiTests(ArtworkTestCase):
     def setUp(self):
         super().setUp()
-        self.grant(DefinitionRevision, "view", "add", "delete")
+        grant(self.user, DefinitionRevision, "view", "add", "delete")
 
     def post(self, data):
         return self.api().post(
@@ -441,7 +436,7 @@ class ApiTests(ArtworkTestCase):
     def test_a_reimport_does_not_show_provenance_the_user_cannot_view(self):
         self.post(bundle())
         self.user = User.objects.create_user(username="adder")
-        self.grant(DefinitionRevision, "add")
+        grant(self.user, DefinitionRevision, "add")
         response = self.post(bundle())
         self.assertEqual(response.status_code, 200)
         [result] = response.json()["revisions"]
@@ -464,7 +459,7 @@ class ApiTests(ArtworkTestCase):
         self.assertFalse(DefinitionRevision.objects.exists())
 
     def test_a_revision_cannot_be_changed_through_the_api(self):
-        self.grant(DefinitionRevision, "change")
+        grant(self.user, DefinitionRevision, "change")
         self.post(bundle())
         url = reverse(
             "plugins-api:netbox_device_view-api:definitionrevision-detail",
@@ -474,6 +469,18 @@ class ApiTests(ArtworkTestCase):
             with self.subTest(method=method):
                 response = getattr(self.api(), method)(url, {"digest": "0" * 64})
                 self.assertEqual(response.status_code, 405)
+
+    def test_the_api_has_no_create_or_bulk_write_of_revisions(self):
+        grant(self.user, DefinitionRevision, "add", "change", "delete")
+        self.post(bundle())
+        revision = DefinitionRevision.objects.get()
+        url = reverse("plugins-api:netbox_device_view-api:definitionrevision-list")
+        body = [{"id": revision.pk, "digest": "0" * 64}]
+        for method in ("post", "put", "patch", "delete"):
+            with self.subTest(method=method):
+                response = getattr(self.api(), method)(url, body, format="json")
+                self.assertEqual(response.status_code, 405)
+        self.assertEqual(DefinitionRevision.objects.get().digest, revision.digest)
 
     def test_api_delete_removes_the_revision_and_keeps_the_blobs(self):
         self.post(bundle())
@@ -510,7 +517,7 @@ class ApiTests(ArtworkTestCase):
 
 class ImmutabilityTests(ArtworkTestCase):
     def test_stored_records_refuse_every_save(self):
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
         self.upload()
         revision = DefinitionRevision.objects.get()
         records = [
@@ -531,7 +538,7 @@ class ImmutabilityTests(ArtworkTestCase):
             )
 
     def test_a_new_record_with_a_stored_key_does_not_overwrite_it(self):
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
         self.upload()
         stored = ArtworkBlob.objects.first()
         revision = DefinitionRevision.objects.get()
@@ -565,7 +572,7 @@ class ImmutabilityTests(ArtworkTestCase):
         self.assertFalse(ArtworkBlob.objects.filter(digest="0" * 64).exists())
 
     def test_ui_delete_removes_the_revision(self):
-        self.grant(DefinitionRevision, "view", "add", "delete")
+        grant(self.user, DefinitionRevision, "view", "add", "delete")
         self.upload()
         revision = DefinitionRevision.objects.get()
         url = reverse(
@@ -578,8 +585,8 @@ class ImmutabilityTests(ArtworkTestCase):
 
 class PermissionTests(ArtworkTestCase):
     def test_viewing_a_device_does_not_allow_an_import(self):
-        self.grant(Device, "view")
-        self.grant(DefinitionRevision, "view")
+        grant(self.user, Device, "view")
+        grant(self.user, DefinitionRevision, "view")
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 403)
         self.assertEqual(self.upload().status_code, 403)
         response = self.api().post(
@@ -593,22 +600,22 @@ class PermissionTests(ArtworkTestCase):
         self.assertEqual(self.stored_files(), [])
 
     def test_an_importer_sees_the_import_button(self):
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
         # The navigation menu links the same URL, so match the list action markup.
         self.assertContains(
             self.client.get(reverse(LIST_URL)),
-            f'<a href="{reverse(IMPORT_URL)}" class="btn btn-primary" role="button">',
+            f'<a href="{reverse(IMPORT_URL)}" class="btn btn-primary">',
             count=1,
         )
 
     def test_an_importer_without_view_finds_the_import_in_the_menu(self):
-        self.grant(DefinitionRevision, "add")
+        grant(self.user, DefinitionRevision, "add")
         self.assertEqual(self.client.get(reverse(IMPORT_URL)).status_code, 200)
         self.assertContains(self.client.get(reverse("home")), reverse(IMPORT_URL))
 
     def test_an_importer_without_view_gets_no_revision_links(self):
-        self.grant(DefinitionRevision, "add")
+        grant(self.user, DefinitionRevision, "add")
         form = self.client.get(reverse(IMPORT_URL))
         self.assertNotContains(form, f'href="{reverse(LIST_URL)}"')
         receipt = self.upload()
@@ -619,9 +626,12 @@ class PermissionTests(ArtworkTestCase):
             self.assertContains(receipt, text)
 
     def test_a_constrained_viewer_gets_no_link_to_a_revision_outside_the_view(self):
-        self.grant(DefinitionRevision, "add")
-        self.grant(
-            DefinitionRevision, "view", constraints={"definition__key": "acme/other"}
+        grant(self.user, DefinitionRevision, "add")
+        grant(
+            self.user,
+            DefinitionRevision,
+            "view",
+            constraints={"definition__key": "acme/other"},
         )
         receipt = self.upload()
         revision = DefinitionRevision.objects.get()
@@ -630,9 +640,12 @@ class PermissionTests(ArtworkTestCase):
         self.assertContains(receipt, "acme/sw-24")
 
     def test_add_constraints_apply_to_the_imported_revisions(self):
-        self.grant(DefinitionRevision, "view")
-        self.grant(
-            DefinitionRevision, "add", constraints={"definition__key": "acme/other"}
+        grant(self.user, DefinitionRevision, "view")
+        grant(
+            self.user,
+            DefinitionRevision,
+            "add",
+            constraints={"definition__key": "acme/other"},
         )
         self.assertEqual(self.upload().status_code, 403)
         self.assertFalse(DefinitionRevision.objects.exists())

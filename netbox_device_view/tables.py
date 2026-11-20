@@ -3,7 +3,7 @@ from django.utils.html import mark_safe
 from django.utils.text import capfirst
 from netbox.tables import NetBoxTable, columns
 
-from .models import DefinitionRevision, DeviceView, VisualDefinition
+from .models import Association, DefinitionRevision, DeviceView, VisualDefinition
 
 
 class LayoutColumn(tables.Column):
@@ -128,3 +128,49 @@ class DefinitionRevisionTable(NetBoxTable):
             "imported_by",
             "source_name",
         )
+
+
+class AssociationTable(NetBoxTable):
+    id = tables.Column(linkify=True, verbose_name="ID")
+    hardware_type = tables.Column(
+        verbose_name="Type",
+        accessor="device_type",
+        # A module association has no device type; render it anyway.
+        empty_values=(),
+        linkify=lambda record: record.hardware_type.get_absolute_url(),
+        order_by=(
+            "device_type__manufacturer__name",
+            "device_type__model",
+            "module_type__manufacturer__name",
+            "module_type__model",
+        ),
+    )
+    key = tables.Column(
+        verbose_name="Definition key",
+        accessor="revision__definition__key",
+        linkify=lambda record: record.revision.definition.get_absolute_url(),
+    )
+    revision = tables.TemplateColumn(
+        verbose_name="Active revision",
+        accessor="revision__digest",
+        linkify=lambda record: record.revision.get_absolute_url(),
+        template_code='<span class="font-monospace" title="{{ value }}">{{ value|truncatechars:13 }}</span>',
+    )
+    last_updated = columns.DateTimeColumn(verbose_name="Activated")
+    actions = columns.ActionsColumn(actions=("delete", "changelog"))
+
+    class Meta(NetBoxTable.Meta):
+        model = Association
+        fields = (
+            "pk",
+            "id",
+            "hardware_type",
+            "key",
+            "revision",
+            "last_updated",
+            "actions",
+        )
+        default_columns = ("id", "hardware_type", "key", "revision", "last_updated")
+
+    def render_hardware_type(self, record):
+        return record.hardware_type.full_name
