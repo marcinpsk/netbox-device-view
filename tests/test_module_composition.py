@@ -27,12 +27,23 @@ from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.render import MAX_MODULE_DEPTH
 from netbox_device_view.artwork.storage import store_blob
 from netbox_device_view.details import details_id
+from netbox_device_view.models import Association, DeviceView, RenderMode
 
 from .activation import activate
 from .artwork_samples import bundle, definition
 from .module_samples import CHASSIS_SVG, NM_MANIFEST, NM_SVG, Inventory, manifest
 from .permissions import grant
-from .test_artwork_device_view import SVG_NS, TAB_URL, faces, ids, links, references
+from .test_api_artwork import LAYOUT_URL, device_members
+from .test_api_rendered_layout import SVG_YAML
+from .test_artwork_device_view import (
+    GRID,
+    SVG_NS,
+    TAB_URL,
+    faces,
+    ids,
+    links,
+    references,
+)
 
 G = f"{{{SVG_NS}}}g"
 
@@ -366,6 +377,46 @@ class VisibilityTests(CompositionTestCase):
         self.assertIsNotNone(self.group(front, self.inventory.nm2))
         self.assertIsNone(self.group(front, self.inventory.nm1))
         self.assertIsNone(self.group(front, self.inventory.psu))
+
+
+class LayoutParentTests(CompositionTestCase):
+    """Module artwork is drawn only under artwork or schematic parents (#37)."""
+
+    def setUp(self):
+        super().setUp()
+        Association.objects.filter(device_type=self.inventory.device_type).delete()
+        grant(self.user, DeviceView, "view")
+
+    def test_a_device_with_a_layout_shows_the_layout_without_module_artwork(self):
+        self.assertTrue(
+            Association.objects.filter(module_type=self.inventory.nm_type).exists()
+        )
+        for mode, drawn in (
+            (RenderMode.SVG, 'class="dv-svg"'),
+            (RenderMode.CSS, 'class="deviceview area'),
+        ):
+            with self.subTest(mode):
+                DeviceView.objects.update_or_create(
+                    device_type=self.inventory.device_type,
+                    defaults={
+                        "yaml_layout": SVG_YAML,
+                        "grid_template_area": GRID,
+                        "render_mode": mode,
+                    },
+                )
+                content = self.tab()
+                self.assertEqual(faces(content), [])
+                self.assertNotIn(f"-d{self.device.pk}-m", content)
+                self.assertIn(drawn, content)
+
+                [member] = device_members(self, self.device, self.user)
+                self.assertEqual(
+                    (member["representation"], member["artwork"]), ("layout", None)
+                )
+                response = self.client.get(
+                    reverse(LAYOUT_URL, kwargs={"pk": self.device.pk})
+                )
+                self.assertEqual(member["panels"], response.json()["panels"])
 
 
 class WarningTests(CompositionTestCase):
