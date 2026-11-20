@@ -31,6 +31,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token, User
+from wireless.models import WirelessLink
 
 from netbox_device_view.models import DeviceView, RenderMode
 
@@ -292,8 +293,10 @@ class RenderedPanelTests(RenderedLayoutTestBase):
         self.assertEqual(len(data["panels"]), 1)
         panel = data["panels"][0]
         self.assertEqual(
-            set(panel.keys()), {"key", "label", "width", "height", "svg", "hotspots"}
+            set(panel.keys()),
+            {"key", "label", "width", "height", "svg", "hotspots", "ambiguous"},
         )
+        self.assertEqual(panel["ambiguous"], [])
         self.assertGreater(panel["width"], 0)
         self.assertGreater(panel["height"], 0)
         self.assertIn("<svg", panel["svg"])
@@ -417,7 +420,7 @@ class PatchPanelMultiPanelTests(RenderedLayoutTestBase):
             render_mode=RenderMode.SVG,
         )
         # The composition path only reads .name/.link_peers/.cable per port
-        # (see rendered_layout._component_querysets) — it doesn't need a
+        # (see components.device_components). It does not need a
         # real FrontPort<->RearPort mapping, so these are independent.
         RearPort.objects.create(device=self.device, name="Port 1", type="8p8c")
         RearPort.objects.create(device=self.device, name="Port 2", type="8p8c")
@@ -616,3 +619,36 @@ class QueryCountTests(RenderedLayoutTestBase):
                         self.client.get(self._url(device))
                     counts.append(len(ctx.captured_queries))
                 self.assertLess(counts[1], counts[0] + 10)
+
+    def test_query_count_does_not_scale_with_wireless_link_count(self):
+        peer = Device.objects.create(
+            name="peer", device_type=self.device_type, role=self.role, site=self.site
+        )
+        counts = []
+        for count in (2, 20):
+            device = Device.objects.create(
+                name=f"wireless-{count}",
+                device_type=self.device_type,
+                role=self.role,
+                site=self.site,
+            )
+            for n in range(1, count + 1):
+                WirelessLink(
+                    interface_a=Interface.objects.create(
+                        device=device, name=f"GigabitEthernet0/{n}", type="ieee802.11ac"
+                    ),
+                    interface_b=Interface.objects.create(
+                        device=peer, name=f"{device.name}-{n}", type="ieee802.11ac"
+                    ),
+                ).save()
+            with CaptureQueriesContext(connection) as ctx:
+                response = self.client.get(self._url(device))
+            self.assertEqual(
+                {
+                    h["connection_state"]
+                    for h in response.json()["panels"][0]["hotspots"]
+                },
+                {"connected"},
+            )
+            counts.append(len(ctx.captured_queries))
+        self.assertLess(counts[1], counts[0] + 10)

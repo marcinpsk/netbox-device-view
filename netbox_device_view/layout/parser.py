@@ -210,9 +210,22 @@ class _DepthLimitedLoader(yaml.SafeLoader):
 def one_css_color(tokens: list[Any]) -> list[Any] | None:
     """Return the token list of one CSS color without whitespace, or None."""
     values = [token for token in tokens if token.type != "whitespace"]
-    if len(values) == 1 and tinycss2.color4.parse_color(values[0]) is not None:
-        return values
-    return None
+    if len(values) != 1:
+        return None
+    try:
+        color = tinycss2.color4.parse_color(values[0])
+    except ValueError:
+        # tinycss2 1.5 raises ValueError for some malformed functions, such as color().
+        return None
+    return values if color is not None else None
+
+
+def parse_css(function, *args, **kwargs):
+    """Call a tinycss2 parser; it raises ValueError for a number of over 4300 digits."""
+    try:
+        return function(*args, **kwargs)
+    except ValueError:
+        raise LayoutParseError("CSS: a number is too long.") from None
 
 
 def _is_identifier(value: Any) -> bool:
@@ -313,7 +326,7 @@ class _Rules:
             return self.optional_string(raw, f"{where}.background")
         color = None
         if isinstance(raw, str):
-            color = one_css_color(tinycss2.parse_component_value_list(raw))
+            color = one_css_color(parse_css(tinycss2.parse_component_value_list, raw))
         if color is None:
             raise LayoutParseError(f"{where}: background must be one CSS color.")
         return tinycss2.serialize(color)

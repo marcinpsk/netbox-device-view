@@ -1,9 +1,9 @@
 """
 Tests for netbox_device_view.utils
 
-process_interfaces() and process_ports() derive a `stylename` attribute on each
-object and bucket them by device key in ports_chassis.  prepare() orchestrates
-those calls around the DB lookup, with real objects.
+derive_interface_key() and derive_port_key() give the layout key (the
+stylename) of a component name. prepare() collects the components of a device
+into ports_chassis, with real objects.
 """
 
 import types
@@ -21,38 +21,20 @@ from dcim.models import (
 from django.test import TestCase
 from users.models import User
 
+from netbox_device_view.components import derive_interface_key, derive_port_key
 from netbox_device_view.models import DeviceView
-from netbox_device_view.utils import prepare, process_interfaces, process_ports
+from netbox_device_view.utils import prepare
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def make_iface(name, iface_type="1000base-t"):
-    """Return a minimal interface-like object."""
-    obj = types.SimpleNamespace(name=name, type=iface_type)
-    return obj
-
-
-def make_port(name, port_type="8p8c"):
-    """Return a minimal port-like object."""
-    obj = types.SimpleNamespace(name=name, type=port_type)
-    return obj
-
-
-# ---------------------------------------------------------------------------
-# process_interfaces — stylename derivation
+# derive_interface_key: the layout key of an interface
 # ---------------------------------------------------------------------------
 
 
-class TestProcessInterfacesStylename:
-    """Verify that stylename is set correctly for various interface name formats."""
+class TestInterfaceKey:
+    """Verify the layout key of various interface name formats."""
 
-    def _run(self, name, iface_type="1000base-t"):
-        iface = make_iface(name, iface_type)
-        result = process_interfaces([iface], {}, "dev1")
-        return result["dev1"][0].stylename
+    def _run(self, name):
+        return derive_interface_key(name)
 
     # --- 3-part Cisco format: type + dev (ignored) + module + port -----------
 
@@ -116,68 +98,17 @@ class TestProcessInterfacesStylename:
         # "eth/uplink" → "eth-uplink"
         assert self._run("eth/uplink") == "eth-uplink"
 
-    # --- virtual and LAG interfaces are skipped ------------------------------
-
-    def test_virtual_skipped(self):
-        iface = make_iface("Loopback0", iface_type="virtual")
-        result = process_interfaces([iface], {}, "dev1")
-        assert "dev1" not in result
-
-    def test_lag_skipped(self):
-        iface = make_iface("Port-channel1", iface_type="lag")
-        result = process_interfaces([iface], {}, "dev1")
-        assert "dev1" not in result
-
-    def test_non_virtual_included(self):
-        iface = make_iface("GigabitEthernet0/0/1", iface_type="1000base-t")
-        result = process_interfaces([iface], {}, "dev1")
-        assert "dev1" in result
-        assert len(result["dev1"]) == 1
-
-    # --- ports_chassis accumulation ------------------------------------------
-
-    def test_multiple_interfaces_same_dev(self):
-        ifaces = [
-            make_iface("GigabitEthernet0/0/1"),
-            make_iface("GigabitEthernet0/0/2"),
-        ]
-        result = process_interfaces(ifaces, {}, "myswitch")
-        assert len(result["myswitch"]) == 2
-
-    def test_multiple_devs_independent(self):
-        iface1 = make_iface("GigabitEthernet0/0/1")
-        iface2 = make_iface("GigabitEthernet0/0/1")
-        result = process_interfaces([iface1], {}, "sw1")
-        result = process_interfaces([iface2], result, "sw2")
-        assert len(result["sw1"]) == 1
-        assert len(result["sw2"]) == 1
-
-    def test_existing_ports_chassis_preserved(self):
-        sentinel = object()
-        existing = {"other_dev": [sentinel]}
-        iface = make_iface("GigabitEthernet0/0/1")
-        result = process_interfaces([iface], existing, "new_dev")
-        assert result["other_dev"] == [sentinel]
-        assert len(result["new_dev"]) == 1
-
-    def test_none_interfaces_returns_unchanged(self):
-        existing = {"dev": []}
-        result = process_interfaces(None, existing, "dev")
-        assert result == {"dev": []}
-
 
 # ---------------------------------------------------------------------------
-# process_ports — stylename derivation
+# derive_port_key: the layout key of the other component types
 # ---------------------------------------------------------------------------
 
 
-class TestProcessPortsStylename:
-    """process_ports uses only the fallback regex path."""
+class TestPortKey:
+    """derive_port_key uses only the fallback regex path."""
 
-    def _run(self, name, port_type="8p8c"):
-        port = make_port(name, port_type)
-        result = process_ports([port], {}, "dev1")
-        return result["dev1"][0].stylename
+    def _run(self, name):
+        return derive_port_key(name)
 
     def test_simple_name(self):
         assert self._run("Port1") == "port1"
@@ -190,20 +121,6 @@ class TestProcessPortsStylename:
 
     def test_numeric_gets_p_prefix(self):
         assert self._run("1") == "p1"
-
-    def test_is_port_flag_set(self):
-        port = make_port("SomePort")
-        process_ports([port], {}, "dev1")
-        assert port.is_port is True
-
-    def test_virtual_port_skipped(self):
-        port = make_port("VirtualPort", port_type="virtual")
-        result = process_ports([port], {}, "dev1")
-        assert "dev1" not in result
-
-    def test_none_ports_returns_unchanged(self):
-        result = process_ports(None, {}, "dev1")
-        assert result == {}
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +179,11 @@ class TestPrepare(TestCase):
         assert "gigabitethernet0-1" in stylenames
         assert "gigabitethernet0-2" in stylenames
 
-    def test_virtual_interfaces_excluded(self):
+    def test_virtual_and_lag_interfaces_excluded(self):
         self._device_view()
         device = self._device()
         Interface.objects.create(device=device, name="Loopback0", type="virtual")
+        Interface.objects.create(device=device, name="Port-channel1", type="lag")
         Interface.objects.create(
             device=device, name="GigabitEthernet0/0/1", type="1000base-t"
         )

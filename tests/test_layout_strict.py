@@ -233,6 +233,11 @@ class TestFields:
             (lambda d: d["canvas"].update(background=5), "background"),
             (lambda d: front(d).update(background="url(x)"), "background"),
             (lambda d: d["meta"].update(background="notacolor"), "background"),
+            (lambda d: d["meta"].update(background="color()"), "background"),
+            (
+                lambda d: d["meta"].update(background=f"rgb({'9' * 4400} 0 0)"),
+                "too long",
+            ),
             (lambda d: d["meta"].update(background="red /*"), "background"),
             (lambda d: d["meta"].update(background="/**/red"), "background"),
             (lambda d: d["meta"].update(background="red blue"), "background"),

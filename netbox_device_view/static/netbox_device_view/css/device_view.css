@@ -60,6 +60,12 @@
 				  );
 }
 
+/* Ambiguous key: two or more components share it, so it links to none of them */
+.device-view-port.dv-ambiguous {
+	background-color: #adb5bd;
+	outline: 1px dashed #495057;
+}
+
 .port-names-section {
     clear: both;
     margin-top: 5rem;

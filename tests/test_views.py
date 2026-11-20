@@ -9,6 +9,7 @@ from dcim.models import (
     Manufacturer,
     RearPort,
     Site,
+    VirtualChassis,
 )
 from django.db import connection
 from django.test import TestCase
@@ -85,6 +86,57 @@ class DeviceViewTabTests(TestCase):
         response = self._tab(RenderMode.CSS)
         self.assertContains(response, 'class="deviceview area dsw1', count=1)
         self.assertNotContains(response, 'class="dv-svg-wrapper')
+
+    def test_css_mode_keeps_the_interfaces_of_a_device_named_rear(self):
+        Device.objects.filter(pk=self.device.pk).update(name="Rear")
+        Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
+        RearPort.objects.create(
+            device=self.device, name="Port 1", type="8p8c", positions=1
+        )
+        response = self._tab(RenderMode.CSS)
+        self.assertContains(response, 'data-bs-title="Gi1"', count=1)
+        self.assertContains(response, 'data-bs-title="Port 1"', count=1)
+
+    def test_svg_mode_renders_a_panel_for_each_virtual_chassis_member(self):
+        chassis = VirtualChassis.objects.create(name="vc")
+        Device.objects.filter(pk=self.device.pk).update(
+            virtual_chassis=chassis, vc_position=1
+        )
+        other = Device.objects.create(
+            name="sw2",
+            device_type=self.device_type,
+            site=self.device.site,
+            role=self.device.role,
+            virtual_chassis=chassis,
+            vc_position=2,
+        )
+        for device in (self.device, other):
+            Interface.objects.create(device=device, name="Gi1", type="1000base-t")
+        response = self._tab(RenderMode.SVG)
+        self.assertContains(response, 'id="dv-svg-wrapper-1"', count=1)
+        self.assertContains(response, 'id="dv-svg-wrapper-2"', count=1)
+
+    def test_a_member_without_a_device_view_hides_the_virtual_chassis_view(self):
+        chassis = VirtualChassis.objects.create(name="vc")
+        Device.objects.filter(pk=self.device.pk).update(
+            virtual_chassis=chassis, vc_position=1
+        )
+        Device.objects.create(
+            name="sw2",
+            device_type=DeviceType.objects.create(
+                manufacturer=self.device_type.manufacturer, model="Other", slug="other"
+            ),
+            site=self.device.site,
+            role=self.device.role,
+            virtual_chassis=chassis,
+            vc_position=2,
+        )
+        Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
+        for render_mode in (RenderMode.SVG, RenderMode.CSS):
+            with self.subTest(render_mode):
+                response = self._tab(render_mode)
+                self.assertNotContains(response, 'class="dv-svg-wrapper')
+                self.assertNotContains(response, 'class="deviceview area')
 
     def test_svg_mode_renders_the_panel_of_the_device(self):
         Interface.objects.create(device=self.device, name="Gi1", type="1000base-t")
