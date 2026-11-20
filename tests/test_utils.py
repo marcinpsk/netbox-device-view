@@ -3,11 +3,10 @@ Tests for netbox_device_view.utils
 
 derive_interface_key() and derive_port_key() give the layout key (the
 stylename) of a component name. prepare() collects the components of a device
-into ports_chassis, with real objects.
+into its CSS grids, with real objects.
 """
 
 import types
-from unittest.mock import MagicMock
 
 from dcim.models import (
     Device,
@@ -155,32 +154,29 @@ class TestPrepare(TestCase):
             device_type=self.device_type, grid_template_area=css
         )
 
-    def test_no_device_view_returns_none_triple(self):
-        assert prepare(self._device(), self.user) == (None, None, None, None)
-
-    def test_single_device_returns_dicts(self):
+    def test_single_device_returns_its_css_and_grids(self):
         device_view = self._device_view()
 
-        dv, modules, _ports_chassis, result = prepare(self._device(), self.user)
+        css, modules, grids = prepare(self._device(), device_view, self.user)
 
-        assert dv == {1: ".area { }"}
-        assert 1 in modules
-        assert result == device_view
+        assert css == ".area { }"
+        assert modules == []
+        assert grids == {}
 
-    def test_interfaces_processed_into_ports_chassis(self):
-        self._device_view()
+    def test_interfaces_processed_into_grids(self):
+        device_view = self._device_view()
         device = self._device()
         for name in ("GigabitEthernet0/0/1", "GigabitEthernet0/0/2"):
             Interface.objects.create(device=device, name=name, type="1000base-t")
 
-        _dv, _modules, ports_chassis, _device_view = prepare(device, self.user)
+        _css, _modules, grids = prepare(device, device_view, self.user)
 
-        stylenames = [i.stylename for i in ports_chassis["test-switch"]]
+        stylenames = [i.stylename for i in grids["test-switch"]]
         assert "gigabitethernet0-1" in stylenames
         assert "gigabitethernet0-2" in stylenames
 
     def test_virtual_and_lag_interfaces_excluded(self):
-        self._device_view()
+        device_view = self._device_view()
         device = self._device()
         Interface.objects.create(device=device, name="Loopback0", type="virtual")
         Interface.objects.create(device=device, name="Port-channel1", type="lag")
@@ -188,42 +184,27 @@ class TestPrepare(TestCase):
             device=device, name="GigabitEthernet0/0/1", type="1000base-t"
         )
 
-        _dv, _modules, ports_chassis, _device_view = prepare(device, self.user)
+        _css, _modules, grids = prepare(device, device_view, self.user)
 
-        items = ports_chassis.get("test-switch", [])
+        items = grids.get("test-switch", [])
         assert len(items) == 1
         assert items[0].stylename == "gigabitethernet0-1"
 
     def test_virtual_chassis_scopes_css(self):
-        self._device_view(".deviceview.area { }")
+        device_view = self._device_view(".deviceview.area { }")
         chassis = VirtualChassis.objects.create(name="vc")
-        member1, _member2 = (
+        member1, member2 = (
             self._device(f"sw{position}", virtual_chassis=chassis, vc_position=position)
             for position in (1, 2)
         )
+        Interface.objects.create(device=member2, name="eth1", type="1000base-t")
 
-        dv, _modules, _ports_chassis, _device_view = prepare(member1, self.user)
+        css1, _modules, grids1 = prepare(member1, device_view, self.user)
+        css2, _modules, grids2 = prepare(member2, device_view, self.user)
 
-        assert ".area.d1" in dv[1]
-        assert ".area.d2" in dv[2]
-
-    def test_virtual_chassis_missing_member_device_view_returns_none(self):
-        self._device_view()
-        chassis = VirtualChassis.objects.create(name="vc")
-        member = self._device("sw1", virtual_chassis=chassis, vc_position=1)
-        other_type = DeviceType.objects.create(
-            manufacturer=self.device_type.manufacturer, model="Other", slug="other"
-        )
-        Device.objects.create(
-            name="sw2",
-            device_type=other_type,
-            site=self.site,
-            role=self.role,
-            virtual_chassis=chassis,
-            vc_position=2,
-        )
-
-        assert prepare(member, self.user) == (None, None, None, None)
+        assert ".area.d1" in css1
+        assert ".area.d2" in css2
+        assert (grids1, list(grids2)) == ({}, [2])
 
 
 # ---------------------------------------------------------------------------
@@ -251,31 +232,3 @@ class TestDeviceHeightPx:
 
         for u in range(1, 6):
             assert device_height_px(self._make_device_type(u)) == u * 42
-
-
-class TestActivePanelKey:
-    """
-    active_panel_key() identifies which panel (in a multi-panel virtual
-    chassis view) corresponds to the specific device the user navigated
-    to, so the template can highlight it (issue #24).
-    """
-
-    def test_standalone_device_returns_none(self):
-        from netbox_device_view.utils import active_panel_key
-
-        dev = types.SimpleNamespace(virtual_chassis=None, vc_position=None)
-        assert active_panel_key(dev) is None
-
-    def test_virtual_chassis_member_returns_vc_position(self):
-        from netbox_device_view.utils import active_panel_key
-
-        dev = types.SimpleNamespace(virtual_chassis=MagicMock(), vc_position=2)
-        assert active_panel_key(dev) == 2
-
-    def test_virtual_chassis_member_position_zero(self):
-        # vc_position=0 is falsy but a valid position -- must not be
-        # coerced to None or any other sentinel.
-        from netbox_device_view.utils import active_panel_key
-
-        dev = types.SimpleNamespace(virtual_chassis=MagicMock(), vc_position=0)
-        assert active_panel_key(dev) == 0

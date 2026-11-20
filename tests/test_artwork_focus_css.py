@@ -14,7 +14,7 @@ CSS = (
     / "netbox_device_view/static/netbox_device_view/css/device_view_artwork.css"
 )
 # The focusable SVG elements: each shows an outline and its .dv-art-focus-ring child or later sibling.
-SVG_CLASSES = ("dv-art-connector", "dv-art-module-body")
+SVG_CLASSES = ("dv-art-connector", "dv-art-module-body", "dv-art-device-body")
 # The focusable HTML elements: an outline shows in every browser.
 HTML_CLASSES = (
     "dv-art-viewport",
