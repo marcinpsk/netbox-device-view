@@ -77,6 +77,11 @@ class _ManifestLoader(DepthLimitedLoader):
             self._check_integer(node, line)
         return node
 
+    def _reject_duplicate_keys(self, node):
+        # _load() gives the line of each key that is not a string, after the composition.
+        strings = [(key, value) for key, value in node.value if key.tag == _STR_TAG]
+        super()._reject_duplicate_keys(yaml.MappingNode(node.tag, strings))
+
     def _check_integer(self, node, line):
         """Build an implicit integer now; YAML 1.1 forms such as 0x_ make int() raise."""
         # A long value is slow to build (base-60 forms) or exceeds int()'s digit limit.
