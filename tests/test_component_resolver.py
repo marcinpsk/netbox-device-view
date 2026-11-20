@@ -317,6 +317,24 @@ class AmbiguousKeyTests(ResolverTestBase):
                 page.keyboard.press("Tab")
                 self.assertFalse(cell.evaluate("el => el === document.activeElement"))
 
+    def test_enter_and_space_reopen_a_dismissed_candidate_list(self):
+        for mode in (RenderMode.CSS, RenderMode.SVG):
+            DeviceView.objects.update(render_mode=mode)
+            for key in ("Enter", "Space"):
+                with self.subTest(mode, key=key), browser_page(self._tab()) as page:
+                    cell = page.locator('[data-connection-state="ambiguous"]')
+                    cell.focus()
+                    page.wait_for_selector(".popover", state="visible")
+                    page.keyboard.press("Escape")
+                    page.wait_for_selector(".popover", state="hidden")
+                    page.keyboard.press(key)
+                    page.wait_for_selector(".popover", state="visible", timeout=2000)
+                    page.keyboard.press("Tab")
+                    page.keyboard.press("Shift+Tab")
+                    self.assertTrue(
+                        cell.evaluate("el => el === document.activeElement")
+                    )
+
     def test_a_stylename_equal_to_the_ambiguous_class_is_not_drawn_as_ambiguous(self):
         Interface.objects.create(
             device=self.device, name="dv-ambiguous", type="1000base-t"

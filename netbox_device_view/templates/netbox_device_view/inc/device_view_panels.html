@@ -95,14 +95,15 @@ function dvInitPopover(el, opts) {
       link.focus();
     }
     if (event.key === "Escape") hide();
+    // A trigger without a link opens its candidate list as a button does.
+    if ((event.key === "Enter" || event.key === " ") && !el.hasAttribute("href") && !el.hasAttribute("data-href")) {
+      event.preventDefault();
+      show();
+    }
   });
   el.addEventListener("inserted.bs.popover", function () {
-    tip = Popover.getInstance(el) && Popover.getInstance(el)._tip;
-    if (!tip) {
-      // fallback: grab the most recently appended popover in body
-      var popovers = document.querySelectorAll(".popover");
-      tip = popovers[popovers.length - 1];
-    }
+    // Bootstrap sets aria-describedby before it inserts the popover.
+    tip = document.getElementById(el.getAttribute("aria-describedby"));
     if (tip) {
       tip.addEventListener("mouseenter", cancelHide);
       tip.addEventListener("mouseleave", scheduleHide);
