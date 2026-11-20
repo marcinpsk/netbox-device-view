@@ -1,0 +1,48 @@
+{% extends 'generic/object_edit.html' %}
+{% load form_helpers %}
+{% load i18n %}
+{% load static %}
+
+{% block form %}
+  {% for field in form.hidden_fields %}{{ field }}{% endfor %}
+  {% for fieldset in form.fieldsets %}{% render_fieldset form fieldset %}{% endfor %}
+
+  {% with rows=form.binding_rows %}
+  <div class="field-group mb-5" id="binding-rows">
+    <div class="row">
+      <h2 class="col-9 offset-3">{% trans "Bindings" %}</h2>
+    </div>
+    <div class="row">
+      <div class="col-lg-9 offset-lg-3">
+        <p class="form-text mt-0">
+          {% blocktrans trimmed %}
+            The rows replace the bindings of the connector in this scope. With no rows, the connector has no binding. Clear a row to remove it.
+          {% endblocktrans %}
+        </p>
+        {% for error in form.bindings.errors %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endfor %}
+        {% for error in rows.non_form_errors %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endfor %}
+        {{ rows.management_form }}
+        <table class="table table-sm dv-binding-rows">
+          <thead>
+            <tr><th scope="col">{% trans "Component type" %}</th><th scope="col">{% trans "Name" %}</th></tr>
+          </thead>
+          <tbody data-dv-binding-rows>
+            {% for row in rows %}{% include 'netbox_device_view/inc/binding_row.html' %}{% endfor %}
+          </tbody>
+        </table>
+        <template data-dv-binding-row>{% include 'netbox_device_view/inc/binding_row.html' with row=rows.empty_form %}</template>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-dv-add-binding data-dv-max="{{ rows.max_num }}">
+          <i class="mdi mdi-plus-thick" aria-hidden="true"></i> {% trans "Add a binding" %}
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endwith %}
+
+  {% if form.changelog_message %}
+    <div class="bg-primary-subtle border border-primary rounded-1 pt-3 px-3 mb-3">
+      {% render_field form.changelog_message %}
+    </div>
+  {% endif %}
+  <script src="{% static 'netbox_device_view/js/binding_rows.js' %}"></script>
+{% endblock form %}

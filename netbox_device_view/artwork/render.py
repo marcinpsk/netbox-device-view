@@ -37,6 +37,7 @@ from ..details import (
     resolution,
 )
 from ..models import Association, DefinitionRevision
+from .overrides import connector_bindings
 from .storage import DamagedBlob, read_blob
 from .svg import (
     IDENTITY,
@@ -198,7 +199,8 @@ def face_prefix(view, device, face) -> str:
 def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
     """Return the artwork Part of ``device`` with the components that ``user`` can view.
 
-    A ``plain`` face has no class, connector links or marks.
+    The connectors bind with the overrides of the device and its type. A
+    ``plain`` face has no class, connector links or marks.
     """
     states = device_components(device, user, BINDABLE_MODELS)
     try:
@@ -214,21 +216,22 @@ def resolve_device(device, revision, user, view=OVERVIEW, plain=False) -> Part:
         return _damaged(device, current, states, exc)
 
 
-def _connectors(revision, states) -> tuple[Connector, ...]:
+def _connectors(device, revision, states) -> tuple[Connector, ...]:
+    bindings = connector_bindings(revision, device)
     return tuple(
-        _connector(key, item, states)
+        _connector(key, item, bindings[key], states)
         for key, item in sorted(revision.manifest["connectors"].items())
     )
 
 
 def _damaged(device, revision, states, exc) -> Part:
     logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
-    return Part(device, DAMAGED, revision, (), _connectors(revision, states))
+    return Part(device, DAMAGED, revision, (), _connectors(device, revision, states))
 
 
 def _resolve(device, revision, states, view, plain) -> Part:
     """Return the artwork Part of ``device``; raise DamagedBlob when a face file is damaged or missing."""
-    connectors = _connectors(revision, states)
+    connectors = _connectors(device, revision, states)
     blobs = {file.path: file.blob for file in revision.files.select_related("blob")}
     data = {}
     for face in revision.face_names:
@@ -252,9 +255,10 @@ def _resolve(device, revision, states, view, plain) -> Part:
     return Part(device, ARTWORK, revision, tuple(faces), connectors)
 
 
-def _connector(key, item, states) -> Connector:
+def _connector(key, item, resolved, states) -> Connector:
+    """Return the connector of manifest ``item`` with the ``resolved`` binding list."""
     bindings = []
-    for binding in item["bindings"]:
+    for binding in resolved:
         model = BINDING_MODELS[binding["component"]]
         found = find(states, model, binding["name"])
         # A device-scope name is unique per component type, so one match at most.
