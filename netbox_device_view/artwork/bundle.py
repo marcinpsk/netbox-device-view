@@ -19,6 +19,7 @@ from .limits import (
     MAX_DEFINITIONS,
     MAX_EXPANDED_BYTES,
     MAX_FILES_PER_DEFINITION,
+    MAX_MEMBERS,
     MAX_SVG_BYTES,
 )
 from .manifest import UNSAFE_CATEGORIES, Manifest, parse_manifest
@@ -26,7 +27,6 @@ from .svg import Face, parse_face
 
 MANIFEST_NAME = "manifest.yaml"
 BUNDLE = "bundle"
-MAX_MEMBERS = MAX_DEFINITIONS * MAX_FILES_PER_DEFINITION
 MAX_PATH_LENGTH = 255
 _ALLOWED_TYPES = {0, stat.S_IFREG, stat.S_IFDIR}
 # The zip end record, zip64 end locator and central directory record, as zipfile reads them.
@@ -67,7 +67,7 @@ class Definition:
         return revision_digest(self.file_digests)
 
 
-def _is_safe_path(name: str) -> bool:
+def is_safe_path(name: str) -> bool:
     parts = name.removesuffix("/").split("/")
     return (
         0 < len(name) <= MAX_PATH_LENGTH
@@ -106,7 +106,7 @@ def _archive_issues(infos: list[zipfile.ZipInfo]) -> list[Issue]:
         )
     seen, files = set(), set()
     for info in infos:
-        if info.orig_filename != info.filename or not _is_safe_path(info.filename):
+        if info.orig_filename != info.filename or not is_safe_path(info.filename):
             message = f"{info.orig_filename!a} is not a safe relative path."
             issues.append(Issue(BUNDLE, None, message))
             continue

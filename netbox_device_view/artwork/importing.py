@@ -1,8 +1,10 @@
 """Import validated definitions as candidate revisions; the UI and the API both call this."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from posixpath import splitext
 
+from core.models import DataSource
 from django.core.exceptions import NON_FIELD_ERRORS, PermissionDenied, ValidationError
 from django.db import transaction
 
@@ -12,7 +14,8 @@ from ..models import (
     RevisionImport,
     VisualDefinition,
 )
-from .bundle import Definition, read_bundle
+from .bundle import Definition, read_bundle, read_definitions
+from .capture import read_source_files
 from .errors import ArtworkError, Issue
 from .storage import lock_digest, store_blob
 
@@ -25,25 +28,56 @@ class ImportedRevision:
     created: bool
 
 
+@dataclass(frozen=True)
+class Provenance:
+    """Where the definitions came from: a bundle file, or a Data Source and its last sync."""
+
+    source_name: str
+    data_source: DataSource | None = None
+    last_synced: datetime | None = None
+
+
 def can_import(user) -> bool:
     return user.has_perm(PERMISSION)
 
 
-def _definition(item: Definition) -> VisualDefinition:
+def _key_owner_name(visual: VisualDefinition, user) -> str:
+    if visual.key_owner_id is None:
+        return "the offline uploads"
+    if (
+        not DataSource.objects.restrict(user, "view")
+        .filter(pk=visual.key_owner_id)
+        .exists()
+    ):
+        return "another Data Source"
+    return f"the Data Source {visual.key_owner.name}"
+
+
+def _definition(
+    item: Definition, key_owner: DataSource | None, user
+) -> VisualDefinition:
     kind = item.manifest.data["kind"]
-    visual, _ = VisualDefinition.objects.get_or_create(
-        key=item.manifest.data["key"], defaults={"kind": kind}
+    visual, _ = VisualDefinition.objects.select_related("key_owner").get_or_create(
+        key=item.manifest.data["key"], defaults={"kind": kind, "key_owner": key_owner}
     )
     if visual.kind != kind:
         message = f"The key {visual.key} is a {visual.kind} definition."
         raise ArtworkError(
             [Issue(item.manifest_path, item.manifest.line("kind"), message)]
         )
+    if visual.key_owner_id != (key_owner.pk if key_owner else None):
+        message = f"The key {visual.key} belongs to {_key_owner_name(visual, user)}."
+        raise ArtworkError(
+            [Issue(item.manifest_path, item.manifest.line("key"), message)]
+        )
     return visual
 
 
-def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
-    # The digest locks of import_bundle() serialize two imports of one revision. The
+def _revision(
+    item: Definition, key_owner: DataSource | None, user
+) -> tuple[DefinitionRevision, bool]:
+    visual = _definition(item, key_owner, user)
+    # The digest locks of _import_all() serialize two imports of one revision. The
     # row lock makes a delete wait until this import commits its provenance.
     revision = (
         DefinitionRevision.objects.select_for_update(no_key=True)
@@ -53,7 +87,7 @@ def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
     if revision is not None:
         return revision, False
     revision = DefinitionRevision(
-        definition=_definition(item), digest=item.digest, manifest=item.manifest.data
+        definition=visual, digest=item.digest, manifest=item.manifest.data
     )
     try:
         # full_clean() runs the CUSTOM_VALIDATORS of NetBox; save() does not.
@@ -76,7 +110,7 @@ def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
 
 def _import(
     user,
-    bundle_name: str,
+    provenance: Provenance,
     item: Definition,
     revision: DefinitionRevision,
     created: bool,
@@ -95,7 +129,9 @@ def _import(
         revision=revision,
         user=user,
         user_name=user.get_username(),
-        source_name=bundle_name,
+        source_name=provenance.source_name,
+        data_source=provenance.data_source,
+        last_synced=provenance.last_synced,
         path=item.directory,
     )
     return ImportedRevision(revision, created)
@@ -105,22 +141,39 @@ def import_bundle(user, bundle_name: str, fileobj) -> list[ImportedRevision]:
     """Validate the whole bundle, then import every definition in one transaction."""
     if not can_import(user):
         raise PermissionDenied
-    definitions = sorted(
-        read_bundle(fileobj), key=lambda item: item.manifest.data["key"]
-    )
+    return _import_all(user, read_bundle(fileobj), Provenance(bundle_name))
+
+
+def import_from_source(user, source: DataSource, prefix: str) -> list[ImportedRevision]:
+    """Capture the files below the prefix, validate them, and import every definition."""
+    if not can_import(user) or not (
+        DataSource.objects.restrict(user, "view").filter(pk=source.pk).exists()
+    ):
+        raise PermissionDenied
+    captured = read_source_files(user, source, prefix)
+    provenance = Provenance(source.name, source, captured.last_synced)
+    return _import_all(user, read_definitions(captured.entries), provenance)
+
+
+def _import_all(
+    user, definitions: list[Definition], provenance: Provenance
+) -> list[ImportedRevision]:
+    definitions = sorted(definitions, key=lambda item: item.manifest.data["key"])
     with transaction.atomic():
         # One lock order for all imports: every digest, sorted, before any write.
         for digest in sorted(
             {d for item in definitions for d in item.file_digests.values()}
         ):
             lock_digest(digest)
-        revisions = [_revision(item) for item in definitions]
+        revisions = [
+            _revision(item, provenance.data_source, user) for item in definitions
+        ]
         # A rollback does not remove media files, so check the constraints before the writes.
         pks = {revision.pk for revision, _ in revisions}
         permitted = DefinitionRevision.objects.restrict(user, "add").filter(pk__in=pks)
         if permitted.count() != len(pks):
             raise PermissionDenied
         return [
-            _import(user, bundle_name, item, *revision)
+            _import(user, provenance, item, *revision)
             for item, revision in zip(definitions, revisions, strict=True)
         ]

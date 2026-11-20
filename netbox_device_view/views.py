@@ -1,5 +1,6 @@
 import secrets
 
+from core.models import DataSource
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -359,6 +360,13 @@ class BundleImport(ObjectAction):
     permissions_required = frozenset({"add"})
 
 
+class SourceImport(ObjectAction):
+    name = "source_import"
+    label = _("Import from Data Source")
+    template_name = "netbox_device_view/buttons/artwork_import.html"
+    permissions_required = frozenset({"add"})
+
+
 def _first_import(field):
     return Subquery(
         models.RevisionImport.objects.filter(revision=OuterRef("pk"))
@@ -373,17 +381,17 @@ class DefinitionRevisionListView(generic.ObjectListView):
     )
     table = tables.DefinitionRevisionTable
     filterset = filtersets.DefinitionRevisionFilterSet
-    actions = (BundleImport,)
+    actions = (BundleImport, SourceImport)
 
 
 class DefinitionRevisionView(generic.ObjectView):
-    queryset = models.DefinitionRevision.objects.select_related("definition")
+    queryset = models.DefinitionRevision.objects.select_related("definition__key_owner")
     actions = (DeleteObject,)
 
     def get_extra_context(self, request, instance):
         return {
             "files": instance.files.select_related("blob"),
-            "imports": instance.imports.all(),
+            "imports": instance.imports.select_related("data_source"),
         }
 
 
@@ -400,55 +408,15 @@ class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
     queryset = models.DefinitionRevision.objects.all()
 
 
-class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
-    """Upload an offline artwork bundle and import its definitions as candidate revisions."""
+class ImportReceiptMixin:
+    """Show the results of the last import on a GET receipt page."""
 
-    template_name = "netbox_device_view/artwork_import.html"
     # The session keeps the results of the last import for the receipt page.
-    receipt_key = "netbox_device_view.artwork_import_receipt"
+    receipt_key: str
+    url_name: str
 
-    def get_required_permission(self):
-        return artwork_importing.PERMISSION
-
-    def page(self, request, form, status=200, **context):
-        return render(
-            request,
-            self.template_name,
-            {
-                "form": form,
-                "can_view_list": request.user.has_perm(
-                    "netbox_device_view.view_definitionrevision"
-                ),
-                **context,
-            },
-            status=status,
-        )
-
-    def get(self, request):
-        receipt = request.session.get(self.receipt_key, {})
-        results = []
-        if receipt and request.GET.get("receipt") == receipt["token"]:
-            visible = set(
-                models.DefinitionRevision.objects.restrict(request.user, "view")
-                .filter(pk__in=[result["pk"] for result in receipt["results"]])
-                .values_list("pk", flat=True)
-            )
-            results = [
-                {**result, "visible": result["pk"] in visible}
-                for result in receipt["results"]
-            ]
-        return self.page(request, forms.ArtworkBundleImportForm(), results=results)
-
-    def post(self, request):
-        form = forms.ArtworkBundleImportForm(request.POST, request.FILES)
-        if not form.is_valid():
-            return self.page(request, form, status=400)
-        upload = form.cleaned_data["bundle"]
-        try:
-            results = artwork_importing.import_bundle(request.user, upload.name, upload)
-        except ArtworkError as exc:
-            return self.page(request, form, status=400, issues=exc.issues)
-        # A reload of the receipt page must not upload the bundle again.
+    def receipt_redirect(self, request, results, **query):
+        # A reload of the receipt page must not run the import again.
         token = secrets.token_urlsafe(16)
         request.session[self.receipt_key] = {
             "token": token,
@@ -462,5 +430,144 @@ class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
                 for result in results
             ],
         }
-        url = reverse("plugins:netbox_device_view:definitionrevision_import")
-        return redirect(f"{url}?{urlencode({'receipt': token})}")
+        query["receipt"] = token
+        return redirect(f"{reverse(self.url_name)}?{urlencode(query)}")
+
+    def receipt_results(self, request):
+        token = request.GET.get("receipt")
+        receipt = request.session.get(self.receipt_key, {}) if token else {}
+        if not receipt or token != receipt["token"]:
+            return []
+        visible = set(
+            models.DefinitionRevision.objects.restrict(request.user, "view")
+            .filter(pk__in=[result["pk"] for result in receipt["results"]])
+            .values_list("pk", flat=True)
+        )
+        return [
+            {**result, "visible": result["pk"] in visible}
+            for result in receipt["results"]
+        ]
+
+
+def _can_view_list(user):
+    return user.has_perm("netbox_device_view.view_definitionrevision")
+
+
+class ArtworkBundleImportView(
+    ImportReceiptMixin, ContentTypePermissionRequiredMixin, View
+):
+    """Upload an offline artwork bundle and import its definitions as candidate revisions."""
+
+    template_name = "netbox_device_view/artwork_import.html"
+    receipt_key = "netbox_device_view.artwork_import_receipt"
+    url_name = "plugins:netbox_device_view:definitionrevision_import"
+
+    def get_required_permission(self):
+        return artwork_importing.PERMISSION
+
+    def page(self, request, form, status=200, **context):
+        return render(
+            request,
+            self.template_name,
+            {"form": form, "can_view_list": _can_view_list(request.user), **context},
+            status=status,
+        )
+
+    def get(self, request):
+        return self.page(
+            request,
+            forms.ArtworkBundleImportForm(),
+            results=self.receipt_results(request),
+        )
+
+    def post(self, request):
+        form = forms.ArtworkBundleImportForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return self.page(request, form, status=400)
+        upload = form.cleaned_data["bundle"]
+        try:
+            results = artwork_importing.import_bundle(request.user, upload.name, upload)
+        except ArtworkError as exc:
+            return self.page(request, form, status=400, issues=exc.issues)
+        return self.receipt_redirect(request, results)
+
+
+class ArtworkSourceImportView(
+    ImportReceiptMixin, ContentTypePermissionRequiredMixin, View
+):
+    """Import the definitions below a prefix of a synchronized Data Source as candidate revisions."""
+
+    template_name = "netbox_device_view/artwork_source_import.html"
+    receipt_key = "netbox_device_view.artwork_source_import_receipt"
+    url_name = "plugins:netbox_device_view:definitionrevision_source_import"
+
+    def get_required_permission(self):
+        return artwork_importing.PERMISSION
+
+    def _render(self, request, form, status=200, **extra):
+        pk = _parse_pk(str(form["data_source"].value() or ""))
+        queryset = form.fields["data_source"].queryset
+        source = queryset.filter(pk=pk).first() if pk is not None else None
+        context = {
+            "form": form,
+            "source": source,
+            "sync_run": (
+                models.SourceSyncRun.objects.filter(source=source).first()
+                if source
+                else None
+            ),
+            "can_sync": source is not None
+            and DataSource.objects.restrict(request.user, "sync")
+            .filter(pk=source.pk)
+            .exists(),
+            "sync_url": source and self._sync_url(source, form),
+            "can_view_list": _can_view_list(request.user),
+            **extra,
+        }
+        return render(request, self.template_name, context, status=status)
+
+    @staticmethod
+    def _page_url(data_source, prefix):
+        """Return the URL of this page with a Data Source and a prefix selected."""
+        here = urlencode({"data_source": data_source, "prefix": prefix})
+        page = reverse("plugins:netbox_device_view:definitionrevision_source_import")
+        return f"{page}?{here}"
+
+    def _sync_url(self, source, form):
+        """Return NetBox's own sync URL; it comes back to this page with the same choice."""
+        back = urlencode(
+            {"return_url": self._page_url(source.pk, form["prefix"].value() or "")}
+        )
+        return f"{reverse('core:datasource_sync', kwargs={'pk': source.pk})}?{back}"
+
+    def get(self, request):
+        form = forms.ArtworkSourceImportForm(
+            initial=request.GET.dict(), user=request.user
+        )
+        return self._render(request, form, results=self.receipt_results(request))
+
+    def post(self, request):
+        if "_select" in request.POST:
+            # Show the selected source, so that it can be synced before the first import.
+            return redirect(
+                self._page_url(
+                    request.POST.get("data_source", ""), request.POST.get("prefix", "")
+                )
+            )
+        form = forms.ArtworkSourceImportForm(request.POST, user=request.user)
+        if not form.is_valid():
+            return self._render(request, form, status=400)
+        try:
+            results = artwork_importing.import_from_source(
+                request.user,
+                form.cleaned_data["data_source"],
+                form.cleaned_data["prefix"],
+            )
+        except ArtworkError as exc:
+            return self._render(request, form, status=400, issues=exc.issues)
+        return self.receipt_redirect(
+            request,
+            results,
+            data_source=form.cleaned_data["data_source"].pk,
+            prefix=form.cleaned_data["prefix"],
+        )
