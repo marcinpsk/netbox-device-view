@@ -1,0 +1,60 @@
+---
+manufacturer: Cisco
+model: C-SM-16P4M2X
+part_number: C-SM-16P4M2X
+description: C-SM-16P4M2X EtherSwitch Service Module
+comments: 16x 1G RJ-45, 4x 2.5G RJ-45 and 2x 10G SFP+ switch ports. The SFP+ bay positions use SM slot 1 (NetBox limits a position to 30 characters).
+interfaces:
+  - name: GigabitEthernet{module}/0/0
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/1
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/2
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/3
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/4
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/5
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/6
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/7
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/8
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/9
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/10
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/11
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/12
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/13
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/14
+    type: 1000base-t
+  - name: GigabitEthernet{module}/0/15
+    type: 1000base-t
+  - name: TwoGigabitEthernet{module}/0/16
+    type: 2.5gbase-t
+  - name: TwoGigabitEthernet{module}/0/17
+    type: 2.5gbase-t
+  - name: TwoGigabitEthernet{module}/0/18
+    type: 2.5gbase-t
+  - name: TwoGigabitEthernet{module}/0/19
+    type: 2.5gbase-t
+module-bays:
+  - name: Transceiver 1/0/20
+    label: SFP+
+    position: TenGigabitEthernet1/0/20
+    module_bay_types:
+      - SFP+
+      - SFP
+  - name: Transceiver 1/0/21
+    label: SFP+
+    position: TenGigabitEthernet1/0/21
+    module_bay_types:
+      - SFP+
+      - SFP
