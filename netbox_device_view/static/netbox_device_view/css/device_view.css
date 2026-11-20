@@ -37,19 +37,6 @@
 	display: grid;
 }
 
-.device-view-tooltip {
-	opacity: 1 !important;
-}
-
-.device-view-tooltip .tooltip-inner {
-	max-width: 300px;
-}
-
-.device-view-tooltip hr {
-	margin: 3px 0;
-	opacity: 0.4;
-}
-
 .device-view-port.nocolor {
 	background: repeating-linear-gradient(
 					-45deg,
@@ -80,3 +67,75 @@
 	box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
 }
 
+
+/* Connector details: one dialog per page, filled from the <template> of a connector. */
+.dv-layout-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	margin-bottom: 0.5rem;
+}
+
+.dv-details-on [data-dv-details],
+.dv-details-on .dv-port {
+	cursor: help;
+}
+
+.device-view-port:focus-visible {
+	outline: 2px solid var(--tblr-primary);
+	outline-offset: 2px;
+}
+
+dialog.dv-details {
+	width: min(28rem, calc(100vw - 2rem));
+	max-height: calc(100vh - 2rem);
+	padding: 0;
+	border: 1px solid var(--tblr-border-color);
+	border-radius: var(--tblr-border-radius-lg, 0.5rem);
+	background: var(--tblr-bg-surface);
+	color: var(--tblr-body-color);
+	box-shadow: var(--tblr-box-shadow-lg, 0 1rem 3rem rgba(0, 0, 0, 0.175));
+}
+
+/* The card body sets margin-bottom: 0 on its last child, so the modal needs a more specific rule to centre. */
+dialog.dv-details:modal {
+	margin: auto;
+}
+
+dialog.dv-details::backdrop {
+	background: rgba(0, 0, 0, 0.4);
+}
+
+.dv-details-content {
+	padding: 1rem;
+}
+
+.dv-details-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-bottom: 0.75rem;
+}
+
+.dv-details-entry + .dv-details-entry {
+	border-top: 1px solid var(--tblr-border-color);
+	margin-top: 0.75rem;
+	padding-top: 0.75rem;
+}
+
+.dv-details-facts {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.125rem 1rem;
+	margin-bottom: 0.5rem;
+}
+
+.dv-details-facts dt {
+	font-weight: normal;
+	color: var(--tblr-secondary-color, var(--tblr-muted));
+}
+
+.dv-details-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
