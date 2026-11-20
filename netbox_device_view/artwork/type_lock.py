@@ -1,4 +1,4 @@
-"""The advisory transaction locks that activation and the binding override writers share."""
+"""The advisory transaction locks that activation and the writers of binding overrides and instance pins share."""
 
 import hashlib
 
@@ -33,18 +33,15 @@ def _lock(keys, using: str) -> None:
 
 
 def lock_bulk_writes(using: str) -> None:
-    """Take the lock of a writer of several overrides, before any type lock."""
+    """Take the lock of a writer of several overrides or pins, before any type lock."""
     _lock([_BULK_LOCK], using)
+
+
+def lock_key(hardware_type) -> tuple[int, int]:
+    """Return the keys of the lock of a device type or a module type; lock_types() takes locks in their order."""
+    return (_LOCK_CLASSES[type(hardware_type)], _second_key(hardware_type.pk))
 
 
 def lock_types(hardware_types, using: str) -> None:
     """Take the lock of each device type or module type, in a fixed order, until the transaction ends."""
-    _lock(
-        sorted(
-            {
-                (_LOCK_CLASSES[type(hardware_type)], _second_key(hardware_type.pk))
-                for hardware_type in hardware_types
-            }
-        ),
-        using,
-    )
+    _lock(sorted({lock_key(hardware_type) for hardware_type in hardware_types}), using)

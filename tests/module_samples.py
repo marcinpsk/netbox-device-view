@@ -17,9 +17,9 @@ from dcim.models import (
     Site,
 )
 
-from netbox_device_view.artwork import activation
 from netbox_device_view.artwork.importing import import_bundle
 
+from .activation import activate as activate_pairs
 from .artwork_samples import bundle, definition
 
 
@@ -173,13 +173,18 @@ class Inventory:
         self.fan = self.install(bays["FAN"], self.fan_type)
         if activate:
             self.revisions = import_definitions(admin)
-            for key, hardware_type in (
-                ("acme/ch-4", self.device_type),
-                ("acme/nm-2x", self.nm_type),
-                ("acme/sfp-10g", self.sfp_type),
-                ("acme/psu-1", self.psu_type),
-            ):
-                activation.activate(admin, self.revisions[key], hardware_type)
+            activate_pairs(
+                admin,
+                *(
+                    (self.revisions[key], hardware_type)
+                    for key, hardware_type in (
+                        ("acme/ch-4", self.device_type),
+                        ("acme/nm-2x", self.nm_type),
+                        ("acme/sfp-10g", self.sfp_type),
+                        ("acme/psu-1", self.psu_type),
+                    )
+                ),
+            )
 
     @staticmethod
     def module_type(manufacturer, model):
