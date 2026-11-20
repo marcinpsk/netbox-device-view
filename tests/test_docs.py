@@ -33,3 +33,10 @@ def test_requirements_state_the_minimum_netbox_version():
     major, minor, _ = NetBoxDeviceViewConfig.min_version.split(".")
     for path in ("README.md", "docs/installation.md"):
         assert f"- NetBox {major}.{minor}+ " in (ROOT / path).read_text(), path
+
+
+def test_contributing_says_to_rebuild_the_container_for_the_browser_tests():
+    assert "playwright install" in (ROOT / ".devcontainer" / "Dockerfile").read_text()
+    contributing = (ROOT / "CONTRIBUTING.md").read_text()
+    assert "`tests/browser.py`" in contributing
+    assert "docker compose -f .devcontainer/docker-compose.yml build" in contributing

@@ -31,6 +31,13 @@ docker compose -f .devcontainer/docker-compose.yml exec -w /opt/code/netbox-devi
   /opt/netbox/venv/bin/pytest tests/ -v
 ```
 
+The browser tests (`tests/browser.py`) use Playwright and Chromium from `.devcontainer/Dockerfile`. When the Dockerfile changes, for example after you switch branches, rebuild the container before you run the tests:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml build
+docker compose -f .devcontainer/docker-compose.yml up -d
+```
+
 ## Linting
 
 ```bash
