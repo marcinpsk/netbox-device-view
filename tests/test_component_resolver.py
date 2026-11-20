@@ -317,6 +317,30 @@ class AmbiguousKeyTests(ResolverTestBase):
                 page.keyboard.press("Tab")
                 self.assertFalse(cell.evaluate("el => el === document.activeElement"))
 
+    def test_a_stylename_equal_to_the_ambiguous_class_is_not_drawn_as_ambiguous(self):
+        Interface.objects.create(
+            device=self.device, name="dv-ambiguous", type="1000base-t"
+        )
+        DeviceView.objects.update(
+            yaml_layout=ONE_ROW_SWITCH
+            + "      - {key: dv-ambiguous, at: {row: 1, col: 5}}\n"
+        )
+        with browser_page(self._tab()) as page:
+            cell = page.locator('.dv-port[data-stylename="dv-ambiguous"]')
+            self.assertEqual(cell.get_attribute("data-connection-state"), "enabled")
+            self.assertEqual(
+                cell.locator(".dv-port-rect").evaluate(
+                    "el => getComputedStyle(el).strokeDasharray"
+                ),
+                "none",
+            )
+            self.assertNotEqual(
+                page.locator(
+                    '[data-connection-state="ambiguous"] .dv-port-rect'
+                ).first.evaluate("el => getComputedStyle(el).strokeDasharray"),
+                "none",
+            )
+
     def test_tab_from_the_last_candidate_continues_to_the_next_port(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         next_port = Interface.objects.get(
