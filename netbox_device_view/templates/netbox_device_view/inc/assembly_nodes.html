@@ -8,9 +8,9 @@
 		<button type="button" class="dv-art-nav-item" data-dv-focus="{{ node.focus.ident }}" aria-controls="{{ node.focus.ident }}">{{ node.module.label }}</button>
 		<a class="dv-art-nav-record" href="{{ node.module.module.get_absolute_url }}" aria-label="{% blocktrans with part=node.module.label %}Open {{ part }}{% endblocktrans %}" title="{% trans 'Open the module' %}"><i class="mdi mdi-open-in-new" aria-hidden="true"></i></a>
 		{% else %}
-		{# An outline has no artwork of its own, so it has no focus view. #}
-		<a class="dv-art-nav-item dv-art-nav-outline" href="{{ node.module.module.get_absolute_url }}">{{ node.module.label }}</a>
-		<span class="dv-art-nav-note">{% trans "outline" %}</span>
+		{# A module whose placement is not a finite number has no focus view. #}
+		<a class="dv-art-nav-item dv-art-nav-link" href="{{ node.module.module.get_absolute_url }}">{{ node.module.label }}</a>
+		<span class="dv-art-nav-note">{% trans "no focus view" %}</span>
 		{% endif %}
 		{% include 'netbox_device_view/inc/assembly_nodes.html' with nodes=node.children %}
 	</li>
