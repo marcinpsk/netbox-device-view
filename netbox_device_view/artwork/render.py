@@ -399,7 +399,7 @@ def resolve_device(
         current = active_revisions([device], selection).get(device.pk)
         if current is not None and current.pk != revision.pk:
             # Another activation, then a delete of the revision, removed its files after the read.
-            revision, data = current, _read_faces(current)
+            revision, data = current, read_faces(current)
         else:
             logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
     connectors = composer.connectors(revision, device)
@@ -467,7 +467,7 @@ def _face_data(revision) -> dict[str, bytes]:
     return data
 
 
-def _read_faces(revision) -> dict[str, bytes] | None:
+def read_faces(revision) -> dict[str, bytes] | None:
     """Return {face: SVG bytes} of a revision, or None when a stored file is damaged or missing."""
     try:
         return _face_data(revision)
@@ -1006,7 +1006,7 @@ class _Composer:
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
-            self.faces[revision.pk] = _read_faces(revision)
+            self.faces[revision.pk] = read_faces(revision)
         return self.faces[revision.pk]
 
     def body(self, group, part, classes):
