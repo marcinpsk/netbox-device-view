@@ -20,5 +20,12 @@ class NetBoxDeviceViewConfig(PluginConfig):
         "device_tab_position": "bottom",  # "top" | "bottom"
     }
 
+    def ready(self):
+        super().ready()
+        from . import jobs  # noqa: F401  (registers the system job)
+        from .artwork.branching import register_with_netbox_branching
+
+        register_with_netbox_branching()
+
 
 config = NetBoxDeviceViewConfig

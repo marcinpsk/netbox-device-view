@@ -1,2 +1,3 @@
 recursive-include netbox_device_view/static *
 recursive-include netbox_device_view/templates *
+include netbox_device_view/artwork/manifest.schema.json

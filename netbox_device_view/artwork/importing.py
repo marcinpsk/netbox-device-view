@@ -1,0 +1,126 @@
+"""Import validated definitions as candidate revisions; the UI and the API both call this."""
+
+from dataclasses import dataclass
+from posixpath import splitext
+
+from django.core.exceptions import NON_FIELD_ERRORS, PermissionDenied, ValidationError
+from django.db import transaction
+
+from ..models import (
+    DefinitionRevision,
+    RevisionFile,
+    RevisionImport,
+    VisualDefinition,
+)
+from .bundle import Definition, read_bundle
+from .errors import ArtworkError, Issue
+from .storage import lock_digest, store_blob
+
+PERMISSION = "netbox_device_view.add_definitionrevision"
+
+
+@dataclass(frozen=True)
+class ImportedRevision:
+    revision: DefinitionRevision
+    created: bool
+
+
+def can_import(user) -> bool:
+    return user.has_perm(PERMISSION)
+
+
+def _definition(item: Definition) -> VisualDefinition:
+    kind = item.manifest.data["kind"]
+    visual, _ = VisualDefinition.objects.get_or_create(
+        key=item.manifest.data["key"], defaults={"kind": kind}
+    )
+    if visual.kind != kind:
+        message = f"The key {visual.key} is a {visual.kind} definition."
+        raise ArtworkError(
+            [Issue(item.manifest_path, item.manifest.line("kind"), message)]
+        )
+    return visual
+
+
+def _revision(item: Definition) -> tuple[DefinitionRevision, bool]:
+    # The digest locks of import_bundle() serialize two imports of one revision. The
+    # row lock makes a delete wait until this import commits its provenance.
+    revision = (
+        DefinitionRevision.objects.select_for_update(no_key=True)
+        .filter(digest=item.digest)
+        .first()
+    )
+    if revision is not None:
+        return revision, False
+    revision = DefinitionRevision(
+        definition=_definition(item), digest=item.digest, manifest=item.manifest.data
+    )
+    try:
+        # full_clean() runs the CUSTOM_VALIDATORS of NetBox; save() does not.
+        revision.full_clean()
+    except ValidationError as exc:
+        raise ArtworkError(
+            [
+                Issue(
+                    item.manifest_path,
+                    None,
+                    message if field == NON_FIELD_ERRORS else f"{field}: {message}",
+                )
+                for field, messages in exc.message_dict.items()
+                for message in messages
+            ]
+        ) from exc
+    revision.save()
+    return revision, True
+
+
+def _import(
+    user,
+    bundle_name: str,
+    item: Definition,
+    revision: DefinitionRevision,
+    created: bool,
+) -> ImportedRevision:
+    # Each import writes a missing or damaged blob again, also for a known revision.
+    blobs = {
+        path: store_blob(data, splitext(path)[1].lstrip("."))
+        for path, data in sorted(item.files.items())
+    }
+    if created:
+        RevisionFile.objects.bulk_create(
+            RevisionFile(revision=revision, path=path, blob=blob)
+            for path, blob in blobs.items()
+        )
+    RevisionImport.objects.create(
+        revision=revision,
+        user=user,
+        user_name=user.get_username(),
+        source_name=bundle_name,
+        path=item.directory,
+    )
+    return ImportedRevision(revision, created)
+
+
+def import_bundle(user, bundle_name: str, fileobj) -> list[ImportedRevision]:
+    """Validate the whole bundle, then import every definition in one transaction."""
+    if not can_import(user):
+        raise PermissionDenied
+    definitions = sorted(
+        read_bundle(fileobj), key=lambda item: item.manifest.data["key"]
+    )
+    with transaction.atomic():
+        # One lock order for all imports: every digest, sorted, before any write.
+        for digest in sorted(
+            {d for item in definitions for d in item.file_digests.values()}
+        ):
+            lock_digest(digest)
+        revisions = [_revision(item) for item in definitions]
+        # A rollback does not remove media files, so check the constraints before the writes.
+        pks = {revision.pk for revision, _ in revisions}
+        permitted = DefinitionRevision.objects.restrict(user, "add").filter(pk__in=pks)
+        if permitted.count() != len(pks):
+            raise PermissionDenied
+        return [
+            _import(user, bundle_name, item, *revision)
+            for item, revision in zip(definitions, revisions, strict=True)
+        ]

@@ -1,8 +1,10 @@
+import secrets
+
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -15,10 +17,11 @@ from netbox.object_actions import (
     AddObject,
     BulkExport,
     BulkImport,
+    DeleteObject,
     ObjectAction,
 )
 from netbox.views import generic
-from netbox.views.generic import BulkImportView
+from netbox.views.generic import BulkImportView, ObjectChangeLogView
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
@@ -29,6 +32,9 @@ from utilities.views import (
 from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
+from .artwork import importing as artwork_importing
+from .artwork.branching import main_schema
+from .artwork.errors import ArtworkError
 from .utils import (
     device_view_context,
     get_stylenames_for_device_type,
@@ -344,3 +350,117 @@ class DeviceDeviceView(generic.ObjectView):
         return get_object_or_404(
             Device.objects.restrict(self.request.user, "view"), pk=kwargs.get("pk")
         )
+
+
+class BundleImport(ObjectAction):
+    name = "import"
+    label = _("Import bundle")
+    template_name = "netbox_device_view/buttons/artwork_import.html"
+    permissions_required = frozenset({"add"})
+
+
+def _first_import(field):
+    return Subquery(
+        models.RevisionImport.objects.filter(revision=OuterRef("pk"))
+        .order_by("created", "pk")
+        .values(field)[:1]
+    )
+
+
+class DefinitionRevisionListView(generic.ObjectListView):
+    queryset = models.DefinitionRevision.objects.select_related("definition").annotate(
+        imported_by=_first_import("user_name"), source_name=_first_import("source_name")
+    )
+    table = tables.DefinitionRevisionTable
+    filterset = filtersets.DefinitionRevisionFilterSet
+    actions = (BundleImport,)
+
+
+class DefinitionRevisionView(generic.ObjectView):
+    queryset = models.DefinitionRevision.objects.select_related("definition")
+    actions = (DeleteObject,)
+
+    def get_extra_context(self, request, instance):
+        return {
+            "files": instance.files.select_related("blob"),
+            "imports": instance.imports.all(),
+        }
+
+
+class DefinitionRevisionChangeLogView(ObjectChangeLogView):
+    """The change log of a revision, read from main also in an active branch."""
+
+    def get(self, request, model, **kwargs):
+        # The catalogue and its change records are in main, not in the branch schema.
+        with main_schema():
+            return super().get(request, model, **kwargs)
+
+
+class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
+    queryset = models.DefinitionRevision.objects.all()
+
+
+class ArtworkBundleImportView(ContentTypePermissionRequiredMixin, View):
+    """Upload an offline artwork bundle and import its definitions as candidate revisions."""
+
+    template_name = "netbox_device_view/artwork_import.html"
+    # The session keeps the results of the last import for the receipt page.
+    receipt_key = "netbox_device_view.artwork_import_receipt"
+
+    def get_required_permission(self):
+        return artwork_importing.PERMISSION
+
+    def page(self, request, form, status=200, **context):
+        return render(
+            request,
+            self.template_name,
+            {
+                "form": form,
+                "can_view_list": request.user.has_perm(
+                    "netbox_device_view.view_definitionrevision"
+                ),
+                **context,
+            },
+            status=status,
+        )
+
+    def get(self, request):
+        receipt = request.session.get(self.receipt_key, {})
+        results = []
+        if receipt and request.GET.get("receipt") == receipt["token"]:
+            visible = set(
+                models.DefinitionRevision.objects.restrict(request.user, "view")
+                .filter(pk__in=[result["pk"] for result in receipt["results"]])
+                .values_list("pk", flat=True)
+            )
+            results = [
+                {**result, "visible": result["pk"] in visible}
+                for result in receipt["results"]
+            ]
+        return self.page(request, forms.ArtworkBundleImportForm(), results=results)
+
+    def post(self, request):
+        form = forms.ArtworkBundleImportForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return self.page(request, form, status=400)
+        upload = form.cleaned_data["bundle"]
+        try:
+            results = artwork_importing.import_bundle(request.user, upload.name, upload)
+        except ArtworkError as exc:
+            return self.page(request, form, status=400, issues=exc.issues)
+        # A reload of the receipt page must not upload the bundle again.
+        token = secrets.token_urlsafe(16)
+        request.session[self.receipt_key] = {
+            "token": token,
+            "results": [
+                {
+                    "pk": result.revision.pk,
+                    "key": result.revision.definition.key,
+                    "digest": result.revision.digest,
+                    "created": result.created,
+                }
+                for result in results
+            ],
+        }
+        url = reverse("plugins:netbox_device_view:definitionrevision_import")
+        return redirect(f"{url}?{urlencode({'receipt': token})}")
