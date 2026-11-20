@@ -34,6 +34,7 @@ from lxml import etree
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
+from netbox_device_view.artwork.manifest import DEVICE_KIND
 from netbox_device_view.artwork.render import (
     ARTWORK,
     active_revisions,
@@ -110,10 +111,11 @@ FILES = {
 
 def faces(content):
     """Return the parsed artwork faces of a page, in page order."""
+    # A face holds the nested svg of each module, so read the whole viewport.
     return [
         etree.fromstring(markup)
         for markup in re.findall(
-            r'<svg[^>]*class="dv-art-face".*?</svg>', content, re.DOTALL
+            r'<div class="dv-art-viewport"[^>]*>(.*?)</div>', content, re.DOTALL
         )
     ]
 
@@ -993,7 +995,7 @@ class DamagedArtworkTests(ArtworkTestCase):
         [imported] = import_bundle(
             admin, "new.zip", io.BytesIO(bundle(definition("ACME/SW-24", new_files)))
         )
-        read = active_revisions([self.device_type.pk])[self.device_type.pk]
+        read = active_revisions(DEVICE_KIND, [self.device_type.pk])[self.device_type.pk]
         Association.objects.update(revision=imported.revision)
         DefinitionRevision.objects.get(pk=read.pk).delete()
         with self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"):

@@ -97,6 +97,9 @@ class AssociationFilterSet(ChangeLoggedModelFilterSet):
     device_type_id = django_filters.ModelMultipleChoiceFilter(
         queryset=DeviceType.objects.all(), label=_("Device type (ID)")
     )
+    module_type_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=ModuleType.objects.all(), label=_("Module type (ID)")
+    )
 
     class Meta:
         model = Association
