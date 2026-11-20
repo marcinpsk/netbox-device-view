@@ -1,11 +1,12 @@
 import django_filters
+from core.models import DataSource
 from dcim.models import DeviceType, Manufacturer
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 from netbox.filtersets import ChangeLoggedModelFilterSet, NetBoxModelFilterSet
 from utilities.filtersets import register_filterset
 
-from .models import DefinitionRevision, DeviceView
+from .models import DefinitionRevision, DeviceView, VisualDefinition
 
 
 @register_filterset
@@ -62,3 +63,23 @@ class DefinitionRevisionFilterSet(ChangeLoggedModelFilterSet):
             | Q(manifest__title__icontains=value)
             | Q(manifest__hardware__sku__icontains=value)
         )
+
+
+@register_filterset
+class VisualDefinitionFilterSet(ChangeLoggedModelFilterSet):
+    q = django_filters.CharFilter(method="search", label=_("Search"))
+    # "null" selects the offline uploads.
+    key_owner_id = django_filters.ModelMultipleChoiceFilter(
+        field_name="key_owner",
+        queryset=DataSource.objects.all(),
+        label=_("Key owner (ID)"),
+    )
+
+    class Meta:
+        model = VisualDefinition
+        fields = ("id", "key", "kind")
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(key__icontains=value)
