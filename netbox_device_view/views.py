@@ -680,7 +680,31 @@ class AssociationView(generic.ObjectView):
         return {"previous_revision": previous, "rollback_url": rollback_url}
 
 
-class AssociationDeleteView(generic.ObjectDeleteView):
+class TypeLockedDeleteView(generic.ObjectDeleteView):
+    """Delete a row that its writers change under the lock of its type: read the row again after that lock."""
+
+    def post(self, request, *args, **kwargs):
+        try:
+            with models.write_transaction(self.queryset.model):
+                return super().post(request, *args, **kwargs)
+        except AbortRequest as exc:
+            messages.error(request, exc.message)
+            return redirect(self.get_return_url(request))
+
+    def get_object(self, **kwargs):
+        if self.request.method != "POST":
+            return super().get_object(**kwargs)
+        # The read after the lock gives the delete constraints and the change record the current row.
+        [locked] = self.queryset.model.lock_scopes(
+            [super().get_object(**kwargs)], router.db_for_write(self.queryset.model)
+        )
+        row = super().get_object(**kwargs)
+        if row.hardware_type != locked:
+            raise AbortRequest(models.SCOPE_TYPE_CHANGED)
+        return row
+
+
+class AssociationDeleteView(TypeLockedDeleteView):
     queryset = models.Association.objects.all()
 
 
@@ -749,30 +773,6 @@ class BindingOverrideEditView(generic.ObjectEditView):
         if obj.pk and not overrides.can_view_scope(self.request.user, obj.scope):
             raise Http404
         return obj
-
-
-class TypeLockedDeleteView(generic.ObjectDeleteView):
-    """Delete a row that its writers change under the lock of its type: read the row again after that lock."""
-
-    def post(self, request, *args, **kwargs):
-        try:
-            with models.write_transaction(self.queryset.model):
-                return super().post(request, *args, **kwargs)
-        except AbortRequest as exc:
-            messages.error(request, exc.message)
-            return redirect(self.get_return_url(request))
-
-    def get_object(self, **kwargs):
-        if self.request.method != "POST":
-            return super().get_object(**kwargs)
-        # The read after the lock gives the delete constraints and the change record the current row.
-        [locked] = self.queryset.model.lock_scopes(
-            [super().get_object(**kwargs)], router.db_for_write(self.queryset.model)
-        )
-        row = super().get_object(**kwargs)
-        if row.hardware_type != locked:
-            raise AbortRequest(models.SCOPE_TYPE_CHANGED)
-        return row
 
 
 class BindingOverrideDeleteView(TypeLockedDeleteView):
@@ -858,8 +858,7 @@ class InstancePinEditView(generic.ObjectEditView):
         return obj
 
 
-class InstancePinDeleteView(generic.ObjectDeleteView):
-    # InstancePin.delete() takes the type lock.
+class InstancePinDeleteView(TypeLockedDeleteView):
     queryset = models.InstancePin.objects.select_related(*models.PIN_RELATIONS)
 
 

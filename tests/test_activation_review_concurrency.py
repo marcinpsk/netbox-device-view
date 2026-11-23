@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 
+from core.models import ObjectChange, ObjectType
 from dcim.models import (
     Device,
     DeviceRole,
@@ -46,6 +47,7 @@ from netbox_device_view.models import (
 )
 
 from .artwork_samples import MODULE_FILES, bundle, definition
+from .permissions import grant
 from .test_artwork_activation import NEWER, REVIEW_AGAIN, review_url, token_of
 from .test_artwork_device_view import FILES, FRONT_SVG, MANIFEST
 
@@ -569,3 +571,58 @@ class ActiveRevisionSnapshotTests(ConcurrentActivationTestCase):
 
         # The newer revision was never the revision of the pinned device.
         self.assertEqual(self.finish(*read), {self.device.pk: pinned})
+
+
+class DeleteAfterTypeLockTests(ConcurrentActivationTestCase):
+    """A delete waits for the writer that holds the type lock, then reads the row again."""
+
+    def delete_during_write(self, row, url_name, constraints=None):
+        """Delete ``row`` on its page while a writer changes it to the newer revision; return the response."""
+        user = User.objects.create_user(username="deleter")
+        grant(user, type(row), "delete", constraints=constraints)
+        client = Client()
+        client.force_login(user)
+        url = reverse(f"plugins:netbox_device_view:{url_name}", args=[row.pk])
+        with transaction.atomic():
+            # An activation or a pin writer holds the type lock while it changes the row.
+            lock_types([self.device_type], "default")
+            type(row).objects.filter(pk=row.pk).update(revision=self.newer)
+            delete = self.start("delete", lambda: client.post(url, {"confirm": True}))
+            self.wait_for_a_waiter(delete, backend_pid())
+        return self.finish(*delete)
+
+    def deletes(self, model):
+        return ObjectChange.objects.filter(
+            changed_object_type=ObjectType.objects.get_for_model(model),
+            action="delete",
+        )
+
+    def test_a_delete_permission_of_the_old_revision_keeps_the_activated_association(
+        self,
+    ):
+        response = self.delete_during_write(
+            self.association, "association_delete", {"revision": self.revision.pk}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertActivated()
+        self.assertFalse(self.deletes(Association).exists())
+
+    def test_the_change_record_of_an_association_delete_holds_the_activated_row(self):
+        response = self.delete_during_write(self.association, "association_delete")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Association.objects.exists())
+        [change] = self.deletes(Association)
+        self.assertEqual(change.prechange_data["revision"], self.newer.pk)
+
+    def test_a_delete_permission_of_the_old_revision_keeps_the_changed_pin(self):
+        pin = InstancePin.objects.create(device=self.device, revision=self.revision)
+
+        response = self.delete_during_write(
+            pin, "instancepin_delete", {"revision": self.revision.pk}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(InstancePin.objects.get().revision, self.newer)
+        self.assertFalse(self.deletes(InstancePin).exists())

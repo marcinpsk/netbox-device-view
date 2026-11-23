@@ -273,10 +273,17 @@ class Association(ChangeLoggedModel):
                 }
             )
 
+    @classmethod
+    def lock_scopes(cls, rows, using):
+        """Take the type lock of each association; return the types."""
+        hardware_types = [row.hardware_type for row in rows]
+        lock_types(hardware_types, using)
+        return hardware_types
+
     def delete(self, *args, **kwargs):
         # An activation holds the lock of each type of its dependency set until it commits.
         with write_transaction(type(self)) as using:
-            lock_types([self.hardware_type], using)
+            self.lock_scopes([self], using)
             return super().delete(*args, **kwargs)
 
 
