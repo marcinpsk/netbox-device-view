@@ -177,6 +177,9 @@ def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
     # read(n) inflates at most n bytes; read() inflates the whole stream first.
     with archive.open(probe) as member:
         data = member.read(probe.file_size)
+        # zipfile also ends a deflate read at the data end; _decompressor is private.
+        if info.compress_type == zipfile.ZIP_DEFLATED and not member._decompressor.eof:
+            raise zipfile.BadZipFile("a deflate stream without its end marker")
     if len(data) > info.file_size:
         raise zipfile.BadZipFile("more data than the declared size")
     # A stream that ends early also ends the read, and zipfile has checked its CRC.

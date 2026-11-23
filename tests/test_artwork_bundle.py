@@ -365,6 +365,23 @@ def test_a_member_shorter_than_its_declared_size_fails():
     assert_rejected(buffer.getvalue(), "less data than the declared size")
 
 
+def test_a_deflate_stream_without_its_end_marker_fails():
+    # A sync flush ends the prefix on a block boundary, so the stream has no final block.
+    compressor = zlib.compressobj(wbits=-15)
+    stream = compressor.compress(FRONT_SVG.encode()) + compressor.flush(
+        zlib.Z_SYNC_FLUSH
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in definition(DEVICE_DIR, DEVICE_FILES).items():
+            archive.writestr(name, stream if name.endswith("/front.svg") else content)
+        info = archive.getinfo(f"{DEVICE_DIR}/front.svg")
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.file_size = len(FRONT_SVG.encode())
+        info.CRC = zlib.crc32(FRONT_SVG.encode())
+    assert_rejected(buffer.getvalue(), "without its end marker")
+
+
 def test_a_negative_member_offset_fails_before_the_member_is_read():
     data = bytearray(bundle())
     end = data.rfind(b"PK\x05\x06")
