@@ -97,7 +97,7 @@ The Device View tab and the device page panel show only the objects that you can
 
 - The Device View tab of a device that you cannot view is not found (`404`).
 - A virtual chassis member that you cannot view has no panel and no label, and it does not give the other members a view. The panel title shows the virtual chassis name only when you can view the virtual chassis.
-- A DeviceView that you cannot view counts as missing. Without active artwork, the device page then has no Device View tab. A device type with active artwork shows the tab without a DeviceView.
+- A DeviceView that you cannot view counts as missing. A device type with active artwork shows the tab without a DeviceView. The device page has no Device View tab only when no member that you can view has active artwork or a DeviceView that you can view. A device outside a virtual chassis is its only member.
 - A port that you cannot view is not in a layout panel. In artwork, the connector of that port stays, but it has no link to the component, no component tooltip and no cable outline. A peer that you cannot view is not in the port's details.
 - A cable that you cannot view counts as no cable: it gives no cable colour, and the port shows the state of a port without a cable. A peer that you can view is still in the details.
 - A module that you cannot view does not select a module variant, and its ports are not in the panel.
