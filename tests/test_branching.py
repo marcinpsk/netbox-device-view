@@ -25,11 +25,13 @@ from users.models import ObjectPermission, User
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
-from netbox_device_view.models import DefinitionRevision, DeviceView
+from netbox_device_view.models import DefinitionRevision, DeviceView, VisualDefinition
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
+from .test_artwork_key_transfer import CHANGELOG_URL as DEFINITION_CHANGELOG_URL
+from .test_artwork_key_transfer import EDIT_URL as DEFINITION_EDIT_URL
 from .test_artwork_source_import import SOURCE_IMPORT_URL
 from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
@@ -255,3 +257,45 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
         self.source.sync()
 
         self.assertContains(self.import_source(), "Imported")
+
+
+class KeyTransferInBranchTests(ArtworkBranchTestCase):
+    def test_a_key_transfer_in_a_branch_changes_main_at_once(self):
+        self.upload()
+        visual = VisualDefinition.objects.get()
+        source = DataSource.objects.create(
+            name="Artwork", type="local", source_url="file:///artwork", enabled=True
+        )
+        self.grant(VisualDefinition, "view", "change")
+        self.grant(DataSource, "view")
+
+        response = self.client.post(
+            reverse(DEFINITION_EDIT_URL, args=[visual.pk]), {"key_owner": source.pk}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        visual.refresh_from_db()
+        self.assertEqual(visual.key_owner, source)
+        self.assertEqual(
+            ObjectChange.objects.using("default")
+            .filter(changed_object_id=visual.pk, action="update")
+            .count(),
+            1,
+        )
+
+    def test_the_definition_change_log_reads_main_in_a_branch(self):
+        del self.client.cookies["active_branch"]
+        self.upload()
+        self.client.cookies["active_branch"] = self.branch.schema_id
+        visual = VisualDefinition.objects.get()
+        self.grant(VisualDefinition, "view")
+        self.grant(ObjectChange, "view")
+        change = ObjectChange.objects.using("default").get(
+            changed_object_type=ObjectType.objects.get_for_model(VisualDefinition),
+            changed_object_id=visual.pk,
+        )
+
+        response = self.client.get(reverse(DEFINITION_CHANGELOG_URL, args=[visual.pk]))
+
+        self.assertContains(response, change.get_absolute_url())
+        self.assertContains(response, self.branch.name)

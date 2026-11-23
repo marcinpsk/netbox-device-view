@@ -43,7 +43,7 @@ def can_import(user) -> bool:
 
 def _key_owner_name(visual: VisualDefinition, user) -> str:
     if visual.key_owner_id is None:
-        return "the offline uploads"
+        return f"the {VisualDefinition.OFFLINE_UPLOADS}"
     if (
         not DataSource.objects.restrict(user, "view")
         .filter(pk=visual.key_owner_id)
@@ -57,7 +57,9 @@ def _definition(
     item: Definition, key_owner: DataSource | None, user
 ) -> VisualDefinition:
     kind = item.manifest.data["kind"]
-    visual, _ = VisualDefinition.objects.select_related("key_owner").get_or_create(
+    # The row lock makes an import wait for a transfer and then see the new owner.
+    # No select_related: after the wait, PostgreSQL re-reads only the locked row.
+    visual, _ = VisualDefinition.objects.select_for_update().get_or_create(
         key=item.manifest.data["key"], defaults={"kind": kind, "key_owner": key_owner}
     )
     if visual.kind != kind:
