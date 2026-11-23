@@ -71,16 +71,18 @@ def lock_table(model):
         cursor.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
 
 
-def waiting_locks():
-    """Return the number of lock requests in this database that wait."""
+def backend_pid():
+    """Return the process ID of the backend of the connection of this thread."""
     with connection.cursor() as cursor:
-        # In a transaction PostgreSQL keeps its first pg_stat_activity snapshot, without later backends.
-        cursor.execute("SELECT pg_stat_clear_snapshot()")
-        cursor.execute(
-            "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
-            " WHERE NOT l.granted AND a.datname = current_database()"
-        )
+        cursor.execute("SELECT pg_backend_pid()")
         return cursor.fetchone()[0]
+
+
+def blocking_pids(pid):
+    """Return the process IDs of the backends that block a lock wait of the backend ``pid``."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_blocking_pids(%s)", [pid])
+        return set(cursor.fetchone()[0])
 
 
 class ConcurrentActivationTestCase(TransactionTestCase):
@@ -156,10 +158,15 @@ class ConcurrentActivationTestCase(TransactionTestCase):
         return token
 
     def start(self, name, target):
+        """Run ``target`` in a thread with its own connection; return the thread and its results.
+
+        The results hold the backend process ID of the thread as "pid".
+        """
         results = {}
 
         def run():
             try:
+                results["pid"] = backend_pid()
                 results["value"] = target()
             except Exception as exc:  # noqa: BLE001  (the test checks the outcome)
                 results["error"] = exc
@@ -175,11 +182,15 @@ class ConcurrentActivationTestCase(TransactionTestCase):
         client = client or self.clients[0]
         return self.start(name, lambda: client.post(self.url, {"token": token}))
 
-    def wait_for_a_waiter(self, thread):
+    def wait_for_a_waiter(self, worker, blocker):
+        """Wait until the backend ``blocker`` blocks a lock wait of ``worker`` (a thread and its results)."""
+        thread, results = worker
         deadline = time.monotonic() + WAIT_SECONDS
-        while waiting_locks() < 1:
+        while "pid" not in results or blocker not in blocking_pids(results["pid"]):
             self.assertTrue(thread.is_alive(), "the thread did not wait")
-            self.assertLess(time.monotonic(), deadline, "no transaction waited")
+            self.assertLess(
+                time.monotonic(), deadline, "the thread did not wait for the blocker"
+            )
             time.sleep(0.05)
 
     def finish(self, thread, results):
@@ -216,7 +227,7 @@ class WriterFirstTests(ConcurrentActivationTestCase):
         with transaction.atomic():
             change()
             activation = self.activate_in_thread(token)
-            self.wait_for_a_waiter(activation[0])
+            self.wait_for_a_waiter(activation, backend_pid())
         response = self.finish(*activation)
         self.assertContains(response, REVIEW_AGAIN, status_code=409)
         self.assertUnchanged()
@@ -292,7 +303,7 @@ class ActivationFirstTests(ConcurrentActivationTestCase):
                 change()
 
         thread, results = self.start("writer", write)
-        self.wait_for_a_waiter(thread)
+        self.wait_for_a_waiter((thread, results), activation[1]["pid"])
         # The writer waits while the activation holds its locks.
         self.assertTrue(thread.is_alive())
         self.release.set()
@@ -417,14 +428,14 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
             lock_bulk_writes("default")
             pin.delete()
             activation = self.activate_in_thread(token)
-            self.wait_for_a_waiter(activation[0])
+            self.wait_for_a_waiter(activation, backend_pid())
         self.assertTrue(self.paused.wait(WAIT_SECONDS))
         # A rename after the inspection would make con-r1 resolve, so its removal would block.
         rename = self.start(
             "writer",
             lambda: RearPort.objects.filter(pk=self.spare.pk).update(name="R1"),
         )
-        self.wait_for_a_waiter(rename[0])
+        self.wait_for_a_waiter(rename, activation[1]["pid"])
         self.release.set()
 
         self.assertEqual(self.finish(*activation).status_code, 302)
@@ -441,7 +452,7 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
             lock_bulk_writes("default")
             lock_types([later], "default")
             activation = self.activate_in_thread(token)
-            self.wait_for_a_waiter(activation[0])
+            self.wait_for_a_waiter(activation, backend_pid())
             # Its next row needs the other type lock, which the activation must not hold.
             lock_types([first], "default")
 
@@ -454,7 +465,7 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
         first = self.activate_in_thread(first_token, name="first")
         self.assertTrue(self.paused.wait(WAIT_SECONDS))
         second = self.activate_in_thread(second_token, self.clients[1], "second")
-        self.wait_for_a_waiter(second[0])
+        self.wait_for_a_waiter(second, first[1]["pid"])
         self.release.set()
 
         self.assertEqual(self.finish(*first).status_code, 302)
@@ -481,7 +492,7 @@ class PinRevisionTests(ConcurrentActivationTestCase):
         with transaction.atomic():
             self.newer.delete()
             pin = self.pin_in_thread(revision)
-            self.wait_for_a_waiter(pin[0])
+            self.wait_for_a_waiter(pin, backend_pid())
 
         response = self.finish(*pin)
         self.assertEqual(response.status_code, 400, response.content)
@@ -494,7 +505,7 @@ class PinRevisionTests(ConcurrentActivationTestCase):
         pin = self.pin_in_thread(revision)
         self.assertTrue(self.paused.wait(WAIT_SECONDS))
         delete = self.start("delete", self.newer.delete)
-        self.wait_for_a_waiter(delete[0])
+        self.wait_for_a_waiter(delete, pin[1]["pid"])
         self.release.set()
 
         self.assertEqual(self.finish(*pin).status_code, 201)
@@ -515,7 +526,7 @@ class CandidateDeleteTests(ConcurrentActivationTestCase):
             # The review waits at its first read of revision files: the active revision.
             lock_table(RevisionFile)
             page = self.start("review", lambda: self.clients[0].get(self.url))
-            self.wait_for_a_waiter(page[0])
+            self.wait_for_a_waiter(page, backend_pid())
             self.newer.delete()
 
         response = self.finish(*page)
