@@ -203,6 +203,8 @@ class DeleteDuringReimportTests(TransactionTestCase):
 
     def test_a_reimport_after_a_delete_creates_the_revision_again(self):
         revision = DefinitionRevision.objects.get()
+        # delete() clears revision.pk, so keep the old primary key.
+        old_pk = revision.pk
         errors = []
         deleted, release = threading.Event(), threading.Event()
 
@@ -239,7 +241,7 @@ class DeleteDuringReimportTests(TransactionTestCase):
                     thread.join(30)
         self.assertEqual(errors, [])
         again = DefinitionRevision.objects.get()
-        self.assertNotEqual(again.pk, revision.pk)
+        self.assertNotEqual(again.pk, old_pk)
         self.assertEqual(again.digest, revision.digest)
         self.assertEqual(again.files.count(), 3)
         self.assertEqual(
