@@ -8,7 +8,12 @@ from lxml import etree
 
 from netbox_device_view.artwork import pins, render
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.models import BindingOverride, DefinitionRevision, InstancePin
+from netbox_device_view.models import (
+    Association,
+    BindingOverride,
+    DefinitionRevision,
+    InstancePin,
+)
 
 from .activation import activate
 from .artwork_samples import DEVICE_FILES, bundle, definition
@@ -150,6 +155,54 @@ class ModulePinTests(ModuleApiTestCase):
         self.assertEqual(body.get("class"), "dv-art-module-body")
         self.assertNotIn(
             "#0a0", etree.tostring(self.group(front, inventory.nm1)).decode()
+        )
+
+    def unpinned_after_the_read(self, *modules):
+        """Pin ``modules`` to a revision; the next composition reads the pins, then a delete of the pins and of the revision runs."""
+        revision = import_revision(self.admin, "ACME/NM-2X", NM_VARIANT)
+        for module in modules:
+            InstancePin.objects.create(module=module, revision=revision)
+        compose = render._Composer.__init__
+
+        def read_then_unpin(composer, *args, **kwargs):
+            compose(composer, *args, **kwargs)
+            InstancePin.objects.filter(revision=revision).delete()
+            for deleted in DefinitionRevision.objects.filter(pk=revision.pk):
+                deleted.delete()
+
+        return patch.object(render._Composer, "__init__", read_then_unpin)
+
+    def test_a_module_whose_only_artwork_is_deleted_after_the_read_is_a_schematic(
+        self,
+    ):
+        fan = self.inventory.fan
+        with (
+            self.unpinned_after_the_read(fan),
+            self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
+        ):
+            content = self.tab()
+        self.assertNotIn("does not match its digest", content)
+        with self.unpinned_after_the_read(fan):
+            entry = self.modules()[fan.pk]
+        self.assertEqual(
+            (entry["representation"], entry["artwork"], entry["warnings"]),
+            ("schematic", None, []),
+        )
+
+    def test_each_module_of_a_deleted_pin_revision_draws_its_own_fallback(self):
+        inventory = self.inventory
+        Association.objects.filter(module_type=inventory.nm_type).delete()
+        # nm1 has no artwork after the delete; the PSU has the artwork of its type.
+        with (
+            self.unpinned_after_the_read(inventory.nm1, inventory.psu),
+            self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
+        ):
+            modules = self.modules()
+        nm1, psu = modules[inventory.nm1.pk], modules[inventory.psu.pk]
+        self.assertEqual((nm1["representation"], nm1["artwork"]), ("schematic", None))
+        self.assertEqual(
+            (psu["representation"], psu["artwork"]["revision_id"], psu["warnings"]),
+            ("artwork", inventory.revisions["acme/psu-1"].pk, []),
         )
 
     def test_a_pin_of_another_definition_binds_with_the_overrides_of_that_key(self):

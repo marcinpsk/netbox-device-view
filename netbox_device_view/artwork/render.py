@@ -753,20 +753,26 @@ class _Composer:
                     " shows as a schematic, and the modules in it do not show.",
                 )
             elif revision is not None:
-                current = self.replacement(module, revision)
-                if current is not None:
+                current = self.current_revision(module, revision)
+                if current != revision:
                     revision = current
-                    artwork_connectors = connectors = self.connectors(revision, module)
-                drawn = self.artwork(
-                    group,
-                    bay,
-                    rotate,
-                    revision,
-                    artwork_connectors,
-                    inner,
-                    key,
-                    warn,
-                    slot,
+                    artwork_connectors = connectors = (
+                        () if revision is None else self.connectors(revision, module)
+                    )
+                drawn = (
+                    None
+                    if revision is None
+                    else self.artwork(
+                        group,
+                        bay,
+                        rotate,
+                        revision,
+                        artwork_connectors,
+                        inner,
+                        key,
+                        warn,
+                        slot,
+                    )
                 )
                 if drawn is not None:
                     representation, (prefix, ids) = ARTWORK, drawn
@@ -1009,21 +1015,20 @@ class _Composer:
             )
         return etree.SubElement(parent, _RECT, attributes)
 
-    def replacement(self, module, revision):
-        """Return the revision that ``module`` has now when the files of ``revision`` are damaged, if it is another one, else None."""
+    def current_revision(self, module, revision):
+        """Return ``revision``, or the revision that ``module`` has now (None when it has none) when the files of ``revision`` are damaged."""
         if revision.pk in self.faces:
-            return None
+            return revision
         try:
             self.faces[revision.pk] = _face_data(revision)
         except DamagedBlob as exc:
             current = active_revisions([module], self.selection).get(module.pk)
-            if current is not None and current.pk != revision.pk:
+            if current != revision:
                 # Another activation or a pin delete, then a delete of the revision, removed its files after the read.
-                self.revisions[module.pk] = current
                 return current
             logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
             self.faces[revision.pk] = None
-        return None
+        return revision
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
