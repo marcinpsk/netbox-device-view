@@ -513,7 +513,7 @@ class ConcurrentActivationTests(ConcurrentActivationTestCase):
                         description="writer"
                     )
                     activation = self.activate_in_thread(token)
-                    self.wait_for_a_waiter(activation[0])
+                    self.wait_for_a_waiter(activation, backend_pid())
                     # PostgreSQL usually stops the transaction that waited first: the activation.
                     Device.objects.filter(pk=self.device.pk).update(
                         description="writer"
