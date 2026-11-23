@@ -542,6 +542,9 @@ class AssociationReviewView(ActivationPermissionMixin, GetReturnURLMixin, View):
         return redirect(self.get_return_url(request))
 
 
+SELECT_AGAIN = _("The selected associations changed. Select the associations again.")
+
+
 class ReviewUpdate(ActivationAction):
     name = "review_update"
     label = _("Review update")
@@ -596,7 +599,11 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
         }
         pairs, current = [], []
         for association in associations:
-            candidate = newest[association.revision.definition_id]
+            candidate = newest.get(association.revision.definition_id)
+            if candidate is None:
+                # A delete of the association and of its revisions ran after the read.
+                messages.warning(request, SELECT_AGAIN)
+                return redirect(self.get_return_url(request))
             if candidate.pk == association.revision_id:
                 current.append(association.pk)
             else:

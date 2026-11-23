@@ -31,6 +31,7 @@ from django.utils.http import urlencode
 from netbox.context import events_queue
 from users.models import ObjectPermission, User
 
+from netbox_device_view import views
 from netbox_device_view.artwork import pins, review
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.models import (
@@ -93,6 +94,8 @@ NM_WITHOUT_SLOT = {
     "manifest.yaml": NM_MANIFEST.replace(SLOT, "  {}"),
     "installed.svg": NM_SVG.replace('id="bay-slot" ', ""),
 }
+# The query of the review update that reads the newest revision of each definition.
+NEWEST_READ = 'DISTINCT ON ("netbox_device_view_definitionrevision"."definition_id")'
 REVIEWER_MODELS = (
     Module,
     ModuleBay,
@@ -1033,6 +1036,27 @@ class EntryTests(ReviewTestCase):
         self.assertContains(response, review.NOT_VIEWABLE, status_code=400)
         self.assertNotContains(
             response, "already have the newest revision", status_code=400
+        )
+
+    def test_an_update_of_an_association_deleted_with_its_revision_asks_again(self):
+        deleted = []
+
+        def delete_before_the_newest_read(execute, sql, params, many, context):
+            if not deleted and NEWEST_READ in sql:
+                deleted.append(sql)
+                # Another administrator deletes the association, then its only revision.
+                self.association.delete()
+                self.revision.delete()
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(delete_before_the_newest_read):
+            response = self.update({"pk": [self.association.pk]})
+
+        self.assertTrue(deleted)
+        self.assertRedirects(response, reverse(LIST_URL), fetch_redirect_response=False)
+        self.assertEqual(
+            [str(m) for m in get_messages(response.wsgi_request)],
+            [str(views.SELECT_AGAIN)],
         )
 
     def test_an_update_of_too_many_associations_is_rejected_before_any_review_work(
