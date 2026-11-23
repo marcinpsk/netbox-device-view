@@ -40,6 +40,7 @@ from netbox_device_view.models import (
     DeviceView,
     InstancePin,
     VisualDefinition,
+    active_revisions,
 )
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
@@ -401,6 +402,44 @@ class PinInBranchTests(ArtworkBranchTestCase):
             pinned.delete()
         self.assertEqual(protected.exception.protected_objects, {self.branch})
         self.assertTrue(DefinitionRevision.objects.filter(pk=pinned.pk).exists())
+
+
+class ActiveRevisionInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        role = DeviceRole.objects.create(name="Switch", slug="switch")
+        site = Site.objects.create(name="Site", slug="site")
+        self.devices = [
+            Device.objects.create(
+                name=name, device_type=device_type, role=role, site=site
+            )
+            for name in ("sw1", "sw2")
+        ]
+        super().setUp()
+
+    def test_a_device_shows_the_pin_and_the_association_of_the_branch(self):
+        from netbox_branching.utilities import activate_branch
+
+        del self.client.cookies["active_branch"]
+        self.upload()
+        [revision] = DefinitionRevision.objects.all()
+        files = {**DEVICE_FILES, "front.svg": FRONT_SVG.replace("#333", "#222")}
+        [pinned] = import_bundle(
+            self.user, "pinned.zip", io.BytesIO(bundle(definition(DEVICE_DIR, files)))
+        )
+        sw1, sw2 = self.devices
+        with activate_branch(self.branch):
+            Association.objects.create(device_type=sw1.device_type, revision=revision)
+            InstancePin.objects.create(device=sw2, revision=pinned.revision)
+            in_branch = active_revisions(self.devices)
+
+        self.assertEqual(in_branch, {sw1.pk: revision, sw2.pk: pinned.revision})
+        self.assertEqual(active_revisions(self.devices), {})
 
 
 class KeyTransferInBranchTests(ArtworkBranchTestCase):

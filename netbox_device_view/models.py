@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from core.models import ObjectChange
 from core.signals import clear_events
 from django.conf import settings
+from django.contrib.postgres.expressions import ArraySubquery
 from django.core.exceptions import EmptyResultSet, ValidationError
 from django.db import (
     DEFAULT_DB_ALIAS,
@@ -742,18 +743,33 @@ def active_revisions(parts, selection=None) -> dict[int, DefinitionRevision]:
     spec = instance_scope(type(parts[0]))
     type_spec = SCOPES[spec.type_field]
     # Rendering needs no permission on the pin, the association or the revision.
-    pinned = {
-        spec.id_of(pin): pin.revision
-        for pin in InstancePin.objects.filter(
-            spec.among([part.pk for part in parts])
-        ).select_related("revision__definition")
-    }
-    active = {
-        type_spec.id_of(association): association.revision
-        for association in Association.objects.filter(
-            type_spec.among({type_spec.id_of(part) for part in parts})
-        ).select_related("revision__definition")
-    }
+    pins = InstancePin.objects.filter(spec.among([part.pk for part in parts]))
+    links = Association.objects.filter(
+        type_spec.among({type_spec.id_of(part) for part in parts})
+    )
+    # One query on the connection of pins reads the pins and the associations in one snapshot.
+    revisions = (
+        DefinitionRevision.objects.using(router.db_for_read(InstancePin))
+        .filter(
+            models.Q(pk__in=pins.values("revision"))
+            | models.Q(pk__in=links.values("revision"))
+        )
+        .annotate(
+            pinned_parts=ArraySubquery(
+                pins.filter(revision=models.OuterRef("pk")).values(f"{spec.field}_id")
+            ),
+            active_types=ArraySubquery(
+                links.filter(revision=models.OuterRef("pk")).values(
+                    f"{type_spec.field}_id"
+                )
+            ),
+        )
+        .select_related("definition")
+    )
+    pinned, active = {}, {}
+    for revision in revisions:
+        pinned.update(dict.fromkeys(revision.pinned_parts, revision))
+        active.update(dict.fromkeys(revision.active_types, revision))
     selected = selection or {}
     revisions = {
         part.pk: pinned.get(part.pk)

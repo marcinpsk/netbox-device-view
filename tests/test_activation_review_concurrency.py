@@ -42,6 +42,7 @@ from netbox_device_view.models import (
     DefinitionRevision,
     InstancePin,
     RevisionFile,
+    active_revisions,
 )
 
 from .artwork_samples import MODULE_FILES, bundle, definition
@@ -551,3 +552,20 @@ class CandidateDeleteTests(ConcurrentActivationTestCase):
         self.assertContains(response, review.NOT_VIEWABLE)
         self.assertIsNone(token_of(response))
         self.assertUnchanged()
+
+
+class ActiveRevisionSnapshotTests(ConcurrentActivationTestCase):
+    def test_the_pin_and_the_association_come_from_one_snapshot(self):
+        pinned = self.import_files(WITHOUT_R1)
+        with transaction.atomic():
+            # A read of the associations waits; a read of the pins does not.
+            lock_table(Association)
+            read = self.start("read", lambda: active_revisions([self.device]))
+            self.wait_for_a_waiter(read, backend_pid())
+            InstancePin.objects.create(device=self.device, revision=pinned)
+            Association.objects.filter(pk=self.association.pk).update(
+                revision=self.newer
+            )
+
+        # The newer revision was never the revision of the pinned device.
+        self.assertEqual(self.finish(*read), {self.device.pk: pinned})
