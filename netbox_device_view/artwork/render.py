@@ -500,6 +500,7 @@ class _Composer:
     def __init__(self, device, user, plain, selection):
         self.device = device
         self.plain = plain
+        self.selection = selection
         self.states = device_components(device, user, BINDABLE_MODELS)
         modules = list(
             Module.objects.restrict(user, "view")
@@ -752,6 +753,10 @@ class _Composer:
                     " shows as a schematic, and the modules in it do not show.",
                 )
             elif revision is not None:
+                current = self.replacement(module, revision)
+                if current is not None:
+                    revision = current
+                    artwork_connectors = connectors = self.connectors(revision, module)
                 drawn = self.artwork(
                     group,
                     bay,
@@ -1003,6 +1008,22 @@ class _Composer:
                 f"{_number(3 * width)} {_number(2 * width)}"
             )
         return etree.SubElement(parent, _RECT, attributes)
+
+    def replacement(self, module, revision):
+        """Return the revision that ``module`` has now when the files of ``revision`` are damaged, if it is another one, else None."""
+        if revision.pk in self.faces:
+            return None
+        try:
+            self.faces[revision.pk] = _face_data(revision)
+        except DamagedBlob as exc:
+            current = active_revisions([module], self.selection).get(module.pk)
+            if current is not None and current.pk != revision.pk:
+                # Another activation or a pin delete, then a delete of the revision, removed its files after the read.
+                self.revisions[module.pk] = current
+                return current
+            logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
+            self.faces[revision.pk] = None
+        return None
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:

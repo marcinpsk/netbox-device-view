@@ -1,20 +1,21 @@
 """A pin keeps one device or one installed module on its revision: the Device View tab and the artwork API draw that revision."""
 
 import io
+from unittest.mock import patch
 
 from django.urls import reverse
 from lxml import etree
 
-from netbox_device_view.artwork import pins
+from netbox_device_view.artwork import pins, render
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.models import BindingOverride, InstancePin
+from netbox_device_view.models import BindingOverride, DefinitionRevision, InstancePin
 
 from .activation import activate
 from .artwork_samples import DEVICE_FILES, bundle, definition
 from .module_samples import NM_MANIFEST, NM_SVG
 from .test_api_artwork import ArtworkApiTestCase
 from .test_api_module_composition import ModuleApiTestCase
-from .test_artwork_device_view import TAB_URL, faces, ids
+from .test_artwork_device_view import SVG_NS, TAB_URL, faces, ids
 
 # A revision of the key of the module type of nm1 and nm2, with another colour.
 NM_VARIANT = {
@@ -126,6 +127,29 @@ class ModulePinTests(ModuleApiTestCase):
         )
         self.assertEqual(
             self.module_artwork(inventory.nm2)["revision_id"], self.variant.pk
+        )
+
+    def test_a_pin_revision_deleted_after_its_read_draws_the_active_revision(self):
+        inventory = self.inventory
+        pin = InstancePin.objects.create(module=inventory.nm1, revision=self.variant)
+        compose = render._Composer.__init__
+
+        def read_then_unpin(composer, *args, **kwargs):
+            # The page read the pin, then a delete of the pin and of its revision ran.
+            compose(composer, *args, **kwargs)
+            InstancePin.objects.filter(pk=pin.pk).delete()
+            for revision in DefinitionRevision.objects.filter(pk=self.variant.pk):
+                revision.delete()
+
+        with (
+            patch.object(render._Composer, "__init__", read_then_unpin),
+            self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
+        ):
+            front = self.front()
+        body = self.group(front, inventory.nm1).find(f"{{{SVG_NS}}}a")
+        self.assertEqual(body.get("class"), "dv-art-module-body")
+        self.assertNotIn(
+            "#0a0", etree.tostring(self.group(front, inventory.nm1)).decode()
         )
 
     def test_a_pin_of_another_definition_binds_with_the_overrides_of_that_key(self):
