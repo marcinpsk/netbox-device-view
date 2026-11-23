@@ -16,6 +16,7 @@ import yaml
 from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase
 
+from netbox_device_view import library_check
 from netbox_device_view.artwork.limits import MAX_SVG_BYTES
 from netbox_device_view.datasource_import import FILE_TOO_LARGE, MAX_FILE_BYTES
 from netbox_device_view.library_check import NOT_REGULAR
@@ -434,6 +435,41 @@ class LibraryCheckTests(SimpleTestCase):
             [
                 f"artwork/ACME/NM-2X/installed.svg: larger than {MAX_SVG_BYTES} bytes.",
                 "artwork/ACME/SW-24/a:b.svg: not a safe relative path.",
+            ],
+        )
+
+    def grow_after_the_listing(self, file: Path, size: int):
+        """Make file size bytes long after the check lists it and before it reads it."""
+        check = library_check._source_issues
+
+        def grow(files):
+            issues = check(files)
+            with file.open("r+b") as handle:
+                handle.truncate(size)
+            return issues
+
+        return mock.patch.object(library_check, "_source_issues", side_effect=grow)
+
+    def test_a_file_that_grows_after_the_listing_is_read_only_up_to_the_limit(self):
+        svg = "artwork/ACME/NM-2X/installed.svg"
+        with self.grow_after_the_listing(self.library / svg, 64 * MAX_SVG_BYTES):
+            tracemalloc.start()
+            self.addCleanup(tracemalloc.stop)
+            _, problems = self.check(str(self.library))
+            _, peak = tracemalloc.get_traced_memory()
+        self.assertEqual(problems, [f"{svg}: larger than {MAX_SVG_BYTES} bytes."])
+        self.assertLess(peak, 8 * MAX_SVG_BYTES)
+
+    def test_the_total_limit_counts_the_bytes_read_after_the_listing(self):
+        files = sorted((self.library / "artwork").rglob("*.*"))
+        listed = sum(file.stat().st_size for file in files)
+        limit = mock.patch.object(library_check, "MAX_EXPANDED_BYTES", listed + 10)
+        with limit, self.grow_after_the_listing(files[0], files[0].stat().st_size + 11):
+            _, problems = self.check(str(self.library))
+        self.assertEqual(
+            problems,
+            [
+                f"artwork: the files below the prefix have more than {listed + 10} bytes."
             ],
         )
 

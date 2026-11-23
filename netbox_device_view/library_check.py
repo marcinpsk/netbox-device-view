@@ -126,6 +126,15 @@ def _layout_issues(root: Path) -> tuple[int, list[Issue]]:
     return len(layouts), issues
 
 
+def _too_large(path: str) -> Issue:
+    return Issue(f"{ARTWORK}/{path}", None, f"larger than {MAX_SVG_BYTES} bytes.")
+
+
+def _too_many_bytes() -> Issue:
+    message = f"the files below the prefix have more than {MAX_EXPANDED_BYTES} bytes."
+    return Issue(ARTWORK, None, message)
+
+
 def _source_issues(files: list[tuple[str, Path, int]]) -> list[Issue]:
     """Return the issues of the Data Source artwork import that come before it reads a file."""
     if len(files) > MAX_MEMBERS:
@@ -134,18 +143,14 @@ def _source_issues(files: list[tuple[str, Path, int]]) -> list[Issue]:
         ]
     sizes = {path: size for path, _, size in files}
     if sum(sizes.values()) > MAX_EXPANDED_BYTES:
-        message = (
-            f"the files below the prefix have more than {MAX_EXPANDED_BYTES} bytes."
-        )
-        return [Issue(ARTWORK, None, message)]
+        return [_too_many_bytes()]
     issues = []
     for path, size in sizes.items():
         # The Data Source import checks the path below the prefix, with the artwork directory.
         if not is_safe_path(f"{ARTWORK}/{path}"):
             issues.append(Issue(f"{ARTWORK}/{path}", None, "not a safe relative path."))
         elif size > MAX_SVG_BYTES:
-            message = f"larger than {MAX_SVG_BYTES} bytes."
-            issues.append(Issue(f"{ARTWORK}/{path}", None, message))
+            issues.append(_too_large(path))
     return issues
 
 
@@ -158,12 +163,22 @@ def _artwork(root: Path) -> tuple[list[Definition], list[Issue]]:
         return [], links
     if issues := _source_issues(files):
         return [], links + issues
-    contents = []
+    contents, total = [], 0
     for path, file, _ in files:
         try:
-            contents.append((path, file.read_bytes()))
+            # A file can grow after the listing, so the limits apply to the bytes read.
+            with file.open("rb") as handle:
+                content = handle.read(MAX_SVG_BYTES + 1)
         except OSError as exc:
             issues.append(_unreadable(f"{ARTWORK}/{path}", exc))
+            continue
+        total += len(content)
+        if total > MAX_EXPANDED_BYTES:
+            return [], links + [_too_many_bytes()]
+        if len(content) > MAX_SVG_BYTES:
+            issues.append(_too_large(path))
+        else:
+            contents.append((path, content))
     if issues:
         return [], links + issues
     try:
