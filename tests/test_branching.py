@@ -390,9 +390,16 @@ class PinInBranchTests(ArtworkBranchTestCase):
                 device_type=self.device.device_type, revision=newer.revision
             )
             pins.save(self.user, InstancePin(device=self.device, revision=pinned))
+            self.assertEqual(
+                list(InstancePin.objects.values_list("device", "revision")),
+                [(self.device.pk, pinned.pk)],
+            )
+        # Only the branch has the pin, so the foreign key of main does not protect the revision.
+        self.assertFalse(InstancePin.objects.exists())
 
-        with self.assertRaises(ProtectedError):
+        with self.assertRaises(ProtectedError) as protected:
             pinned.delete()
+        self.assertEqual(protected.exception.protected_objects, {self.branch})
         self.assertTrue(DefinitionRevision.objects.filter(pk=pinned.pk).exists())
 
 
