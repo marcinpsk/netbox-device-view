@@ -121,7 +121,8 @@ class ConcurrentActivationTestCase(TransactionTestCase):
             client.force_login(self.admin)
         self.paused = threading.Event()
         self.release = threading.Event()
-        self.addCleanup(self.release.set)
+        self.workers = []
+        self.addCleanup(self.stop_workers)
 
     def import_files(self, files, directory="ACME/SW-24"):
         [imported] = import_bundle(
@@ -166,6 +167,12 @@ class ConcurrentActivationTestCase(TransactionTestCase):
 
         def run():
             try:
+                with connection.cursor() as cursor:
+                    # A worker that waits for a lock longer than a test waits fails.
+                    cursor.execute(
+                        "SELECT set_config('lock_timeout', %s, false)",
+                        [f"{WAIT_SECONDS}s"],
+                    )
                 results["pid"] = backend_pid()
                 results["value"] = target()
             except Exception as exc:  # noqa: BLE001  (the test checks the outcome)
@@ -175,8 +182,17 @@ class ConcurrentActivationTestCase(TransactionTestCase):
 
         thread = threading.Thread(target=run, name=name)
         thread.start()
-        self.addCleanup(thread.join, WAIT_SECONDS)
+        self.workers.append(thread)
         return thread, results
+
+    def stop_workers(self):
+        """Release the paused workers, then wait for each worker to end."""
+        self.release.set()
+        for thread in self.workers:
+            thread.join(WAIT_SECONDS)
+        stuck = [thread.name for thread in self.workers if thread.is_alive()]
+        if stuck:
+            raise AssertionError(f"These workers did not end: {stuck}")
 
     def activate_in_thread(self, token, client=None, name="activate"):
         client = client or self.clients[0]
