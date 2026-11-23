@@ -1022,13 +1022,21 @@ class _Composer:
         try:
             self.faces[revision.pk] = _face_data(revision)
         except DamagedBlob as exc:
-            current = active_revisions([module], self.selection).get(module.pk)
-            if current != revision:
-                # Another activation or a pin delete, then a delete of the revision, removed its files after the read.
-                return current
-            logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)
             self.faces[revision.pk] = None
-        return revision
+            # Another activation or a pin delete, then a delete of the revision, can remove its files after the read.
+            sharing = [
+                m
+                for m in {module, *self.installed.values()}
+                if self.revisions.get(m.pk) == revision
+            ]
+            current = active_revisions(sharing, self.selection)
+            for shared in sharing:
+                self.revisions[shared.pk] = current.get(shared.pk)
+            if revision in current.values():
+                logger.warning(
+                    "Artwork of revision %s is damaged: %s", revision.pk, exc
+                )
+        return self.revisions[module.pk]
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:

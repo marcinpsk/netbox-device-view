@@ -3,6 +3,7 @@
 import io
 from unittest.mock import patch
 
+from django.core.files.storage import default_storage
 from django.urls import reverse
 from lxml import etree
 
@@ -200,6 +201,33 @@ class ModulePinTests(ModuleApiTestCase):
             modules = self.modules()
         nm1, psu = modules[inventory.nm1.pk], modules[inventory.psu.pk]
         self.assertEqual((nm1["representation"], nm1["artwork"]), ("schematic", None))
+        self.assertEqual(
+            (psu["representation"], psu["artwork"]["revision_id"], psu["warnings"]),
+            ("artwork", inventory.revisions["acme/psu-1"].pk, []),
+        )
+
+    def test_a_cached_damage_does_not_hide_the_new_revision_of_another_module(self):
+        inventory = self.inventory
+        InstancePin.objects.create(module=inventory.nm1, revision=self.variant)
+        moved = InstancePin.objects.create(module=inventory.psu, revision=self.variant)
+        default_storage.delete(self.variant.files.get(path="installed.svg").blob.name)
+        compose = render._Composer.__init__
+
+        def read_then_unpin(composer, *args, **kwargs):
+            # The PSU returns to the artwork of its type after the read.
+            compose(composer, *args, **kwargs)
+            InstancePin.objects.filter(pk=moved.pk).delete()
+
+        with (
+            patch.object(render._Composer, "__init__", read_then_unpin),
+            self.assertLogs("netbox_device_view.artwork.render", "WARNING") as logs,
+        ):
+            modules = self.modules()
+        self.assertEqual(len(logs.records), 1)
+        nm1, psu = modules[inventory.nm1.pk], modules[inventory.psu.pk]
+        self.assertEqual(
+            [warning["code"] for warning in nm1["warnings"]], ["damaged_artwork"]
+        )
         self.assertEqual(
             (psu["representation"], psu["artwork"]["revision_id"], psu["warnings"]),
             ("artwork", inventory.revisions["acme/psu-1"].pk, []),
