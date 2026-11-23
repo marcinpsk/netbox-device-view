@@ -56,6 +56,7 @@ nav:
   - Artwork Bundles: artwork-bundles.md
   - SVG Renderer: svg-renderer.md
   - Rendered Layout API: rendered-layout-api.md
+  - Artwork API: artwork-api.md
   - Virtual Chassis: virtual-chassis.md
   - Troubleshooting: troubleshooting.md
   - yaml-layout-schema.md
