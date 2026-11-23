@@ -20,14 +20,23 @@ from django.test import (
 )
 from django.urls import reverse
 from netbox.context_managers import event_tracking
-from users.models import ObjectPermission, User
+from users.constants import TOKEN_PREFIX
+from users.models import Token, User
 
 from netbox_device_view import datasource_import
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
-from netbox_device_view.models import DefinitionRevision, DeviceView, VisualDefinition
+from netbox_device_view.models import (
+    MAX_REPR,
+    Association,
+    DefinitionRevision,
+    DeviceView,
+    VisualDefinition,
+)
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
+from .permissions import grant
+from .test_artwork_activation import ACTIVATE_URL
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import CHANGELOG_URL as DEFINITION_CHANGELOG_URL
@@ -37,6 +46,8 @@ from .test_datasource_import import APPLY_URL, EXAMPLE_PATH, EXAMPLE_YAML
 from .test_datasource_import_concurrency import ConcurrentApplyTestBase
 
 BRANCHING = "netbox_branching" in settings.PLUGINS
+REVISION_DELETE_URL = "plugins:netbox_device_view:definitionrevision_delete"
+REVISION_API_URL = "plugins-api:netbox_device_view-api:definitionrevision-detail"
 
 
 def provision_branch(name):
@@ -112,13 +123,52 @@ class DataSourceImportInBranchTests(ConcurrentApplyTestBase):
 
 
 class CatalogueModelTests(SimpleTestCase):
-    def test_every_plugin_model_except_device_view_is_in_the_catalogue(self):
+    def test_every_plugin_model_that_refers_to_no_type_is_in_the_catalogue(self):
         labels = {
             model._meta.label_lower
             for model in apps.get_app_config("netbox_device_view").get_models()
         }
 
-        self.assertEqual(labels - CATALOGUE, {"netbox_device_view.deviceview"})
+        # A branch can change device types and module types, so their links are branched too.
+        self.assertEqual(
+            labels - CATALOGUE,
+            {"netbox_device_view.deviceview", "netbox_device_view.association"},
+        )
+
+
+def long_device_type(save=False, manufacturer_name="M" * 100):
+    """Return a device type whose manufacturer name and model have the maximum length."""
+    manufacturer = Manufacturer(name=manufacturer_name, slug="m" * 100)
+    device_type = DeviceType(manufacturer=manufacturer, model="X" * 100, slug="x" * 100)
+    if save:
+        manufacturer.save()
+        device_type.manufacturer = manufacturer
+        device_type.save()
+    return device_type
+
+
+class BranchObjectTextTests(SimpleTestCase):
+    def test_the_text_of_each_branch_object_fits_its_change_record(self):
+        self.assertTextsFit(long_device_type())
+
+    def test_a_combining_mark_counts_in_the_text_of_a_branch_object(self):
+        # The column counts code points, and a combining mark is one.
+        self.assertTextsFit(long_device_type(manufacturer_name="Q\u0301" * 50))
+
+    def assertTextsFit(self, device_type):
+        # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
+        revision = DefinitionRevision(
+            definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
+        )
+        for obj in (
+            DeviceView(device_type=device_type),
+            Association(device_type=device_type, revision=revision),
+        ):
+            with self.subTest(type(obj).__name__):
+                self.assertLessEqual(len(str(obj)), MAX_REPR)
+                self.assertTrue(
+                    str(obj).startswith(device_type.full_name[: MAX_REPR - 1])
+                )
 
 
 @unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
@@ -133,18 +183,10 @@ class ArtworkBranchTestCase(TransactionTestCase):
         self.addCleanup(media_override.disable)
         self.user = User.objects.create_user(username="importer")
         self.client.force_login(self.user)
-        self.grant(DefinitionRevision, "view", "add")
+        grant(self.user, DefinitionRevision, "view", "add")
         self.branch = provision_branch("Artwork")
         self.addCleanup(self.branch.deprovision)
         self.client.cookies["active_branch"] = self.branch.schema_id
-
-    def grant(self, model, *actions):
-        permission = ObjectPermission.objects.create(
-            name=f"{model._meta.model_name}-{ObjectPermission.objects.count()}",
-            actions=list(actions),
-        )
-        permission.users.add(self.user)
-        permission.object_types.add(ObjectType.objects.get_for_model(model))
 
     def upload(self):
         return self.client.post(
@@ -195,7 +237,7 @@ class ArtworkImportInBranchTests(ArtworkBranchTestCase):
         del self.client.cookies["active_branch"]
         self.upload()
         self.client.cookies["active_branch"] = self.branch.schema_id
-        self.grant(ObjectChange, "view")
+        grant(self.user, ObjectChange, "view")
         revision = DefinitionRevision.objects.get()
         change = ObjectChange.objects.using("default").get(
             changed_object_type=ObjectType.objects.get_for_model(DefinitionRevision),
@@ -229,8 +271,8 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
             name="Artwork", type="local", source_url=f"file://{root}", enabled=True
         )
         self.source.sync()
-        self.grant(DataSource, "view")
-        self.grant(DataFile, "view")
+        grant(self.user, DataSource, "view")
+        grant(self.user, DataFile, "view")
 
     def import_source(self):
         return self.client.post(
@@ -259,6 +301,34 @@ class ArtworkSourceImportInBranchTests(ArtworkBranchTestCase):
         self.assertContains(self.import_source(), "Imported")
 
 
+class LongNameActivationInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        self.device_type = long_device_type(save=True)
+        super().setUp()
+
+    def test_an_activation_for_a_type_with_long_names_has_its_change_record(self):
+        from netbox_branching.models import ChangeDiff
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        diff = ChangeDiff.objects.using("default").get(
+            object_type=ObjectType.objects.get_for_model(Association)
+        )
+        self.assertTrue(
+            diff.object_repr.startswith(self.device_type.full_name[: MAX_REPR - 1])
+        )
+
+
 class KeyTransferInBranchTests(ArtworkBranchTestCase):
     def test_a_key_transfer_in_a_branch_changes_main_at_once(self):
         self.upload()
@@ -266,8 +336,8 @@ class KeyTransferInBranchTests(ArtworkBranchTestCase):
         source = DataSource.objects.create(
             name="Artwork", type="local", source_url="file:///artwork", enabled=True
         )
-        self.grant(VisualDefinition, "view", "change")
-        self.grant(DataSource, "view")
+        grant(self.user, VisualDefinition, "view", "change")
+        grant(self.user, DataSource, "view")
 
         response = self.client.post(
             reverse(DEFINITION_EDIT_URL, args=[visual.pk]), {"key_owner": source.pk}
@@ -288,8 +358,8 @@ class KeyTransferInBranchTests(ArtworkBranchTestCase):
         self.upload()
         self.client.cookies["active_branch"] = self.branch.schema_id
         visual = VisualDefinition.objects.get()
-        self.grant(VisualDefinition, "view")
-        self.grant(ObjectChange, "view")
+        grant(self.user, VisualDefinition, "view")
+        grant(self.user, ObjectChange, "view")
         change = ObjectChange.objects.using("default").get(
             changed_object_type=ObjectType.objects.get_for_model(VisualDefinition),
             changed_object_id=visual.pk,
@@ -299,3 +369,110 @@ class KeyTransferInBranchTests(ArtworkBranchTestCase):
 
         self.assertContains(response, change.get_absolute_url())
         self.assertContains(response, self.branch.name)
+
+
+class ActivationInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        self.device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        super().setUp()
+
+    def test_an_activation_in_a_branch_changes_main_at_the_merge(self):
+        from netbox_branching.utilities import activate_branch
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Association.objects.exists())
+        with activate_branch(self.branch):
+            self.assertEqual(Association.objects.get().revision_id, revision.pk)
+
+        self.branch.merge(user=self.user)
+
+        self.assertEqual(Association.objects.get().device_type, self.device_type)
+
+    def test_a_revision_active_only_in_a_branch_cannot_be_deleted_in_main(self):
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, Association, "view", "add")
+        grant(self.user, DeviceType, "view")
+        grant(self.user, DefinitionRevision, "delete")
+        activation = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+        self.assertEqual(activation.status_code, 302)
+        del self.client.cookies["active_branch"]
+
+        page = self.client.post(
+            reverse(REVISION_DELETE_URL, args=[revision.pk]),
+            {"confirm": True},
+            follow=True,
+        )
+        token = Token.objects.create(user=self.user)
+        api = self.client.delete(
+            reverse(REVISION_API_URL, args=[revision.pk]),
+            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}",
+        )
+
+        self.assertContains(page, "Unable to delete")
+        self.assertContains(page, self.branch.get_absolute_url())
+        self.assertEqual(api.status_code, 409)
+        self.assertIn(f"{self.branch} ({self.branch.pk})", api.json()["detail"])
+        self.assertTrue(DefinitionRevision.objects.filter(pk=revision.pk).exists())
+
+    def test_a_revision_that_no_branch_uses_can_be_deleted(self):
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(self.user, DefinitionRevision, "delete")
+        del self.client.cookies["active_branch"]
+
+        response = self.client.post(
+            reverse(REVISION_DELETE_URL, args=[revision.pk]), {"confirm": True}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(DefinitionRevision.objects.filter(pk=revision.pk).exists())
+
+    def test_a_rejected_activation_in_a_branch_leaves_no_change_record(self):
+        from netbox_branching.models import ChangeDiff
+        from netbox_branching.utilities import activate_branch
+
+        self.upload()
+        revision = DefinitionRevision.objects.get()
+        grant(
+            self.user,
+            Association,
+            "view",
+            "add",
+            constraints={"device_type__model": "Other"},
+        )
+        grant(self.user, DeviceType, "view")
+
+        response = self.client.post(
+            reverse(ACTIVATE_URL, args=[revision.pk]),
+            {"device_type": self.device_type.pk},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        with activate_branch(self.branch):
+            self.assertFalse(
+                Association.objects.filter(device_type=self.device_type).exists()
+            )
+        self.assertFalse(
+            ChangeDiff.objects.using("default")
+            .filter(object_type=ObjectType.objects.get_for_model(Association))
+            .exists()
+        )

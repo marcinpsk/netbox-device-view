@@ -1,3 +1,4 @@
+from core.models import ObjectChange
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, router, transaction
@@ -5,9 +6,18 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.models import ChangeLoggedModel, NetBoxModel
 
-from .artwork.manifest import FACES
+from .artwork.manifest import DEVICE_KIND, FACES, MODULE_KIND
 from .artwork.manifest import SCHEMA as MANIFEST_SCHEMA
 from .layout.parser import LayoutParseError, parse
+
+# NetBox Branching copies str() of a branch object to a column of this size without a cut.
+MAX_REPR = ObjectChange._meta.get_field("object_repr").max_length
+
+
+def bounded_repr(text: str) -> str:
+    """Return ``text`` cut to MAX_REPR code points, with an ellipsis when it is cut."""
+    # The column counts code points, so a combining mark counts as one.
+    return text if len(text) <= MAX_REPR else text[: MAX_REPR - 1] + "…"
 
 
 class RenderMode(models.TextChoices):
@@ -49,7 +59,7 @@ class DeviceView(NetBoxModel):
         ordering = ("device_type",)
 
     def __str__(self):
-        return f"{self.device_type.manufacturer} {self.device_type.model}"
+        return bounded_repr(f"{self.device_type.manufacturer} {self.device_type.model}")
 
     def clean_fields(self, exclude=None):
         # A field-level check, so full_clean(exclude=["yaml_layout"]) skips the parse.
@@ -178,6 +188,68 @@ class DefinitionRevision(ImmutableMixin, ChangeLoggedModel):
     def face_names(self):
         """The faces of the revision in physical order; JSON storage does not keep key order."""
         return [face for face in FACES if face in self.manifest["faces"]]
+
+
+class Association(ChangeLoggedModel):
+    """The explicit link of one device type or module type to its active definition revision."""
+
+    device_type = models.OneToOneField(
+        to="dcim.DeviceType",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    module_type = models.OneToOneField(
+        to="dcim.ModuleType",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    revision = models.ForeignKey(
+        to=DefinitionRevision, on_delete=models.PROTECT, related_name="associations"
+    )
+
+    class Meta:
+        ordering = ("pk",)
+        verbose_name = "artwork association"
+        constraints = (
+            models.CheckConstraint(
+                condition=models.Q(device_type__isnull=False, module_type__isnull=True)
+                | models.Q(device_type__isnull=True, module_type__isnull=False),
+                name="%(app_label)s_association_one_type",
+            ),
+        )
+
+    def __str__(self):
+        # The type comes first: it identifies the association.
+        return bounded_repr(f"{self.hardware_type.full_name} → {self.revision}")
+
+    def get_absolute_url(self):
+        return reverse("plugins:netbox_device_view:association", args=[self.pk])
+
+    @property
+    def hardware_type(self):
+        return self.device_type or self.module_type
+
+    @property
+    def kind(self):
+        """The definition kind that the hardware type needs."""
+        return DEVICE_KIND if self.device_type_id is not None else MODULE_KIND
+
+    def clean(self):
+        super().clean()
+        if self.revision_id is None:
+            return
+        if self.revision.definition.kind != self.kind:
+            raise ValidationError(
+                {
+                    "revision": _(
+                        "The revision is a {revision} definition. A {kind} type needs a {kind} definition."
+                    ).format(revision=self.revision.definition.kind, kind=self.kind)
+                }
+            )
 
 
 class ArtworkBlob(ImmutableMixin, models.Model):
