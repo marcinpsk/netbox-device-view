@@ -110,13 +110,15 @@ class PausingStorage(FileSystemStorage):
         return super()._open(name, mode)
 
 
-def waiting_row_locks():
-    """Return the number of lock requests on rows or transactions in this database that wait."""
+def backend_pid():
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT count(*) FROM pg_locks WHERE locktype IN ('tuple', 'transactionid')"
-            " AND NOT granted"
-        )
+        cursor.execute("SELECT pg_backend_pid()")
+        return cursor.fetchone()[0]
+
+
+def blocking_pids(pid):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_blocking_pids(%s)", [pid])
         return cursor.fetchone()[0]
 
 
@@ -129,6 +131,20 @@ class DeleteDuringReimportTests(TransactionTestCase):
             import_bundle(self.user, "first.zip", io.BytesIO(bundle()))
         PausingStorage.reading.clear()
         PausingStorage.release.clear()
+        self.pids = {}
+
+    def wait_until_blocked(self, waiter, holder):
+        """Wait until the waiter's backend waits for a lock of the holder's backend."""
+        deadline = time.monotonic() + 10
+        while waiter not in self.pids or self.pids[holder] not in blocking_pids(
+            self.pids[waiter]
+        ):
+            self.assertLess(
+                time.monotonic(),
+                deadline,
+                f"the {waiter} did not wait for the {holder}",
+            )
+            time.sleep(0.05)
 
     def test_a_delete_waits_for_a_reimport_and_removes_its_import_record(self):
         storages = {
@@ -145,6 +161,7 @@ class DeleteDuringReimportTests(TransactionTestCase):
 
         def reimport():
             try:
+                self.pids["reimport"] = backend_pid()
                 import_bundle(self.user, "again.zip", io.BytesIO(bundle()))
             except Exception as exc:  # noqa: BLE001  (the test reports any failure)
                 errors.append(exc)
@@ -153,6 +170,7 @@ class DeleteDuringReimportTests(TransactionTestCase):
 
         def delete():
             try:
+                self.pids["delete"] = backend_pid()
                 client = APIClient()
                 client.force_authenticate(self.user)
                 url = reverse(
@@ -172,12 +190,12 @@ class DeleteDuringReimportTests(TransactionTestCase):
             self.assertTrue(PausingStorage.reading.wait(10))
             deleter = threading.Thread(target=delete)
             deleter.start()
-            deadline = time.monotonic() + 3
-            while waiting_row_locks() == 0 and time.monotonic() < deadline:
-                time.sleep(0.05)
-            PausingStorage.release.set()
-            for thread in (importer, deleter):
-                thread.join(30)
+            try:
+                self.wait_until_blocked("delete", "reimport")
+            finally:
+                PausingStorage.release.set()
+                for thread in (importer, deleter):
+                    thread.join(30)
         self.assertEqual(errors, [])
         self.assertEqual(responses, [204])
         self.assertFalse(DefinitionRevision.objects.exists())
@@ -190,6 +208,7 @@ class DeleteDuringReimportTests(TransactionTestCase):
 
         def delete():
             try:
+                self.pids["delete"] = backend_pid()
                 with transaction.atomic():
                     revision.delete()
                     deleted.set()
@@ -199,6 +218,7 @@ class DeleteDuringReimportTests(TransactionTestCase):
 
         def reimport():
             try:
+                self.pids["reimport"] = backend_pid()
                 import_bundle(self.user, "again.zip", io.BytesIO(bundle()))
             except Exception as exc:  # noqa: BLE001  (the test reports any failure)
                 errors.append(exc)
@@ -211,12 +231,12 @@ class DeleteDuringReimportTests(TransactionTestCase):
             self.assertTrue(deleted.wait(10))
             importer = threading.Thread(target=reimport)
             importer.start()
-            deadline = time.monotonic() + 3
-            while waiting_row_locks() == 0 and time.monotonic() < deadline:
-                time.sleep(0.05)
-            release.set()
-            for thread in (deleter, importer):
-                thread.join(30)
+            try:
+                self.wait_until_blocked("reimport", "delete")
+            finally:
+                release.set()
+                for thread in (deleter, importer):
+                    thread.join(30)
         self.assertEqual(errors, [])
         again = DefinitionRevision.objects.get()
         self.assertNotEqual(again.pk, revision.pk)
