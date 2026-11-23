@@ -561,7 +561,7 @@ def _snapshot(pairs) -> tuple["_Affected", dict, str]:
 def _inspect(user, pairs) -> Review:
     affected, associations, fingerprint = _snapshot(pairs)
     types = affected.dependency_types
-    if not _visible(user, pairs, affected):
+    if not _visible(user, pairs, affected, associations):
         return Review(
             hidden=True, dependency_types=types, listed_rows=affected.listed_rows
         )
@@ -595,9 +595,11 @@ def _inspect(user, pairs) -> Review:
     )
 
 
-def _visible(user, pairs, affected) -> bool:
+def _visible(user, pairs, affected, associations) -> bool:
     """Return True when ``user`` can view every object that the review names or composes."""
     devices = list(affected.listed_device_ids)
+    # The review shows the active revision of each selected type.
+    active = [associations[p.key].revision_id for p in pairs if p.key in associations]
     querysets = (
         Device.objects.filter(pk__in=devices),
         *(
@@ -606,6 +608,7 @@ def _visible(user, pairs, affected) -> bool:
         ),
         BindingOverride.objects.filter(_read_overrides(affected)),
         InstancePin.objects.filter(_read_pins(affected)),
+        DefinitionRevision.objects.filter(pk__in=active),
     )
     return all(qs.restrict(user, "view").count() == qs.count() for qs in querysets)
 

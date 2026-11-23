@@ -759,6 +759,17 @@ class VisibilityTests(ReviewTestCase):
                 finally:
                     override.delete()
 
+    def test_an_active_revision_that_the_reviewer_cannot_view_hides_the_review(self):
+        ObjectPermission.objects.filter(
+            name__startswith="netbox_device_view.definitionrevision view"
+        ).update(constraints={"pk": self.newer.pk})
+
+        response = self.review((self.newer, self.device_type))
+
+        self.assertHidden(response)
+        self.assertNotContains(response, self.revision.digest[:12])
+        self.assertNotContains(response, self.revision.get_absolute_url())
+
     def test_an_activation_after_a_loss_of_visibility_is_refused(self):
         url = review_url((self.newer, self.device_type))
         token = token_of(self.client.get(url))
