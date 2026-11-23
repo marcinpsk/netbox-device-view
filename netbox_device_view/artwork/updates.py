@@ -47,7 +47,12 @@ def device_update_pairs(user, device) -> list[tuple]:
     for association in sorted(
         associations, key=lambda a: (a.module_type_id is not None, str(a.hardware_type))
     ):
-        candidate = newest[association.revision.definition_id]
-        if candidate.pk != association.revision_id and candidate.viewable:
+        candidate = newest.get(association.revision.definition_id)
+        # None: a delete of the association and of each revision of its definition ran after the read.
+        if (
+            candidate is not None
+            and candidate.pk != association.revision_id
+            and candidate.viewable
+        ):
             pairs.append((association.hardware_type, candidate))
     return pairs[: review.MAX_PAIRS]

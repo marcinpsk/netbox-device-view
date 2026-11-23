@@ -1,6 +1,7 @@
 """The artwork-update shortcut on the device page opens the review of the newer revisions of the device and its installed modules."""
 
 from dcim.models import Module, ModuleBay, ModuleType, Site
+from django.db import connection
 from django.utils.html import escape
 from netbox.registry import registry
 from users.models import ObjectPermission
@@ -9,7 +10,7 @@ from netbox_device_view.artwork import pins, review
 from netbox_device_view.models import Association, InstancePin
 
 from .permissions import grant
-from .test_activation_review import NEW_MODULE, ReviewTestCase
+from .test_activation_review import NEW_MODULE, NEWEST_READ, ReviewTestCase
 from .test_artwork_activation import NEWER, review_url, token_of
 
 SHORTCUT = "Review artwork update"
@@ -55,6 +56,27 @@ class UpdateShortcutTests(ReviewTestCase):
         self.import_files(NEWER)
 
         self.assertNotContains(self.page(), SHORTCUT)
+
+    def test_no_shortcut_when_the_definition_is_deleted_during_the_read(self):
+        newer = self.import_files(NEWER)
+        deleted = []
+
+        def delete_before_the_newest_read(execute, sql, params, many, context):
+            if not deleted and NEWEST_READ in sql:
+                deleted.append(sql)
+                # Another administrator deletes the association, then every revision of its definition.
+                self.association.delete()
+                newer.delete()
+                self.revision.delete()
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(delete_before_the_newest_read):
+            response = self.page()
+
+        self.assertTrue(deleted)
+        self.assertNotContains(response, SHORTCUT)
+        # NetBox shows an exception of a template extension in an alert on the page.
+        self.assertNotContains(response, "An error occurred when loading content")
 
     def test_the_shortcut_offers_only_the_updates_that_the_user_can_review(self):
         self.activate_module_type()
