@@ -69,13 +69,28 @@ _STYLES = {
     "inset",
     "outset",
 }
-_ZERO = re.compile(r"^0(\.0*)?([a-z]+)?$")
 
 
 def visible(outline):
     """Return True when an outline shorthand paints a line: it has a visible style and no zero width."""
-    tokens = outline.lower().split()
-    return bool(_STYLES & set(tokens)) and not any(_ZERO.match(t) for t in tokens)
+    tokens = tinycss2.parse_component_value_list(outline, skip_comments=True)
+    styles = {t.lower_value for t in tokens if t.type == "ident"}
+    zero = any(t.type in ("number", "dimension") and t.value == 0 for t in tokens)
+    return bool(_STYLES & styles) and not zero
+
+
+def test_a_zero_width_outline_is_not_visible():
+    for outline in (
+        "0",
+        "0 solid red",
+        ".0px solid red",
+        "0.0em solid",
+        "0PX dashed",
+        "none",
+    ):
+        assert not visible(outline), outline
+    assert visible("2px solid var(--tblr-primary)")
+    assert visible("thin dotted red")
 
 
 def test_each_focusable_element_has_a_visible_outline():
