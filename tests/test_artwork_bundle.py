@@ -335,9 +335,12 @@ def test_read_zip_returns_files_and_skips_directory_entries():
 
 
 @pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
-@pytest.mark.parametrize("crc_of", [b"A", b"AA"])
+@pytest.mark.parametrize(
+    ("crc_of", "reason"),
+    [(b"A", "Bad CRC-32"), (b"AA", "more data than the declared size")],
+)
 def test_a_member_that_expands_past_its_declared_size_fails_with_bounded_memory(
-    compression, crc_of
+    compression, crc_of, reason
 ):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression) as archive:
@@ -353,7 +356,7 @@ def test_a_member_that_expands_past_its_declared_size_fails_with_bounded_memory(
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    assert "damaged archive member" in str(caught.value)
+    assert reason in str(caught.value)
     assert peak < 4 * 1024 * 1024
 
 
