@@ -248,7 +248,11 @@ _ACTIVATION_TEXTS = {
             " lists the devices that change and what the change breaks. Nothing"
             " changes until you activate the reviewed selection."
         ),
-        _("The Device View of every device of these types shows the revision."),
+        _(
+            "The revision becomes the active revision of these types. The Device View"
+            " of each device without a pin shows it. A pinned device keeps the"
+            " revision of its pin."
+        ),
     ),
     MODULE_KIND: (
         _(
@@ -258,8 +262,9 @@ _ACTIVATION_TEXTS = {
             " selection."
         ),
         _(
-            "Every installed module of these types shows the revision in the bay of"
-            " its device."
+            "The revision becomes the active revision of these types. Each installed"
+            " module without a pin shows it in the bay of its device. A pinned module"
+            " keeps the revision of its pin."
         ),
     ),
 }
