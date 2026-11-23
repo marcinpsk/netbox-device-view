@@ -1,7 +1,5 @@
 """Keep the artwork catalogue global when NetBox Branching is installed."""
 
-from contextlib import nullcontext
-
 from django.conf import settings
 
 # Revision files and import records have no change log, so a branch merge cannot replay them.
@@ -28,12 +26,3 @@ def register_with_netbox_branching():
     from netbox_branching.utilities import register_branching_resolver
 
     register_branching_resolver(keep_catalogue_in_main)
-
-
-def main_schema():
-    """Return a context manager that reads from main while a branch is active."""
-    if "netbox_branching" not in settings.PLUGINS:
-        return nullcontext()
-    from netbox_branching.utilities import deactivate_branch
-
-    return deactivate_branch()

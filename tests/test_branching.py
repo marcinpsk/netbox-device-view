@@ -1,5 +1,6 @@
 """Plugin behaviour in an active NetBox Branching branch; skipped when netbox-branching is not enabled."""
 
+import re
 import shutil
 import tempfile
 import unittest
@@ -203,4 +204,8 @@ class ArtworkImportInBranchTests(ArtworkBranchTestCase):
         )
 
         self.assertContains(response, change.get_absolute_url())
-        self.assertContains(response, self.branch.name)
+        # The selector button shows the active branch; its dropdown lists every branch.
+        selected = re.search(
+            r'mdi-source-branch"></i>\s*(.*?)\s*</button>', response.content.decode()
+        )
+        self.assertEqual(selected[1], self.branch.name)

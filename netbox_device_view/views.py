@@ -1,10 +1,13 @@
 import secrets
 
+from core.models import ObjectChange
+from core.tables import ObjectChangeTable
 from dcim.models import Device
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db.models import Count, OuterRef, Subquery
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -33,7 +36,6 @@ from netbox_device_view.forms import DeviceViewImportForm
 
 from . import datasource_import, filtersets, forms, models, tables
 from .artwork import importing as artwork_importing
-from .artwork.branching import main_schema
 from .artwork.errors import ArtworkError
 from .utils import (
     device_view_context,
@@ -390,10 +392,33 @@ class DefinitionRevisionView(generic.ObjectView):
 class DefinitionRevisionChangeLogView(ObjectChangeLogView):
     """The change log of a revision, read from main also in an active branch."""
 
+    base_template = "netbox_device_view/definitionrevision.html"
+
     def get(self, request, model, **kwargs):
+        obj = get_object_or_404(model.objects.restrict(request.user, "view"), **kwargs)
+        content_type = ContentType.objects.get_for_model(model)
         # The catalogue and its change records are in main, not in the branch schema.
-        with main_schema():
-            return super().get(request, model, **kwargs)
+        changes = (
+            ObjectChange.objects.using("default")
+            .restrict(request.user, "view")
+            .prefetch_related("user", "changed_object_type")
+            .filter(
+                Q(changed_object_type=content_type, changed_object_id=obj.pk)
+                | Q(related_object_type=content_type, related_object_id=obj.pk)
+            )
+        )
+        table = ObjectChangeTable(data=changes, orderable=False)
+        table.configure(request)
+        return render(
+            request,
+            "extras/object_changelog.html",
+            {
+                "object": obj,
+                "table": table,
+                "base_template": self.base_template,
+                "tab": self.tab,
+            },
+        )
 
 
 class DefinitionRevisionDeleteView(generic.ObjectDeleteView):
