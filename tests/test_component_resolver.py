@@ -105,6 +105,16 @@ def page_cells(content):
     return parser.cells
 
 
+def cell_details(content, cell):
+    """Return (title, markup) of the details template of a cell."""
+    match = re.search(
+        rf'<template id="{re.escape(cell["data-dv-details"])}" data-title="([^"]*)">(.*?)</template>',
+        content,
+        re.DOTALL,
+    )
+    return match[1], match[2]
+
+
 class ResolverTestBase(TestCase):
     layout = SWITCH
 
@@ -235,9 +245,10 @@ class PageMatchesApiTests(ResolverTestBase):
             {h["name"]: h["peer_labels"] for h in hotspots},
             {"Gi1": ["sw1 | Gi2"], "Gi2": ["sw1 | Gi1"], "Gi3": []},
         )
+        content = self._tab(cable_colors="on")
         cells = {
             cell["data-href"]: cell
-            for cell in page_cells(self._tab(cable_colors="on"))
+            for cell in page_cells(content)
             if "data-href" in cell
         }
         for hotspot in hotspots:
@@ -245,15 +256,11 @@ class PageMatchesApiTests(ResolverTestBase):
                 cell = cells[
                     Interface.objects.get(pk=hotspot["object_id"]).get_absolute_url()
                 ]
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, hotspot["name"])
                 self.assertEqual(
-                    cell["data-bs-title"],
-                    (
-                        "<hr>".join(
-                            [hotspot["name"], "<br>".join(hotspot["peer_labels"])]
-                        )
-                        if hotspot["peer_labels"]
-                        else hotspot["name"]
-                    ),
+                    re.findall(r'<li><a href="[^"]*">([^<]*)</a></li>', details),
+                    hotspot["peer_labels"],
                 )
                 if hotspot["cable_color"]:
                     self.assertEqual(cell["rect-fill"], f"#{hotspot['cable_color']}")
@@ -305,35 +312,18 @@ class AmbiguousKeyTests(ResolverTestBase):
         gi3.save()
         Cable(a_terminations=[gi1], b_terminations=[gi2]).save()
 
-    def test_tab_leaves_a_port_after_its_popover_was_dismissed(self):
+    def test_tab_leaves_a_port_after_its_details_was_dismissed(self):
         for mode in (RenderMode.CSS, RenderMode.SVG):
             DeviceView.objects.update(render_mode=mode)
             with self.subTest(mode), browser_page(self._tab()) as page:
                 cell = page.locator('[data-connection-state="ambiguous"]')
                 cell.focus()
-                page.wait_for_selector(".popover", state="visible")
+                page.keyboard.press("Enter")
+                page.wait_for_selector("dialog[open]", state="visible")
                 page.keyboard.press("Escape")
-                page.wait_for_selector(".popover", state="hidden")
+                page.wait_for_selector("dialog[open]", state="hidden")
                 page.keyboard.press("Tab")
                 self.assertFalse(cell.evaluate("el => el === document.activeElement"))
-
-    def test_enter_and_space_reopen_a_dismissed_candidate_list(self):
-        for mode in (RenderMode.CSS, RenderMode.SVG):
-            DeviceView.objects.update(render_mode=mode)
-            for key in ("Enter", "Space"):
-                with self.subTest(mode, key=key), browser_page(self._tab()) as page:
-                    cell = page.locator('[data-connection-state="ambiguous"]')
-                    cell.focus()
-                    page.wait_for_selector(".popover", state="visible")
-                    page.keyboard.press("Escape")
-                    page.wait_for_selector(".popover", state="hidden")
-                    page.keyboard.press(key)
-                    page.wait_for_selector(".popover", state="visible", timeout=2000)
-                    page.keyboard.press("Tab")
-                    page.keyboard.press("Shift+Tab")
-                    self.assertTrue(
-                        cell.evaluate("el => el === document.activeElement")
-                    )
 
     def test_a_stylename_equal_to_the_ambiguous_class_is_not_drawn_as_ambiguous(self):
         Interface.objects.create(
@@ -359,7 +349,7 @@ class AmbiguousKeyTests(ResolverTestBase):
                 "none",
             )
 
-    def test_tab_from_the_last_candidate_continues_to_the_next_port(self):
+    def test_tab_continues_to_the_next_port_after_closing_the_chooser(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         next_port = Interface.objects.get(
             device=self.device, name="Gi1"
@@ -367,15 +357,18 @@ class AmbiguousKeyTests(ResolverTestBase):
         with browser_page(self._tab()) as page:
             cell = page.locator('[data-connection-state="ambiguous"]')
             cell.focus()
-            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("dialog[open]", state="visible")
             for _ in range(3):
                 page.keyboard.press("Tab")
+            page.keyboard.press("Escape")
+            page.keyboard.press("Tab")
             self.assertEqual(
                 page.evaluate("document.activeElement.getAttribute('href')"),
                 next_port,
             )
 
-    def test_tab_during_popover_dismissal_keeps_focus_in_the_page(self):
+    def test_tab_during_details_dismissal_keeps_focus_in_the_page(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         next_port = Interface.objects.get(
             device=self.device, name="Gi1"
@@ -383,7 +376,8 @@ class AmbiguousKeyTests(ResolverTestBase):
         with browser_page(self._tab()) as page:
             cell = page.locator('[data-connection-state="ambiguous"]')
             cell.focus()
-            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("dialog[open]", state="visible")
             page.keyboard.press("Escape")
             page.keyboard.press("Tab")
             page.wait_for_timeout(250)
@@ -396,43 +390,29 @@ class AmbiguousKeyTests(ResolverTestBase):
         with browser_page(self._tab()) as page:
             cell = page.locator('[data-connection-state="ambiguous"]')
             cell.focus()
-            page.wait_for_selector(".popover", state="visible")
-            cell.hover()
+            page.keyboard.press("Enter")
+            page.wait_for_selector("dialog[open]", state="visible")
             page.keyboard.press("Escape")
             page.wait_for_timeout(700)
-            self.assertEqual(page.locator(".popover:visible").count(), 0)
-
-    def test_the_popover_stays_open_while_the_pointer_is_on_it(self):
-        DeviceView.objects.update(render_mode=RenderMode.CSS)
-        with browser_page(self._tab()) as page:
-            cell = page.locator('[data-connection-state="ambiguous"]')
-            cell.focus()
-            page.wait_for_selector(".popover", state="visible")
-            popover = page.locator(f'[id="{cell.get_attribute("aria-describedby")}"]')
-            popover.hover()
-            page.keyboard.press("Shift+Tab")
-            page.wait_for_timeout(700)
-            self.assertFalse(cell.evaluate("el => el === document.activeElement"))
-            self.assertTrue(popover.is_visible())
+            self.assertEqual(page.locator("dialog[open]").count(), 0)
 
     def test_an_ambiguous_css_cell_has_an_accessible_name(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         with browser_page(self._tab()) as page:
-            cell = page.get_by_role(
-                "button", name="console: show the components with this key"
-            )
+            cell = page.get_by_role("button", name="console: several components")
             self.assertEqual(cell.count(), 1)
             self.assertEqual(cell.get_attribute("data-connection-state"), "ambiguous")
 
-    def test_hovering_the_port_keeps_focus_on_an_open_candidate(self):
+    def test_hovering_open_details_keeps_focus_on_a_candidate(self):
         DeviceView.objects.update(render_mode=RenderMode.CSS)
         candidate = self.interface.get_absolute_url()
         with browser_page(self._tab()) as page:
             cell = page.locator('[data-connection-state="ambiguous"]')
             cell.focus()
-            page.wait_for_selector(".popover", state="visible")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("dialog[open]", state="visible")
             page.keyboard.press("Tab")
-            cell.hover()
+            page.locator("dialog[open]").hover()
             page.wait_for_timeout(700)
             self.assertEqual(
                 page.evaluate("document.activeElement.getAttribute('href')"), candidate
@@ -445,20 +425,57 @@ class AmbiguousKeyTests(ResolverTestBase):
                 cell = page.locator('[data-connection-state="ambiguous"]')
                 cell.focus()
                 self.assertTrue(cell.evaluate("el => el === document.activeElement"))
-                page.wait_for_selector(".popover", state="visible")
-                popover = cell.get_attribute("aria-describedby")
-                page.keyboard.press("Tab")
-                self.assertEqual(
-                    page.locator(":focus").get_attribute("href"),
-                    self.interface.get_absolute_url(),
-                )
-                page.keyboard.press("Tab")
-                self.assertEqual(
-                    page.locator(":focus").get_attribute("href"),
-                    self.console_port.get_absolute_url(),
-                )
-                page.keyboard.press("Tab")
-                page.wait_for_selector(f'[id="{popover}"]', state="hidden")
+                page.keyboard.press("Enter")
+                page.wait_for_selector("dialog[open]", state="visible")
+                for component in (self.interface, self.console_port):
+                    for _ in range(12):
+                        page.keyboard.press("Tab")
+                        if (
+                            page.locator(":focus").get_attribute("href")
+                            == component.get_absolute_url()
+                        ):
+                            break
+                    else:
+                        self.fail(f"The keyboard did not reach {component}.")
+                page.keyboard.press("Escape")
+                page.wait_for_selector("dialog[open]", state="hidden")
+                self.assertTrue(cell.evaluate("el => el === document.activeElement"))
+
+    def test_closing_details_does_not_steal_later_focus(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        next_port = Interface.objects.get(
+            device=self.device, name="Gi1"
+        ).get_absolute_url()
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            cell.focus()
+            page.keyboard.press("Enter")
+            dialog = page.locator("dialog[open]")
+            dialog.wait_for(state="visible")
+            dialog.evaluate(
+                "dialog => dialog.addEventListener('close', () => window.detailsClosed = true)"
+            )
+            next_cell = page.locator(f'.device-view-port[href="{next_port}"]')
+            next_cell.evaluate(
+                "next => { document.querySelector('[data-dv-details-close]').click(); next.focus(); }"
+            )
+            page.wait_for_function("window.detailsClosed === true")
+            self.assertEqual(
+                page.evaluate("document.activeElement.getAttribute('href')"), next_port
+            )
+
+    def test_details_close_restores_focus_when_the_page_has_none(self):
+        DeviceView.objects.update(render_mode=RenderMode.CSS)
+        with browser_page(self._tab()) as page:
+            cell = page.locator('[data-connection-state="ambiguous"]')
+            page.evaluate("document.activeElement.blur()")
+            cell.evaluate("el => el.click()")
+            page.wait_for_selector("dialog[open]", state="visible")
+            page.locator("[data-dv-details-close]").click()
+            page.wait_for_function(
+                "document.activeElement.matches('[data-connection-state=ambiguous]')"
+            )
+            self.assertTrue(cell.evaluate("el => el === document.activeElement"))
 
     def test_api_lists_the_key_as_ambiguous_with_both_candidates(self):
         (panel,) = self._api()["panels"]
@@ -529,13 +546,17 @@ class AmbiguousKeyTests(ResolverTestBase):
                 )
                 self.assertEqual(cell["data-connection-state"], "ambiguous")
                 self.assertNotIn("data-href", cell)
-                self.assertIn(
-                    self.interface.get_absolute_url(), cell["data-bs-content"]
+                self.assertEqual(cell["aria-haspopup"], "dialog")
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, "console")
+                self.assertIn("Two or more components have this key", details)
+                self.assertEqual(
+                    re.findall(r'<li><a href="([^"]*)">([^<]*)</a></li>', details),
+                    [
+                        (self.interface.get_absolute_url(), "Interface Console"),
+                        (self.console_port.get_absolute_url(), "Console port Console"),
+                    ],
                 )
-                self.assertIn(
-                    self.console_port.get_absolute_url(), cell["data-bs-content"]
-                )
-                self.assertIn("</a> (interface)<br><a", cell["data-bs-content"])
 
 
 class PatchPanelFaceTests(ResolverTestBase):
@@ -713,6 +734,12 @@ class TypedLookupTests(ResolverTestBase):
     def test_a_module_binding_does_not_find_device_components(self):
         self.assertEqual(self._found(Interface, "Gi1", self.module), [])
 
+    def test_the_name_of_the_module_of_a_component_needs_no_query(self):
+        # The details of each port name its module.
+        [state] = find(self._states(), Interface, "Te1/{module}/1", self.module)
+        with self.assertNumQueries(0):
+            self.assertEqual(str(state.component.module), str(self.module))
+
     def test_a_name_with_more_module_tokens_than_bay_levels_finds_nothing(self):
         self.assertIsNone(resolve_name(Interface, "Te{module}/{module}", self.module))
         self.assertEqual(self._found(Interface, "Te{module}/{module}", self.module), [])
@@ -823,8 +850,8 @@ class HiddenObjectTests(ResolverTestBase):
                 )
 
 
-class PopoverEscapingTests(ResolverTestBase):
-    """A component name is popover text, not markup, in both render modes."""
+class DetailsEscapingTests(ResolverTestBase):
+    """A component name is text in the details, not markup, in both render modes."""
 
     @classmethod
     def setUpTestData(cls):
@@ -833,16 +860,20 @@ class PopoverEscapingTests(ResolverTestBase):
             device=cls.device, name="<b>Gi1</b>", type="1000base-t"
         )
 
-    def test_the_popover_title_escapes_the_name(self):
+    def test_the_details_escape_the_name(self):
         for render_mode in (RenderMode.CSS, RenderMode.SVG):
             with self.subTest(render_mode):
                 DeviceView.objects.update(
                     render_mode=render_mode,
                     yaml_layout="version: 1\nviews:\n  front:\n    elements: [{key: -b-gi1--b-}]\n",
                 )
+                content = self._tab()
                 (cell,) = (
                     cell
-                    for cell in page_cells(self._tab())
+                    for cell in page_cells(content)
                     if "data-href" in cell or cell.get("href")
                 )
-                self.assertEqual(cell["data-bs-title"], "&lt;b&gt;Gi1&lt;/b&gt;")
+                title, details = cell_details(content, cell)
+                self.assertEqual(title, "&lt;b&gt;Gi1&lt;/b&gt;")
+                self.assertIn("Interface &lt;b&gt;Gi1&lt;/b&gt;", details)
+                self.assertNotIn("<b>", details)

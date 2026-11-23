@@ -1,0 +1,50 @@
+{# The details of one connector or layout key (details.Details); device_view_details.js shows them in the dialog. #}
+{% load i18n %}
+<template id="{{ details.ident }}" data-title="{{ details.title }}">
+	{% if details.several %}
+	<p class="dv-details-note">{% trans "Several components. Choose one." %}</p>
+	{% elif details.unresolved %}
+	<p class="dv-details-note">{% trans "No single component, so a click opens no component." %}</p>
+	{% endif %}
+	{% for entry in details.entries %}
+	<section class="dv-details-entry">
+		{% if entry.found %}{% with state=entry.state %}{% with component=state.component %}
+		<h3 class="h4 mb-1"><a href="{{ component.get_absolute_url }}">{{ entry.label }}</a></h3>
+		<dl class="dv-details-facts">
+			{% if component.module %}
+			<dt>{% trans "Module" %}</dt>
+			<dd><a href="{{ component.module.get_absolute_url }}">{{ component.module }}</a></dd>
+			{% endif %}
+			{% if state.enabled is not None %}
+			<dt>{% trans "Enabled" %}</dt>
+			<dd>{{ state.enabled|yesno:_("Yes,No") }}</dd>
+			{% endif %}
+			<dt>{% trans "Cable" %}</dt>
+			<dd>{% if state.cable %}<a href="{{ state.cable.get_absolute_url }}">{{ state.cable }}</a> ({{ state.cable.get_status_display }}){% else %}{% trans "No cable" %}{% endif %}</dd>
+			{% if state.marked_connected %}
+			<dt>{% trans "Marked connected" %}</dt>
+			<dd>{% trans "Yes" %}</dd>
+			{% endif %}
+			{% if state.path_complete is not None %}
+			<dt>{% trans "Path" %}</dt>
+			<dd>{{ state.path_complete|yesno:_("Complete,Incomplete") }}</dd>
+			{% endif %}
+			{% if state.peers %}
+			<dt>{% trans "Peers" %}</dt>
+			<dd><ul class="list-unstyled mb-0">{% for label, url in state.peer_links %}<li><a href="{{ url }}">{{ label }}</a></li>{% endfor %}</ul></dd>
+			{% endif %}
+		</dl>
+		{# The trace page of NetBox also needs the view permission on cables. #}
+		{% if perms.dcim.view_cable %}<a class="btn btn-sm btn-outline-secondary" href="{{ component.get_absolute_url }}trace/"><i class="mdi mdi-transit-connection-variant" aria-hidden="true"></i> {% trans "Trace" %}</a>{% endif %}
+		{% endwith %}{% endwith %}
+		{% elif entry.missing %}
+		<h3 class="h4 mb-1">{{ entry.label }}</h3>
+		<p class="mb-0">{% trans "No component found. It does not exist, or you cannot view it." %}</p>
+		{% else %}
+		<h3 class="h4 mb-1">{{ entry.label }}</h3>
+		<p class="mb-1">{% trans "Two or more components have this key, so it opens none of them:" %}</p>
+		<ul class="list-unstyled mb-0">{% for candidate in entry.candidates %}<li><a href="{{ candidate.component.get_absolute_url }}">{{ candidate.label }}</a></li>{% endfor %}</ul>
+		{% endif %}
+	</section>
+	{% endfor %}
+</template>

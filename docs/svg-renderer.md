@@ -20,7 +20,7 @@ Set **Render Mode → SVG** on the DeviceView edit page. The field is available 
 
 ## Port status colours
 
-The server finds the connection state of each port and writes the status class, the cable colour and the popover into the SVG. The page script only connects the links and the popovers.
+The server finds the connection state of each port and writes the status class, the cable colour and the details into the page. The page script only opens the links and the details: see [Port details](how-it-works.md#port-details).
 
 ![Port status example](assets/port-status-example.svg)
 
@@ -70,7 +70,7 @@ The **Cable Colors** checkbox on the device view page toggles cable colour mode.
 
   <!-- port elements, with the state that the server found -->
   <g class="dv-port {stylename} {status class}" data-stylename="{stylename}" tabindex="0" role="link"
-     data-connection-state="{state}" data-href="{component URL}" data-bs-title="..." data-bs-content="...">
+     data-connection-state="{state}" data-href="{component URL}" data-dv-details="{details id}">
     <title>{component name}</title>
     <rect class="dv-port-rect" .../>
     <text class="dv-port-label" .../>
