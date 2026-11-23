@@ -26,6 +26,7 @@ from dcim.models import (
     RearPort,
     Site,
 )
+from django.contrib.messages import get_messages
 from django.core.exceptions import ValidationError
 from django.db import connection, connections, transaction
 from django.db.models import ProtectedError
@@ -38,6 +39,7 @@ from netbox_device_view.artwork import overrides, pins, review
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_key, lock_types
 from netbox_device_view.models import (
+    SCOPE_TYPE_CHANGED,
     Association,
     BindingOverride,
     DefinitionRevision,
@@ -576,8 +578,8 @@ class ActiveRevisionSnapshotTests(ConcurrentActivationTestCase):
 class DeleteAfterTypeLockTests(ConcurrentActivationTestCase):
     """A delete waits for the writer that holds the type lock, then reads the row again."""
 
-    def delete_during_write(self, row, url_name, constraints=None):
-        """Delete ``row`` on its page while a writer changes it to the newer revision; return the response."""
+    def delete_during_write(self, row, url_name, constraints=None, change=None):
+        """Delete ``row`` on its page while a writer changes it to the newer revision, or runs ``change``; return the response."""
         user = User.objects.create_user(username="deleter")
         grant(user, type(row), "delete", constraints=constraints)
         client = Client()
@@ -586,9 +588,12 @@ class DeleteAfterTypeLockTests(ConcurrentActivationTestCase):
         with transaction.atomic():
             # An activation or a pin writer holds the type lock while it changes the row.
             lock_types([self.device_type], "default")
-            type(row).objects.filter(pk=row.pk).update(revision=self.newer)
+            if change is None:
+                type(row).objects.filter(pk=row.pk).update(revision=self.newer)
             delete = self.start("delete", lambda: client.post(url, {"confirm": True}))
             self.wait_for_a_waiter(delete, backend_pid())
+            if change is not None:
+                change()
         return self.finish(*delete)
 
     def deletes(self, model):
@@ -625,4 +630,26 @@ class DeleteAfterTypeLockTests(ConcurrentActivationTestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(InstancePin.objects.get().revision, self.newer)
+        self.assertFalse(self.deletes(InstancePin).exists())
+
+    def test_a_pin_delete_after_a_type_change_of_the_device_is_rejected(self):
+        pin = InstancePin.objects.create(device=self.device, revision=self.revision)
+        other = DeviceType.objects.create(
+            manufacturer=self.device_type.manufacturer, model="SW-48", slug="sw-48"
+        )
+
+        def change_type():
+            # The lock of the former type does not cover the writers of the pin any more.
+            Device.objects.filter(pk=self.device.pk).update(device_type=other)
+
+        response = self.delete_during_write(
+            pin, "instancepin_delete", change=change_type
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            [str(m) for m in get_messages(response.wsgi_request)],
+            [str(SCOPE_TYPE_CHANGED)],
+        )
+        self.assertTrue(InstancePin.objects.filter(pk=pin.pk).exists())
         self.assertFalse(self.deletes(InstancePin).exists())
