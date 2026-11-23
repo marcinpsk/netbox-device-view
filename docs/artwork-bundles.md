@@ -30,6 +30,8 @@ artwork/
 - The import validates all definitions before it writes. If one definition fails, the import stores nothing.
 - If media storage fails during the writes, the import stores no revision. Files that the import wrote before the failure can stay in media storage. The cleanup job removes them (see [Storage](#storage)).
 
+To check a definition before an import, use the [`device_view_check` command](library-check.md).
+
 ---
 
 ## Manifest
