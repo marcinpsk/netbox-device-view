@@ -597,18 +597,27 @@ def _inspect(user, pairs) -> Review:
 
 def _visible(user, pairs, affected, associations) -> bool:
     """Return True when ``user`` can view every object that the review names or composes."""
-    devices = list(affected.listed_device_ids)
+    devices = affected.listed_device_ids
     # The review shows the active revision of each selected type.
-    active = [associations[p.key].revision_id for p in pairs if p.key in associations]
+    active = {associations[p.key].revision_id for p in pairs if p.key in associations}
+    # The page shows these rows from the first read, so a row deleted after that read must fail the check.
+    read = (
+        (Device, devices),
+        (Module, affected.listed_module_ids),
+        (DefinitionRevision, active),
+    )
+    if any(
+        model.objects.filter(pk__in=pks).restrict(user, "view").count() != len(pks)
+        for model, pks in read
+    ):
+        return False
     querysets = (
-        Device.objects.filter(pk__in=devices),
         *(
             model.objects.filter(device__in=devices)
             for model in (Module, ModuleBay, *BINDABLE_MODELS)
         ),
         BindingOverride.objects.filter(_read_overrides(affected)),
         InstancePin.objects.filter(_read_pins(affected)),
-        DefinitionRevision.objects.filter(pk__in=active),
     )
     return all(qs.restrict(user, "view").count() == qs.count() for qs in querysets)
 

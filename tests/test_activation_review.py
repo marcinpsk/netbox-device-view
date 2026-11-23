@@ -773,6 +773,56 @@ class VisibilityTests(ReviewTestCase):
         self.assertNotContains(response, self.revision.digest[:12])
         self.assertNotContains(response, self.revision.get_absolute_url())
 
+    def review_with_a_delete_after_the_read(self, delete):
+        """Open the review; ``delete`` runs after the review reads the affected set and before the check."""
+        snapshot, deleted = review._snapshot, []
+
+        def read_then_delete(pairs):
+            read = snapshot(pairs)
+            if not deleted:
+                deleted.append(pairs)
+                delete()
+            return read
+
+        with mock.patch.object(review, "_snapshot", read_then_delete):
+            response = self.review((self.newer, self.device_type))
+        self.assertTrue(deleted)
+        return response
+
+    def only_view(self, model, constraints):
+        ObjectPermission.objects.filter(
+            name__startswith=f"{model._meta.label_lower} view"
+        ).update(constraints=constraints)
+
+    def test_a_hidden_active_revision_deleted_after_the_read_hides_the_review(self):
+        InstancePin.objects.filter(device=self.sw2).delete()
+        self.only_view(DefinitionRevision, {"pk": self.newer.pk})
+
+        def activate_then_delete():
+            # Another administrator activates the newer revision, then deletes the former one.
+            Association.objects.filter(pk=self.association.pk).update(
+                revision=self.newer
+            )
+            self.revision.delete()
+
+        digest, url = self.revision.digest[:12], self.revision.get_absolute_url()
+        response = self.review_with_a_delete_after_the_read(activate_then_delete)
+
+        self.assertHidden(response)
+        self.assertNotContains(response, digest)
+        self.assertNotContains(response, url)
+
+    def test_a_hidden_device_deleted_after_the_read_hides_the_review(self):
+        self.only_view(Device, {"name": "sw2"})
+
+        self.assertHidden(self.review_with_a_delete_after_the_read(self.device.delete))
+
+    def test_a_hidden_module_deleted_after_the_read_hides_the_review(self):
+        self.only_view(Module, {"pk": 0})
+        module = Module.objects.get(device=self.device)
+
+        self.assertHidden(self.review_with_a_delete_after_the_read(module.delete))
+
     def test_an_activation_after_a_loss_of_visibility_is_refused(self):
         url = review_url((self.newer, self.device_type))
         token = token_of(self.client.get(url))
