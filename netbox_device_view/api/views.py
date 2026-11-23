@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from dcim.models import Device
 from netbox.api.authentication import TokenPermissions
 from netbox.api.viewsets import NetBoxModelViewSet
@@ -12,6 +14,7 @@ from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
 from ..filtersets import DefinitionRevisionFilterSet, DeviceViewFilterSet
+from ..forms import ArtworkSourceImportForm
 from .rendered_layout import compose_rendered_layout
 from .serializers import DefinitionRevisionSerializer, DeviceViewSerializer
 
@@ -59,7 +62,7 @@ class DeviceRenderedLayoutView(RetrieveAPIView):
 
 REVISIONS = models.DefinitionRevision.objects.select_related(
     "definition"
-).prefetch_related("files__blob", "imports")
+).prefetch_related("files__blob", "imports__data_source")
 
 
 class DefinitionRevisionViewSet(NetBoxModelViewSet):
@@ -72,6 +75,46 @@ class DefinitionRevisionViewSet(NetBoxModelViewSet):
 
     def bulk_destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed(request.method)
+
+
+def _error_response(exc: ArtworkError):
+    return Response(
+        {"errors": [vars(issue) for issue in exc.issues]},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _import_response(request, results):
+    visible = {
+        revision.pk: revision
+        for revision in REVISIONS.restrict(request.user, "view").filter(
+            pk__in=[result.revision.pk for result in results]
+        )
+    }
+    context = {"request": request}
+    body = {
+        "revisions": [
+            {
+                "created": result.created,
+                # Without view permission, a known revision shows no earlier provenance.
+                "revision": (
+                    DefinitionRevisionSerializer(
+                        visible[result.revision.pk], context=context
+                    ).data
+                    if result.revision.pk in visible
+                    else {
+                        "key": result.revision.definition.key,
+                        "digest": result.revision.digest,
+                    }
+                ),
+            }
+            for result in results
+        ]
+    }
+    created = any(result.created for result in results)
+    return Response(
+        body, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    )
 
 
 class ArtworkBundleUploadView(APIView):
@@ -95,37 +138,35 @@ class ArtworkBundleUploadView(APIView):
                 )
             results = importing.import_bundle(request.user, upload.name, upload)
         except ArtworkError as exc:
+            return _error_response(exc)
+        return _import_response(request, results)
+
+
+class ArtworkSourceImportView(APIView):
+    """
+    POST /api/plugins/device_view/artwork-source-imports/ {"data_source": <id>, "prefix": "<dir>/"}
+
+    Import the definitions below a prefix of a synchronized Data Source, like the UI.
+    """
+
+    permission_classes = (TokenPermissions,)
+    queryset = models.DefinitionRevision.objects.all()
+
+    def post(self, request):
+        if not isinstance(request.data, Mapping):
             return Response(
-                {"errors": [vars(issue) for issue in exc.issues]},
+                {"non_field_errors": ["Send a JSON object."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        visible = {
-            revision.pk: revision
-            for revision in REVISIONS.restrict(request.user, "view").filter(
-                pk__in=[result.revision.pk for result in results]
+        form = ArtworkSourceImportForm(request.data, user=request.user)
+        if not form.is_valid():
+            return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            results = importing.import_from_source(
+                request.user,
+                form.cleaned_data["data_source"],
+                form.cleaned_data["prefix"],
             )
-        }
-        context = {"request": request}
-        body = {
-            "revisions": [
-                {
-                    "created": result.created,
-                    # Without view permission, a known revision shows no earlier provenance.
-                    "revision": (
-                        DefinitionRevisionSerializer(
-                            visible[result.revision.pk], context=context
-                        ).data
-                        if result.revision.pk in visible
-                        else {
-                            "key": result.revision.definition.key,
-                            "digest": result.revision.digest,
-                        }
-                    ),
-                }
-                for result in results
-            ]
-        }
-        created = any(result.created for result in results)
-        return Response(
-            body, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        )
+        except ArtworkError as exc:
+            return _error_response(exc)
+        return _import_response(request, results)
