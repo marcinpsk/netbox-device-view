@@ -9,7 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import router, transaction
-from django.db.models import Count, OuterRef, Q, Subquery
+from django.db.models import Count, Exists, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -587,11 +587,18 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
                 "revision__manifest"
             )
         )
-        # The newest revision of each definition; the review checks that the user can view it.
+        # The newest revision of each definition, and whether the user can view it.
         newest = {
             revision.definition_id: revision
             for revision in models.DefinitionRevision.objects.filter(
                 definition__in={a.revision.definition_id for a in associations}
+            )
+            .annotate(
+                viewable=Exists(
+                    models.DefinitionRevision.objects.restrict(
+                        request.user, "view"
+                    ).filter(pk=OuterRef("pk"))
+                )
             )
             .order_by("definition_id", "-created", "pk")
             .distinct("definition_id")
@@ -606,6 +613,10 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
                 return redirect(self.get_return_url(request))
             if candidate.pk == association.revision_id:
                 current.append(association.pk)
+            elif not candidate.viewable:
+                # The redirect holds no ID of a revision that the user cannot view.
+                messages.error(request, review.NOT_VIEWABLE)
+                return redirect(self.get_return_url(request))
             else:
                 pairs.append((association.hardware_type, candidate))
         return redirect(

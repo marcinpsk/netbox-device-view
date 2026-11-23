@@ -1029,13 +1029,16 @@ class EntryTests(ReviewTestCase):
 
     def test_an_update_to_a_revision_that_the_user_cannot_view_is_rejected(self):
         self.import_files(NEWER)
-        self.only_view(0)
+        # The user can view the association and its revision, not the newest revision.
+        self.only_view(self.revision.pk)
 
-        response = self.update({"pk": [self.association.pk]}, follow=True)
+        response = self.update({"pk": [self.association.pk]})
 
-        self.assertContains(response, review.NOT_VIEWABLE, status_code=400)
-        self.assertNotContains(
-            response, "already have the newest revision", status_code=400
+        # The redirect holds no ID of the newest revision.
+        self.assertRedirects(response, reverse(LIST_URL), fetch_redirect_response=False)
+        self.assertEqual(
+            [str(m) for m in get_messages(response.wsgi_request)],
+            [str(review.NOT_VIEWABLE)],
         )
 
     def test_an_update_of_an_association_deleted_with_its_revision_asks_again(self):
