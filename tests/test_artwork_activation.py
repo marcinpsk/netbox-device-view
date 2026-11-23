@@ -208,16 +208,23 @@ class ActivationTests(ActivationTestCase):
         self.assertEqual(self.post().status_code, 403)
         self.assertFalse(Association.objects.exists())
 
-    def test_a_revision_or_a_device_type_that_the_user_cannot_view_is_rejected(self):
+    def test_a_device_type_that_the_user_cannot_view_is_rejected(self):
         grant(self.user, Association, "view", "add")
         ObjectPermission.objects.filter(name__startswith="dcim.devicetype").update(
             constraints={"model": "Other"}
         )
-        self.assertEqual(self.review().status_code, 400)
+
+        self.assertContains(self.review(), review.NOT_VIEWABLE, status_code=400)
+        self.assertFalse(Association.objects.exists())
+
+    def test_a_revision_that_the_user_cannot_view_is_rejected(self):
+        grant(self.user, Association, "view", "add")
+        # The user can view the device type.
         ObjectPermission.objects.filter(
             name__startswith="netbox_device_view.definitionrevision"
         ).delete()
-        self.assertEqual(self.review().status_code, 400)
+
+        self.assertContains(self.review(), review.NOT_VIEWABLE, status_code=400)
         self.assertEqual(
             self.client.get(reverse(ACTIVATE_URL, args=[self.revision.pk])).status_code,
             404,
