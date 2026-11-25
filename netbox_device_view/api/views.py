@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import router, transaction
 from django.http import Http404
 from netbox.api.authentication import TokenPermissions
+from netbox.api.serializers import BulkOperationSerializer
 from netbox.api.viewsets import NetBoxModelViewSet
 from rest_framework import status
 from rest_framework.exceptions import MethodNotAllowed
@@ -12,6 +13,7 @@ from rest_framework.generics import RetrieveAPIView
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from utilities.exceptions import AbortRequest
 
 from .. import models
 from ..artwork import importing
@@ -186,9 +188,33 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
         with serializer.instance.locked():
             super().perform_update(serializer)
 
-    def perform_destroy(self, instance):
-        with instance.locked():
-            super().perform_destroy(instance)
+    def get_object_with_snapshot(self):
+        if self.action != "destroy":
+            return super().get_object_with_snapshot()
+        # The read after the locks gives the delete constraints and the change record the current row.
+        [locked] = models.BindingOverride.lock_scopes(
+            [self.get_object()], router.db_for_write(models.BindingOverride)
+        )
+        row = super().get_object_with_snapshot()
+        if row.hardware_type != locked:
+            raise AbortRequest(models.SCOPE_TYPE_CHANGED)
+        return row
+
+    def get_bulk_destroy_queryset(self):
+        # NetBox reads the locked overrides again with the delete constraints.
+        serializer = BulkOperationSerializer(data=self.request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        selected = list(
+            models.BindingOverride.objects.select_related(
+                *models.OVERRIDE_RELATIONS
+            ).filter(pk__in=[o["id"] for o in serializer.validated_data])
+        )
+        models.BindingOverride.lock_scopes(
+            selected, router.db_for_write(models.BindingOverride)
+        )
+        return (
+            super().get_bulk_destroy_queryset().filter(pk__in=[o.pk for o in selected])
+        )
 
 
 def _error_response(exc: ArtworkError):

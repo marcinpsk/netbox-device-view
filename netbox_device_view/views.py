@@ -29,6 +29,7 @@ from netbox.object_actions import (
 )
 from netbox.views import generic
 from netbox.views.generic import BulkImportView, ObjectChangeLogView
+from utilities.exceptions import AbortRequest
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
@@ -614,8 +615,31 @@ class BindingOverrideEditView(generic.ObjectEditView):
         return obj
 
 
-class BindingOverrideDeleteView(generic.ObjectDeleteView):
-    # BindingOverride.delete() takes the type lock.
+class TypeLockedDeleteView(generic.ObjectDeleteView):
+    """Delete a row that its writers change under the lock of its type: read the row again after that lock."""
+
+    def post(self, request, *args, **kwargs):
+        try:
+            with self.queryset.model.writing():
+                return super().post(request, *args, **kwargs)
+        except AbortRequest as exc:
+            messages.error(request, exc.message)
+            return redirect(self.get_return_url(request))
+
+    def get_object(self, **kwargs):
+        if self.request.method != "POST":
+            return super().get_object(**kwargs)
+        # The read after the lock gives the delete constraints and the change record the current row.
+        [locked] = self.queryset.model.lock_scopes(
+            [super().get_object(**kwargs)], router.db_for_write(self.queryset.model)
+        )
+        row = super().get_object(**kwargs)
+        if row.hardware_type != locked:
+            raise AbortRequest(models.SCOPE_TYPE_CHANGED)
+        return row
+
+
+class BindingOverrideDeleteView(TypeLockedDeleteView):
     queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
 
 
@@ -625,9 +649,31 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
     table = tables.BindingOverrideTable
 
     def post(self, request, **kwargs):
-        with models.BindingOverride.writing() as using:
-            lock_bulk_writes(using)
-            return super().post(request, **kwargs)
+        try:
+            with models.BindingOverride.writing() as using:
+                lock_bulk_writes(using)
+                if "_confirm" in request.POST:
+                    self._lock_selection(request, using)
+                return super().post(request, **kwargs)
+        except AbortRequest as exc:
+            messages.error(request, exc.message)
+            return redirect(self.get_return_url(request))
+
+    def _lock_selection(self, request, using):
+        """Lock the scopes of the overrides that BulkDeleteView.post() selects, before it reads them."""
+        selected = models.BindingOverride.objects.select_related(
+            *models.OVERRIDE_RELATIONS
+        )
+        if request.POST.get("_all"):
+            selected = self.filterset(request.GET, selected, request=request).qs
+        else:
+            selected = selected.filter(
+                pk__in=[int(pk) for pk in request.POST.getlist("pk")]
+            )
+        selected = list(selected)
+        models.BindingOverride.lock_scopes(selected, using)
+        # An override that is not in the locked selection is not deleted.
+        self.queryset = self.queryset.filter(pk__in=[o.pk for o in selected])
 
 
 class ImportReceiptMixin:

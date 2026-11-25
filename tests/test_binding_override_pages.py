@@ -13,6 +13,7 @@ from dcim.models import (
     ModuleType,
 )
 from django.urls import reverse
+from django.utils.http import urlencode
 from users.models import ObjectPermission, User
 
 from netbox_device_view.artwork.importing import import_bundle
@@ -416,6 +417,24 @@ class ChangeAndRemoveTests(OverridePageTestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(list(BindingOverride.objects.all()), [kept])
+
+    def test_bulk_delete_of_all_filtered_overrides_removes_only_those(self):
+        grant(self.user, BindingOverride, "delete")
+        self.add((ETH, "eth1"), device=self.device)
+        kept = BindingOverride.objects.create(
+            device=self.sw2,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=[],
+        )
+
+        response = self.client.post(
+            f"{reverse(BULK_DELETE_URL)}?{urlencode({'device_id': self.device.pk})}",
+            {"pk": [kept.pk], "_all": True, "_confirm": True, "confirm": True},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(list(BindingOverride.objects.all()), [self.override, kept])
 
 
 class PermissionTests(OverridePageTestCase):

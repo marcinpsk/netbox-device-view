@@ -505,10 +505,17 @@ class BindingOverride(ChangeLoggedModel):
     def locked(self):
         """Hold the lock of the override's type in the transaction of writing()."""
         with self.writing() as using:
-            hardware_type = self.hardware_type
-            lock_types([hardware_type], using)
-            self._lock_scope(hardware_type)
+            self.lock_scopes([self], using)
             yield
+
+    @classmethod
+    def lock_scopes(cls, overrides, using):
+        """Take the type locks of the overrides, then lock each device or installed module; return the types."""
+        hardware_types = [override.hardware_type for override in overrides]
+        lock_types(hardware_types, using)
+        for override, hardware_type in zip(overrides, hardware_types, strict=True):
+            override._lock_scope(hardware_type)
+        return hardware_types
 
     def _lock_scope(self, hardware_type):
         """Lock the device or the installed module of the scope, and check that it keeps the locked type."""
