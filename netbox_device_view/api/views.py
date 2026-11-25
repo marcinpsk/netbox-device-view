@@ -204,10 +204,11 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
         # NetBox reads the locked overrides again with the delete constraints.
         serializer = BulkOperationSerializer(data=self.request.data, many=True)
         serializer.is_valid(raise_exception=True)
+        # Read through the delete constraints: a busy scope must not tell apart an id that the caller cannot delete.
         selected = list(
-            models.BindingOverride.objects.select_related(
-                *models.OVERRIDE_RELATIONS
-            ).filter(pk__in=[o["id"] for o in serializer.validated_data])
+            self.get_queryset().filter(
+                pk__in=[o["id"] for o in serializer.validated_data]
+            )
         )
         models.BindingOverride.lock_scopes(
             selected, router.db_for_write(models.BindingOverride)

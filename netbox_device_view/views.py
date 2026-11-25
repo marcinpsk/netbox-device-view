@@ -661,13 +661,11 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
 
     def _lock_selection(self, request, using):
         """Lock the scopes of the overrides that BulkDeleteView.post() selects, before it reads them."""
-        selected = models.BindingOverride.objects.select_related(
-            *models.OVERRIDE_RELATIONS
-        )
+        # Read through the delete constraints: a row that the user cannot delete takes no lock.
         if request.POST.get("_all"):
-            selected = self.filterset(request.GET, selected, request=request).qs
+            selected = self.filterset(request.GET, self.queryset, request=request).qs
         else:
-            selected = selected.filter(
+            selected = self.queryset.filter(
                 pk__in=[int(pk) for pk in request.POST.getlist("pk")]
             )
         selected = list(selected)

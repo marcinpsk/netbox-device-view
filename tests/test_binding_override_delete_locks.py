@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 
 from core.models import ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
@@ -19,7 +20,12 @@ from users.models import Token, User
 
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_types
-from netbox_device_view.models import SCOPE_TYPE_CHANGED, Association, BindingOverride
+from netbox_device_view.models import (
+    SCOPE_BUSY,
+    SCOPE_TYPE_CHANGED,
+    Association,
+    BindingOverride,
+)
 
 from .artwork_samples import bundle, definition
 from .permissions import grant
@@ -32,8 +38,8 @@ from .test_binding_override_pages import BULK_DELETE_URL, DELETE_URL
 REPLACEMENT = [{"component": "interface", "name": "eth2"}]
 
 
-class DeleteAfterLockTests(TransactionTestCase):
-    """The delete constraint of the user is on the device status; a writer changes the device while the delete waits."""
+class OverrideDeleteTestCase(TransactionTestCase):
+    """The delete constraint of the user is on the device status."""
 
     def setUp(self):
         media = tempfile.mkdtemp()
@@ -42,7 +48,7 @@ class DeleteAfterLockTests(TransactionTestCase):
         media_override.enable()
         self.addCleanup(media_override.disable)
         admin = User.objects.create_user(username="admin", is_superuser=True)
-        revision = import_bundle(
+        self.revision = revision = import_bundle(
             admin, "sw24.zip", io.BytesIO(bundle(definition("ACME/SW-24", FILES)))
         )[0].revision
         manufacturer = Manufacturer.objects.create(name="ACME", slug="acme")
@@ -59,6 +65,7 @@ class DeleteAfterLockTests(TransactionTestCase):
             role=DeviceRole.objects.create(name="Role", slug="role"),
             status="active",
         )
+        self.site, self.role = self.device.site, self.device.role
         Association.objects.create(device_type=self.device_type, revision=revision)
         self.override = BindingOverride.objects.create(
             device=self.device,
@@ -88,6 +95,10 @@ class DeleteAfterLockTests(TransactionTestCase):
             HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
         )
         return client
+
+
+class DeleteAfterLockTests(OverrideDeleteTestCase):
+    """A writer changes the device or the override while the delete waits for the type lock."""
 
     def wait_until_blocked(self, waiter, holder):
         """Wait until the waiter's backend waits for a lock of the holder's backend."""
@@ -284,3 +295,86 @@ class DeleteAfterLockTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, 412)
         self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
+
+
+class BusyScopeTests(OverrideDeleteTestCase):
+    """Another connection holds the row of a device, as a NetBox edit of the device does."""
+
+    def setUp(self):
+        super().setUp()
+        self.hidden_device = Device.objects.create(
+            name="sw2",
+            device_type=self.device_type,
+            site=self.site,
+            role=self.role,
+            status="offline",
+        )
+        # The constraints of the user exclude this override.
+        self.hidden = BindingOverride.objects.create(
+            device=self.hidden_device,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=REPLACEMENT,
+        )
+
+    @contextmanager
+    def busy(self, device):
+        """Hold the row lock of ``device`` in another connection."""
+        holding, release = threading.Event(), threading.Event()
+
+        def run():
+            try:
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL lock_timeout = '20s'")
+                    list(
+                        Device.objects.select_for_update()
+                        .filter(pk=device.pk)
+                        .values_list("pk")
+                    )
+                    holding.set()
+                    release.wait(30)
+            finally:
+                connection.close()
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        try:
+            self.assertTrue(holding.wait(10), "the device row was not locked")
+            yield
+        finally:
+            release.set()
+            thread.join(30)
+
+    def bulk_delete_data(self, **extra):
+        return {"pk": [self.override.pk], "_confirm": True, "confirm": True, **extra}
+
+    def test_a_page_bulk_delete_of_all_skips_the_busy_scope_of_an_excluded_override(
+        self,
+    ):
+        with self.busy(self.hidden_device):
+            response = self.browser().post(
+                reverse(BULK_DELETE_URL), self.bulk_delete_data(_all=True)
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(
+            str(SCOPE_BUSY), [str(m) for m in get_messages(response.wsgi_request)]
+        )
+        self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
+
+    def test_an_api_bulk_delete_of_an_excluded_override_with_a_busy_scope_is_not_found(
+        self,
+    ):
+        client = self.api()
+        unknown = BindingOverride.objects.order_by("-pk").first().pk + 1000
+
+        with self.busy(self.hidden_device):
+            excluded = client.delete(
+                reverse(API_LIST), [{"id": self.hidden.pk}], format="json"
+            )
+        missing = client.delete(reverse(API_LIST), [{"id": unknown}], format="json")
+
+        self.assertNotIn(str(SCOPE_BUSY), excluded.content.decode())
+        self.assertEqual(excluded.status_code, missing.status_code)
+        self.assertTrue(BindingOverride.objects.filter(pk=self.hidden.pk).exists())
