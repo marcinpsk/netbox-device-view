@@ -315,6 +315,31 @@ class AssociationPageTests(ActivationTestCase):
         self.assertIn("1 dependent objects were found", response.json()["detail"])
         self.assertTrue(DefinitionRevision.objects.filter(pk=self.revision.pk).exists())
 
+    def test_a_type_deleted_after_the_read_of_its_association_gives_404(self):
+        other_type = DeviceType.objects.create(
+            manufacturer=self.manufacturer, model="Other SW-24", slug="other-sw-24"
+        )
+        other = Association.objects.create(
+            device_type=other_type, revision=self.revision
+        )
+        deleted = []
+
+        def delete_the_type(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            # The type and its association go after the first read of the association.
+            if not deleted and 'FROM "netbox_device_view_association"' in sql:
+                deleted.append(sql)
+                DeviceType.objects.filter(pk=other_type.pk).delete()
+            return result
+
+        with connection.execute_wrapper(delete_the_type):
+            response = self.client.post(
+                reverse(DELETE_URL, args=[other.pk]), {"confirm": True}
+            )
+
+        self.assertTrue(deleted)
+        self.assertEqual(response.status_code, 404)
+
     def test_deleting_the_association_returns_the_device_to_its_layout(self):
         DeviceView.objects.create(device_type=self.device_type, grid_template_area=GRID)
         grant(self.user, DeviceView, "view")

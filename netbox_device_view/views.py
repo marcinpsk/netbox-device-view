@@ -705,7 +705,8 @@ class TypeLockedDeleteView(generic.ObjectDeleteView):
 
 
 class AssociationDeleteView(TypeLockedDeleteView):
-    queryset = models.Association.objects.all()
+    # The read of the association also reads its type, so a concurrent type delete gives 404.
+    queryset = models.Association.objects.select_related("device_type", "module_type")
 
 
 class VisualDefinitionListView(generic.ObjectListView):
