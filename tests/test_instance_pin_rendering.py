@@ -13,14 +13,17 @@ from netbox_device_view.models import (
     Association,
     BindingOverride,
     DefinitionRevision,
+    DeviceView,
     InstancePin,
 )
 
 from .activation import activate
 from .artwork_samples import DEVICE_FILES, bundle, definition
 from .module_samples import NM_MANIFEST, NM_SVG
+from .permissions import grant
 from .test_api_artwork import ArtworkApiTestCase
 from .test_api_module_composition import ModuleApiTestCase
+from .test_api_rendered_layout import SVG_YAML
 from .test_artwork_device_view import SVG_NS, TAB_URL, faces, ids
 
 # A revision of the key of the module type of nm1 and nm2, with another colour.
@@ -88,6 +91,57 @@ class DevicePinTests(ArtworkApiTestCase):
         pin.delete()
 
         self.assertEqual(self.revision_id(self.device), self.revision.pk)
+
+    def unpinned_after_the_read(self):
+        """Pin the device to a revision; the next composition reads the pin, then a delete of the pin and of the revision runs."""
+        revision = import_revision(self.admin, "ACME/SW-24", DEVICE_FILES)
+        InstancePin.objects.create(device=self.device, revision=revision)
+        compose = render._Composer.__init__
+
+        def read_then_unpin(composer, *args, **kwargs):
+            compose(composer, *args, **kwargs)
+            InstancePin.objects.filter(revision=revision).delete()
+            for deleted in DefinitionRevision.objects.filter(pk=revision.pk):
+                deleted.delete()
+
+        return patch.object(render._Composer, "__init__", read_then_unpin)
+
+    def test_a_device_whose_only_artwork_is_deleted_after_the_read_shows_its_layout(
+        self,
+    ):
+        grant(self.user, DeviceView, "view")
+        DeviceView.objects.create(device_type=self.device_type, yaml_layout=SVG_YAML)
+        with (
+            self.unpinned_after_the_read(),
+            self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
+        ):
+            content = self.tab()
+        self.assertNotIn("Artwork damaged", content)
+        self.assertEqual(faces(content), [])
+        self.assertIn('class="dv-layout', content)
+        with self.unpinned_after_the_read():
+            member = self.member()
+        self.assertEqual(
+            (member["representation"], member["reason"], member["artwork"]),
+            ("layout", None, None),
+        )
+
+    def test_a_device_whose_only_artwork_is_deleted_after_the_read_is_a_schematic(
+        self,
+    ):
+        with (
+            self.unpinned_after_the_read(),
+            self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
+        ):
+            content = self.tab()
+        self.assertNotIn("Artwork damaged", content)
+        self.assertEqual(len(faces(content)), 1)
+        with self.unpinned_after_the_read():
+            member = self.member()
+        self.assertEqual(
+            (member["representation"], member["artwork"]["revision_id"]),
+            ("schematic", None),
+        )
 
 
 class ModulePinTests(ModuleApiTestCase):

@@ -709,9 +709,14 @@ def _compare(user, affected, selection) -> list["_DeviceChange"]:
 
 def _compose(device, user, revision, selection=None) -> Part:
     """Compose ``device`` as rendering does: its artwork when the state gives it a revision, else its schematic."""
-    if revision is None:
+    part = (
+        None
+        if revision is None
+        else resolve_device(device, revision, user, plain=True, selection=selection)
+    )
+    if part is None:
         return resolve_schematic(device, user, plain=True, selection=selection)
-    return resolve_device(device, revision, user, plain=True, selection=selection)
+    return part
 
 
 @dataclass(frozen=True)

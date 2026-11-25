@@ -384,21 +384,25 @@ class Part:
 
 def resolve_device(
     device, revision, user, view=OVERVIEW, plain=False, selection=None
-) -> Part:
+) -> Part | None:
     """Return the artwork Part of ``device`` with the components and modules that ``user`` can view.
 
     The connectors bind with the overrides of each part and its type. A
     ``plain`` face has no class, links or marks. A ``selection`` gives the
     revisions of the types of a reviewed activation: see active_revisions().
+    Return None when the files of ``revision`` are damaged and the device
+    has no revision now.
     """
     composer = _Composer(device, user, plain, selection)
     try:
         data = _face_data(revision)
     except DamagedBlob as exc:
         data = None
+        # Another activation or a pin delete, then a delete of the revision, can remove its files after the read.
         current = active_revisions([device], selection).get(device.pk)
-        if current is not None and current.pk != revision.pk:
-            # Another activation, then a delete of the revision, removed its files after the read.
+        if current is None:
+            return None
+        if current.pk != revision.pk:
             revision, data = current, _read_faces(current)
         else:
             logger.warning("Artwork of revision %s is damaged: %s", revision.pk, exc)

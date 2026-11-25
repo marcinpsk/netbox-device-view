@@ -36,7 +36,7 @@ from .layout import (
     parse as parse_layout,
 )
 from .layout.renderers.svg import PortCell, drawn_keys
-from .members import resolve_members
+from .members import resolve_members, without_artwork
 
 
 def normalize_grid_template_area(value: str) -> str:
@@ -365,9 +365,10 @@ def _member_panel(obj, member, user, cable_colors):
     device = member.device
     current = device.pk == obj.pk
     if member.revision is not None:
-        return MemberPanel(
-            device, current, part=resolve_device(device, member.revision, user)
-        )
+        part = resolve_device(device, member.revision, user)
+        if part is not None:
+            return MemberPanel(device, current, part=part)
+        member = without_artwork(member, user)
     if member.schematic:
         return MemberPanel(device, current, part=resolve_schematic(device, user))
     device_view = member.device_view

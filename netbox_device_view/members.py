@@ -39,14 +39,8 @@ def resolve_members(device, user) -> list[Member]:
     member shows.
     """
     members = panel_members(device, user)
-    type_ids = {member.device_type_id for member in members}
     revisions = active_revisions(members)
-    views = {
-        view.device_type_id: view
-        for view in DeviceView.objects.restrict(user, "view").filter(
-            device_type__in=type_ids
-        )
-    }
+    views = _views(user, {member.device_type_id for member in members})
     shown = bool(revisions.keys() | views.keys())
     resolved = []
     for member in members:
@@ -61,3 +55,20 @@ def resolve_members(device, user) -> list[Member]:
             )
         )
     return resolved
+
+
+def without_artwork(member, user) -> Member:
+    """Return ``member`` when its device has no artwork now: with the layout of its type that ``user`` can view, else as a schematic."""
+    type_id = member.device.device_type_id
+    device_view = _views(user, {type_id}).get(type_id)
+    return Member(member.device, None, device_view, device_view is None)
+
+
+def _views(user, type_ids) -> dict[int, DeviceView]:
+    """Return {device type pk: DeviceView} of the ``type_ids`` that ``user`` can view."""
+    return {
+        view.device_type_id: view
+        for view in DeviceView.objects.restrict(user, "view").filter(
+            device_type__in=type_ids
+        )
+    }
