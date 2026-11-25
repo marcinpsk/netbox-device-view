@@ -167,7 +167,7 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
         parent=None,
         bay_key="bay-nm",
         face="front",
-        representation=render.OUTLINE,
+        representation=render.SCHEMATIC,
         revision=None,
         bay=None,
         rotate=0,
@@ -179,6 +179,8 @@ def test_artwork_api_page_documents_each_module_field_and_warning_code():
     )
     assert _documented_fields(text, "Module") == set(device_artwork._module(module))
     assert _documented_fields(text, "Warning") == {"code", "message"}
+    bay = render.DrawnBay(None, "bay-nm", None, "front", None, None)
+    assert _documented_fields(text, "Bay") == set(device_artwork._bay(bay))
     section = text.split("### Warning\n", 1)[1].split("###", 1)[0]
     codes = section.split("| Code |", 1)[1]
     documented = {
@@ -205,3 +207,9 @@ def test_module_order_is_documented_by_face_then_by_sibling_bay():
     assert "The list follows face order." in text
     assert "Within each face, it lists parents before their children" in text
     assert "sorts sibling bays by key" in text
+
+
+def test_visibility_documentation_distinguishes_artwork_bays_and_schematic_slots():
+    text = (ROOT / "docs" / "how-it-works.md").read_text()
+    assert "A bay drawn by artwork shows **not recorded**" in text
+    assert "A schematic omits a module bay that you cannot view." in text
