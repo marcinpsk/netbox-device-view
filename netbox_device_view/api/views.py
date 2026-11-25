@@ -158,7 +158,7 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
     def _write(self, handler, request, *args, **kwargs):
         try:
             with models.BindingOverride.writing() as using:
-                if isinstance(request.data, list):
+                if isinstance(request.data, list) and not self._queues_job(request):
                     lock_bulk_writes(using)
                 response = handler(request, *args, **kwargs)
                 # A failed bulk write leaves ChangeDiff rows on main, and NetBox 4.5 its events.
@@ -167,6 +167,12 @@ class BindingOverrideViewSet(NetBoxModelViewSet):
         except _ErrorResponse as rejected:
             return rejected.response
         return response
+
+    def _queues_job(self, request):
+        """Return True when NetBox only queues a background job for this request; the job writes."""
+        # NetBox 4.7 adds background API writes; the job runs the request again without the flag.
+        background_requested = getattr(self, "_background_requested", None)
+        return background_requested is not None and background_requested(request)
 
     def create(self, request, *args, **kwargs):
         return self._write(super().create, request, *args, **kwargs)

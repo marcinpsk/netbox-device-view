@@ -27,6 +27,7 @@ from users.constants import TOKEN_PREFIX
 from users.models import Token, User
 from utilities.request import copy_safe_request
 
+from netbox_device_view.api.views import BindingOverrideViewSet
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_types
 from netbox_device_view.models import (
@@ -388,7 +389,8 @@ class BusyScopeTests(OverrideDeleteTestCase):
         ):
             self.addCleanup(var.set, value)
         SimpleWorker([self.queue], connection=self.queue.connection).work(burst=True)
-        return Job.objects.get()
+        # NetBox 4.7 also queues a job of its own when a device is created.
+        return Job.objects.get(name__startswith="Bulk delete")
 
     def bulk_delete_data(self, **extra):
         return {"pk": [self.override.pk], "_confirm": True, "confirm": True, **extra}
@@ -576,3 +578,31 @@ class BusyScopeTests(OverrideDeleteTestCase):
             str(SCOPE_BUSY), [str(m) for m in get_messages(response.wsgi_request)]
         )
         self.assertEqual(list(BindingOverride.objects.all()), [self.hidden, outside])
+
+    def test_an_api_background_bulk_delete_is_queued_while_another_bulk_write_runs(
+        self,
+    ):
+        if not hasattr(BindingOverrideViewSet, "_background_requested"):
+            self.skipTest("This NetBox version has no background API writes.")
+        # NetBox queues an API job only when a worker serves the default queue.
+        listener = SimpleWorker(
+            [django_rq.get_queue("default")], connection=self.queue.connection
+        )
+        listener.register_birth()
+        self.addCleanup(listener.register_death)
+        # A wait for a lock fails the request, so the test does not hang.
+        self.set_lock_timeout("'5s'")
+        self.addCleanup(self.set_lock_timeout, "DEFAULT")
+        client = self.api()
+
+        with self.held(lambda: lock_bulk_writes("default")):
+            response = client.delete(
+                f"{reverse(API_LIST)}?background=true",
+                [{"id": self.override.pk}],
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 202, response.content[:800])
+        job = self.work()
+        self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
+        self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
