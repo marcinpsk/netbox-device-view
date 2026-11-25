@@ -9,15 +9,27 @@ from dcim.models import (
     Device,
     DeviceType,
     Interface,
+    Module,
     PowerPort,
     VirtualChassis,
 )
+from django.apps import apps
 from django.urls import reverse
 from lxml import etree
 from rest_framework.test import APIClient
 from users.constants import TOKEN_PREFIX
 from users.models import ObjectPermission, Token
 
+from netbox_device_view.artwork.render import (
+    _FOCUS,
+    _MARKS,
+    API,
+    ARTWORK,
+    INSTALLED,
+    NOT_RECORDED,
+    OVERVIEW,
+    SCHEMATIC,
+)
 from netbox_device_view.models import DeviceView, RenderMode
 
 from .permissions import grant
@@ -34,16 +46,148 @@ from .test_artwork_device_view import (
 
 API_URL = "plugins-api:netbox_device_view-api:device_artwork"
 LAYOUT_URL = "plugins-api:netbox_device_view-api:device_rendered_layout"
+# The outer mark class of a connector with one found binding, from its cable status.
+CABLE_CLASSES = {
+    status: f"dv-art-cable-{status}"
+    for status in ("connected", "planned", "decommissioning")
+}
+
+
+def token_client(user):
+    """Return an API client that authenticates as ``user`` with a new token."""
+    token = Token.objects.create(user=user)
+    api = APIClient()
+    api.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
+    )
+    return api
+
+
+def device_members(test, device, user):
+    """Return the members of ``device`` that ``user`` gets from the artwork API."""
+    response = token_client(user).get(reverse(API_URL, kwargs={"pk": device.pk}))
+    test.assertEqual(response.status_code, 200, response.content[:500])
+    return response.json()["members"]
+
+
+def member_artwork(test, device, user):
+    """Return the artwork of the one member of ``device`` that ``user`` gets from the API."""
+    [member] = device_members(test, device, user)
+    return member["artwork"]
+
+
+def api_id(page_id):
+    """Return the API id of an id of the page overview."""
+    return page_id.replace(f"dv-{OVERVIEW}-", f"dv-{API}-", 1)
+
+
+def class_names(element):
+    return set((element.get("class") or "").split())
+
+
+def page_agreement(content):
+    """Return the facts of the page overview that the artwork API also gives, with the ids of the API.
+
+    The facts are the ids of each face, {connector id: (href, mark classes)},
+    {bay element id: (state, module href)} and {module element id: (href, representation)}.
+    """
+    drawn = faces(content)
+    # The page adds the mark and the focus ring filters of its connectors.
+    face_ids = [
+        [api_id(i) for i in ids(face) if _MARKS not in i and _FOCUS not in i]
+        for face in drawn
+    ]
+    connectors, bays, modules = {}, {}, {}
+    part = re.compile(rf"dv-{OVERVIEW}-d\d+(-m\d+)+")
+    for face in drawn:
+        for element in face.iter(etree.Element):
+            ident = element.get("id")
+            if "dv-art-connector" in class_names(element):
+                [child] = [child for child in element if child.get("id")]
+                connectors[api_id(child.get("id"))] = (
+                    element.get("href"),
+                    class_names(element) - {"dv-art-connector"},
+                )
+            elif ident is None:
+                continue
+            elif part.fullmatch(ident):
+                # The first body in the group is the body of the module, before its parts and child modules.
+                body = next(
+                    a
+                    for a in element.iter(f"{{{SVG_NS}}}a")
+                    if "dv-art-module-body" in class_names(a)
+                )
+                kind = SCHEMATIC if "dv-art-schematic" in class_names(body) else ARTWORK
+                bays[api_id(ident)] = (INSTALLED, body.get("href"))
+                modules[api_id(ident)] = (body.get("href"), kind)
+            # A turned parent draws the mark in an upright group of the bay group.
+            elif any(
+                "dv-art-not-recorded" in class_names(e)
+                for e in (element, *element.iterchildren(etree.Element))
+            ):
+                bays[api_id(ident)] = (NOT_RECORDED, None)
+    return face_ids, connectors, bays, modules
+
+
+def artwork_connectors(artwork):
+    """Return the connectors of the device and of each module of an API artwork."""
+    return [
+        *artwork["connectors"],
+        *(c for module in artwork["modules"] for c in module["connectors"]),
+    ]
+
+
+def api_agreement(artwork):
+    """Return the facts of page_agreement() that the artwork API gives."""
+    face_ids = [ids(etree.fromstring(face["svg"])) for face in artwork["faces"]]
+    connectors = {
+        connector["element_id"]: binding_state(connector["bindings"])
+        for connector in artwork_connectors(artwork)
+        if connector["element_id"] is not None
+    }
+    links = {
+        module.pk: module.get_absolute_url()
+        for module in Module.objects.filter(
+            pk__in=[m["module_id"] for m in artwork["modules"]]
+        )
+    }
+    bays = {
+        bay["element_id"]: (bay["state"], links.get(bay["module_id"]))
+        for bay in artwork["bays"]
+        if bay["element_id"] is not None
+    }
+    modules = {
+        module["element_id"]: (links[module["module_id"]], module["representation"])
+        for module in artwork["modules"]
+        if module["element_id"] is not None
+    }
+    return face_ids, connectors, bays, modules
+
+
+def binding_state(bindings):
+    """Return the link and the mark classes that the page shows for ``bindings``."""
+    if not bindings or any(b["status"] != "found" for b in bindings):
+        return None, {"dv-art-unresolved"}
+    if len(bindings) > 1:
+        return None, {"dv-art-several"}
+    [binding] = bindings
+    component = apps.get_model(binding["object_type"]).objects.get(
+        pk=binding["object_id"]
+    )
+    marks = set()
+    if binding["cable_status"] in CABLE_CLASSES:
+        marks.add(CABLE_CLASSES[binding["cable_status"]])
+    elif binding["marked_connected"]:
+        marks.add("dv-art-marked")
+    if binding["enabled"] is False:
+        marks.add("dv-art-disabled")
+    return component.get_absolute_url(), marks
 
 
 class ArtworkApiTestCase(ArtworkTestCase):
     def setUp(self):
         super().setUp()
-        token = Token.objects.create(user=self.user)
-        self.api = APIClient()
-        self.api.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
-        )
+        self.api = token_client(self.user)
 
     def get(self, device=None, url=API_URL, status=200):
         response = self.api.get(reverse(url, kwargs={"pk": (device or self.device).pk}))
