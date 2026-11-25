@@ -42,26 +42,34 @@ def resolve_members(device, user) -> list[Member]:
     revisions = active_revisions(members)
     views = _views(user, {member.device_type_id for member in members})
     shown = bool(revisions.keys() | views.keys())
-    resolved = []
-    for member in members:
-        revision = revisions.get(member.pk)
-        device_view = None if revision else views.get(member.device_type_id)
-        resolved.append(
-            Member(
-                member,
-                revision,
-                device_view,
-                shown and not revision and not device_view,
-            )
+    return [
+        _member(
+            member,
+            revisions.get(member.pk),
+            views.get(member.device_type_id),
+            shown,
         )
-    return resolved
+        for member in members
+    ]
 
 
-def without_artwork(member, user) -> Member:
-    """Return ``member`` when its device has no artwork now: with the layout of its type that ``user`` can view, else as a schematic."""
+def without_artwork(member, members, user) -> Member:
+    """Return ``member`` of the resolved ``members`` as resolve_members() gives it when its device has no artwork now."""
     type_id = member.device.device_type_id
-    device_view = _views(user, {type_id}).get(type_id)
-    return Member(member.device, None, device_view, device_view is None)
+    shown = any(
+        other.revision is not None or other.device_view is not None
+        for other in members
+        if other is not member
+    )
+    return _member(member.device, None, _views(user, {type_id}).get(type_id), shown)
+
+
+def _member(device, revision, device_view, shown) -> Member:
+    """Return the Member of ``device``; ``shown`` is True when a visible member has artwork or a DeviceView."""
+    device_view = None if revision else device_view
+    return Member(
+        device, revision, device_view, shown and not revision and not device_view
+    )
 
 
 def _views(user, type_ids) -> dict[int, DeviceView]:

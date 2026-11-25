@@ -33,6 +33,7 @@ _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_co
 
 def compose_device_artwork(device: Device, user) -> dict:
     """Return the artwork envelope of ``device`` with only the objects that ``user`` can view."""
+    members = resolve_members(device, user)
     return {
         "schema_version": SCHEMA_VERSION,
         "device_id": device.pk,
@@ -42,17 +43,17 @@ def compose_device_artwork(device: Device, user) -> dict:
                 "label": str(member.device),
                 "position": member.device.vc_position,
                 "current": member.device.pk == device.pk,
-                **_representation(member, user),
+                **_representation(member, members, user),
             }
-            for member in resolve_members(device, user)
+            for member in members
         ],
     }
 
 
-def _representation(member, user) -> dict:
+def _representation(member, members, user) -> dict:
     device = member.device
     try:
-        member, part = _drawing(member, user)
+        member, part = _drawing(member, members, user)
     except Exception:
         # As for the panels: one member that fails does not fail the others.
         logger.exception("Unexpected error drawing the artwork of device %s", device.pk)
@@ -78,7 +79,7 @@ def _representation(member, user) -> dict:
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
 
 
-def _drawing(member, user):
+def _drawing(member, members, user):
     """Return ``member`` and its artwork or schematic Part, or None when it has neither.
 
     A member whose artwork is deleted after the resolution resolves again without it.
@@ -89,7 +90,7 @@ def _drawing(member, user):
         )
         if part is not None:
             return member, part
-        member = without_artwork(member, user)
+        member = without_artwork(member, members, user)
     if member.schematic:
         return member, resolve_schematic(member.device, user, view=API, plain=True)
     return member, None

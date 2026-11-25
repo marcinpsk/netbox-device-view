@@ -3,6 +3,7 @@
 import io
 from unittest.mock import patch
 
+from dcim.models import Device, VirtualChassis
 from django.core.files.storage import default_storage
 from django.urls import reverse
 from lxml import etree
@@ -126,7 +127,7 @@ class DevicePinTests(ArtworkApiTestCase):
             ("layout", None, None),
         )
 
-    def test_a_device_whose_only_artwork_is_deleted_after_the_read_is_a_schematic(
+    def test_a_lone_device_whose_only_artwork_is_deleted_after_the_read_has_no_layout(
         self,
     ):
         with (
@@ -134,14 +135,33 @@ class DevicePinTests(ArtworkApiTestCase):
             self.assertNoLogs("netbox_device_view.artwork.render", "WARNING"),
         ):
             content = self.tab()
+        # The tab already renders, so it shows a schematic for this request.
         self.assertNotIn("Artwork damaged", content)
         self.assertEqual(len(faces(content)), 1)
         with self.unpinned_after_the_read():
             member = self.member()
         self.assertEqual(
+            (member["representation"], member["reason"], member["artwork"]),
+            ("unavailable", "no_layout", None),
+        )
+
+    def test_a_member_whose_only_artwork_is_deleted_after_the_read_is_a_schematic(
+        self,
+    ):
+        chassis = VirtualChassis.objects.create(name="stack")
+        for position, device in enumerate((self.device, self.sw2), start=1):
+            Device.objects.filter(pk=device.pk).update(
+                virtual_chassis=chassis, vc_position=position
+            )
+        InstancePin.objects.create(device=self.sw2, revision=self.revision)
+        with self.unpinned_after_the_read():
+            members = {m["device_id"]: m for m in self.get()["members"]}
+        member = members[self.device.pk]
+        self.assertEqual(
             (member["representation"], member["artwork"]["revision_id"]),
             ("schematic", None),
         )
+        self.assertEqual(members[self.sw2.pk]["representation"], "artwork")
 
 
 class ModulePinTests(ModuleApiTestCase):
