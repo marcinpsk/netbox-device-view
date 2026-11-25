@@ -3,7 +3,7 @@
 from core.models import ObjectChange, ObjectType
 from dcim.models import Interface, Module, ModuleBay, ModuleType
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.urls import reverse
 from users.models import ObjectPermission
 
@@ -31,6 +31,31 @@ BULK_DELETE_URL = "plugins:netbox_device_view:instancepin_bulk_delete"
 CHANGELOG_URL = "plugins:netbox_device_view:instancepin_changelog"
 REVISION_DELETE_URL = "plugins:netbox_device_view:definitionrevision_delete"
 ONE_INSTANCE = "Select one device or one installed module."
+
+
+def lock_and_read_order(request):
+    """Run ``request``; return the indexes of the device row lock and of the last constrained pin read."""
+    statements = []
+
+    def record(execute, sql, params, many, context):
+        statements.append(sql)
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(record):
+        response = request()
+    device_lock = next(
+        i
+        for i, sql in enumerate(statements)
+        if sql.startswith('SELECT "dcim_device"') and "NOWAIT" in sql
+    )
+    pin_read = max(
+        i
+        for i, sql in enumerate(statements)
+        if sql.startswith("SELECT")
+        and '"netbox_device_view_instancepin"' in sql
+        and '"dcim_device"."status"' in sql
+    )
+    return response, device_lock, pin_read
 
 
 class PinPageTestCase(ActivationTestCase):
@@ -262,6 +287,21 @@ class ChangeAndRemoveTests(PinPageTestCase):
         self.assertFalse(InstancePin.objects.exists())
         self.assertTrue(self.has_r1())
         self.assertEqual(self.changes().last().action, "delete")
+
+    def test_a_delete_locks_the_device_before_it_checks_a_device_constraint(self):
+        grant(
+            self.user, InstancePin, "delete", constraints={"device__status": "active"}
+        )
+
+        response, device_lock, pin_read = lock_and_read_order(
+            lambda: self.client.post(
+                reverse(DELETE_URL, args=[self.pin.pk]), {"confirm": True}
+            )
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(InstancePin.objects.exists())
+        self.assertLess(device_lock, pin_read)
 
     def test_bulk_delete_removes_the_selected_pins(self):
         grant(self.user, InstancePin, "delete")

@@ -10,6 +10,7 @@ from netbox_device_view.models import DefinitionRevision, InstancePin
 from .artwork_samples import DEVICE_FILES, MODULE_FILES
 from .permissions import grant
 from .test_api_artwork import ArtworkApiTestCase
+from .test_instance_pin_pages import lock_and_read_order
 from .test_instance_pin_rendering import import_revision
 
 LIST = "plugins-api:netbox_device_view-api:instancepin-list"
@@ -326,3 +327,31 @@ class ReadTests(PinApiTestCase):
 
     def test_the_revision_list_filters_by_kind(self):
         self.assertEqual(self.ids(REVISIONS, kind="module"), [self.module_revision.pk])
+
+
+class DeleteLockOrderTests(PinApiTestCase):
+    def setUp(self):
+        super().setUp()
+        grant(
+            self.user, InstancePin, "delete", constraints={"device__status": "active"}
+        )
+
+    def test_a_delete_locks_the_device_before_it_checks_a_device_constraint(self):
+        pin = self.stored(device=self.device)
+
+        response, device_lock, pin_read = lock_and_read_order(
+            lambda: self.api.delete(reverse(DETAIL, args=[pin.pk]))
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertLess(device_lock, pin_read)
+
+    def test_a_bulk_delete_locks_the_devices_before_it_checks_a_device_constraint(self):
+        pin = self.stored(device=self.device)
+
+        response, device_lock, pin_read = lock_and_read_order(
+            lambda: self.api.delete(reverse(LIST), [{"id": pin.pk}], format="json")
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertLess(device_lock, pin_read)
