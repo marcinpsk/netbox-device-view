@@ -4,29 +4,29 @@
 	href="{% static 'netbox_device_view/css/device_view.css' %}"
 />
 <script src="{% static 'netbox_device_view/js/device_view_details.js' %}" defer></script>
-{% if artwork_parts %}
+{% if uses_artwork %}
 <link
 	rel="stylesheet"
 	href="{% static 'netbox_device_view/css/device_view_artwork.css' %}"
 />
 <script src="{% static 'netbox_device_view/js/device_view_artwork.js' %}" defer></script>
-{% elif use_svg %}
+{% endif %}
+{% if uses_svg %}
 <link
 	rel="stylesheet"
 	href="{% static 'netbox_device_view/css/device_view_svg.css' %}"
 />
-{% else %}
+{% endif %}
+{% if uses_css %}
 <style>
 	{% autoescape off %}
-	{% for id, ddv in dv.items %}
-	{{ ddv }}
-	{% endfor %}
-	{% endautoescape %}
-	{% if height %}
+	{% for panel in device_panels %}{% if panel.css is not None %}
+	{{ panel.css }}
+	{% if panel.height %}
 
-	.deviceview {
-		height:{{ height }}px;
-	}
+	{{ panel.height_selector }} { height:{{ panel.height }}px; }
 	{% endif %}
+	{% endif %}{% endfor %}
+	{% endautoescape %}
 </style>
 {% endif %}

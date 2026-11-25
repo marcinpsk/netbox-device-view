@@ -1,8 +1,7 @@
-{# The active artwork of each device: utils.artwork_parts() gives the parts, artwork.render the faces. #}
+{# The artwork or the schematic of one member: ``panel`` is a utils.MemberPanel, ``part`` its artwork.render.Part. #}
 {% load i18n %}
-{% for part in artwork_parts %}
-<section class="dv-art-part{% if artwork_parts|length > 1 and part.device.pk == current_device %} active-device{% endif %}" aria-label="{{ part.device }}" data-dv-assembly>
-	{% if artwork_parts|length > 1 %}<p class="text-muted small mb-1">{{ part.device }}</p>{% endif %}
+<section class="dv-art-part{% if chassis and panel.current %} active-device{% endif %}" aria-label="{{ part.device }}" data-dv-assembly>
+	{% if chassis %}{% include 'netbox_device_view/inc/member_label.html' %}{% endif %}
 	{% if part.damaged %}
 	<div class="alert alert-warning mb-0" role="alert">
 		<strong>{% trans "Artwork damaged" %}</strong>.
@@ -45,8 +44,3 @@
 	{% include 'netbox_device_view/inc/artwork_faces.html' %}
 	{% endif %}
 </section>
-{% endfor %}
-{# Each mark has a pattern, so no fact depends on colour alone; each connector title names every fact. #}
-<ul class="dv-art-legend list-unstyled small text-muted mb-0" aria-label="{% trans 'Connector marks' %}">
-	{% for label, swatch in artwork_legend %}<li>{{ swatch }} {{ label }}</li>{% endfor %}
-</ul>

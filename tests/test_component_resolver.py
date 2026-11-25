@@ -672,15 +672,20 @@ class VirtualChassisTests(ResolverTestBase):
         self.assertEqual(
             (body["available"], body["reason"]), (False, "svg_layout_required")
         )
+        tab = self._tab()
         panels = dict(
             re.findall(
                 r'id="dv-svg-wrapper-(\d+)"\s+data-device="\d+">(.*?)</div>',
-                self._tab(),
+                tab,
                 re.DOTALL,
             )
         )
+        # The page draws each member in its own mode: member 2 has only a CSS layout.
+        self.assertEqual(list(panels), ["1"])
         self.assertIn("<svg", panels["1"])
-        self.assertEqual(panels["2"].strip(), "")
+        grid = re.search(r'class="deviceview area d2"\s*>(.*?)</div>', tab, re.DOTALL)
+        self.assertIsNotNone(grid, tab)
+        self.assertIn('aria-label="Gi1: not connected"', grid.group(1))
 
 
 class TypedLookupTests(ResolverTestBase):

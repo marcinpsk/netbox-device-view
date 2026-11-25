@@ -119,6 +119,8 @@ def render(
     layout: NormalizedLayout,
     variant_name: str | None = None,
     cells: Mapping[str | None, Mapping[str, PortCell]] | None = None,
+    *,
+    id_prefix: str,
 ) -> str:
     """
     Render a NormalizedLayout to one or more SVG strings.
@@ -137,6 +139,10 @@ def render(
     cells:
         ``{"front" | "rear": {key: PortCell}}``; each view takes the cells of
         its ``drawn_face()``.
+    id_prefix:
+        The prefix of the panel on the page. Each view takes the ids
+        ``{id_prefix}-{drawn_face()}-…``, so two panels on one page do not
+        share an id.
 
     Returns
     -------
@@ -151,6 +157,7 @@ def render(
             data_face=face,
             variant_name=variant_name,
             cells=cells.get(drawn_face(face, view)),
+            id_prefix=f"{id_prefix}-{drawn_face(face, view)}",
         )
         for face, view in face_views(layout)
     )
@@ -271,6 +278,8 @@ def render_view_svg(
     layout: NormalizedLayout,
     face: str = "front",
     variant_name: str | None = None,
+    *,
+    id_prefix: str,
 ) -> str:
     """
     Render only one face of a layout to SVG.
@@ -286,13 +295,17 @@ def render_view_svg(
         ``"front"`` or ``"rear"``.
     variant_name:
         Optional module variant to activate.
+    id_prefix:
+        The prefix of the ids of the view, unique on the page.
     """
     view = layout.views.get(face)
     if view is None:
         view = layout.front if face == "front" else layout.rear
     if view is None:
         return ""
-    return _render_view(view, data_face=face, variant_name=variant_name)
+    return _render_view(
+        view, data_face=face, variant_name=variant_name, id_prefix=id_prefix
+    )
 
 
 # ── Coordinate helpers ─────────────────────────────────────────────────────────
@@ -335,8 +348,11 @@ def _render_view(
     data_face: str | None,
     variant_name: str | None,
     cells: Mapping[str, PortCell] | None = None,
+    *,
+    id_prefix: str,
 ) -> str:
-    """Render a single LayoutView to an ``<svg>`` element string."""
+    """Render a single LayoutView to an ``<svg>`` element string; each id starts with ``id_prefix``."""
+    pattern_id = html.escape(f"{id_prefix}-nocolor", quote=True)
     canvas = view.canvas
     width, height = svg_dims(canvas)
     bg = canvas.background or COLOUR_BACKGROUND
@@ -352,10 +368,15 @@ def _render_view(
             f' width="{width}" height="{height}"'
             f' viewBox="0 0 {width} {height}"'
             f"{face_attr}"
+            # The .nocolor rule of device_view_svg.css reads the pattern of this view from the property.
+            f' style="--dv-nocolor-fill: url(#{pattern_id})"'
             f' role="img" aria-label="Device layout{" — " + data_face if data_face else ""}">'
         ),
         "  <defs>",
-        '    <pattern id="dv-nocolor-pattern" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(-45)">',
+        (
+            f'    <pattern id="{pattern_id}" patternUnits="userSpaceOnUse"'
+            ' width="10" height="10" patternTransform="rotate(-45)">'
+        ),
         '      <rect width="5" height="10" fill="grey"/>',
         '      <rect x="5" width="5" height="10" fill="black"/>',
         "    </pattern>",
