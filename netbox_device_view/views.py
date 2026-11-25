@@ -9,7 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import router, transaction
-from django.db.models import Count, Exists, OuterRef, Q, Subquery
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -588,22 +588,9 @@ class AssociationReviewUpdateView(ActivationPermissionMixin, GetReturnURLMixin, 
             )
         )
         # The newest revision of each definition, and whether the user can view it.
-        newest = {
-            revision.definition_id: revision
-            for revision in models.DefinitionRevision.objects.filter(
-                definition__in={a.revision.definition_id for a in associations}
-            )
-            .annotate(
-                viewable=Exists(
-                    models.DefinitionRevision.objects.restrict(
-                        request.user, "view"
-                    ).filter(pk=OuterRef("pk"))
-                )
-            )
-            .order_by("definition_id", "-created", "pk")
-            .distinct("definition_id")
-            .only("pk", "definition_id")
-        }
+        newest = models.newest_revisions(
+            {a.revision.definition_id for a in associations}, request.user
+        )
         pairs, current = [], []
         for association in associations:
             candidate = newest.get(association.revision.definition_id)
