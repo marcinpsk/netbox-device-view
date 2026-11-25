@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import router, transaction
 from django.http import Http404
 from netbox.api.authentication import TokenPermissions
+from netbox.api.serializers import BulkOperationSerializer
 from netbox.api.viewsets import NetBoxModelViewSet
 from rest_framework import status
 from rest_framework.exceptions import MethodNotAllowed
@@ -12,11 +13,14 @@ from rest_framework.generics import RetrieveAPIView
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from utilities.exceptions import AbortRequest
 
 from .. import models
 from ..artwork import importing
 from ..artwork.errors import ArtworkError, Issue
+from ..artwork.type_lock import lock_bulk_writes
 from ..filtersets import (
+    BindingOverrideFilterSet,
     DefinitionRevisionFilterSet,
     DeviceViewFilterSet,
     VisualDefinitionFilterSet,
@@ -25,6 +29,7 @@ from ..forms import ArtworkSourceImportForm
 from .device_artwork import compose_device_artwork
 from .rendered_layout import compose_rendered_layout
 from .serializers import (
+    BindingOverrideSerializer,
     DefinitionRevisionSerializer,
     DeviceViewSerializer,
     VisualDefinitionSerializer,
@@ -133,6 +138,90 @@ class VisualDefinitionViewSet(NetBoxModelViewSet):
         with transaction.atomic(using=router.db_for_write(models.VisualDefinition)):
             models.VisualDefinition.lock(update_data)
             return super().perform_bulk_update(objects, update_data, partial)
+
+
+class _ErrorResponse(Exception):
+    """An error response of a write, raised so that BindingOverride.writing() rolls back."""
+
+    def __init__(self, response):
+        super().__init__(response.status_code)
+        self.response = response
+
+
+class BindingOverrideViewSet(NetBoxModelViewSet):
+    """Each write runs in BindingOverride.writing() and takes the locks of the override writer."""
+
+    queryset = models.BindingOverride.objects.select_related(*models.OVERRIDE_RELATIONS)
+    serializer_class = BindingOverrideSerializer
+    filterset_class = BindingOverrideFilterSet
+
+    def _write(self, handler, request, *args, **kwargs):
+        try:
+            with models.BindingOverride.writing() as using:
+                if isinstance(request.data, list) and not self._queues_job(request):
+                    lock_bulk_writes(using)
+                response = handler(request, *args, **kwargs)
+                # A failed bulk write leaves ChangeDiff rows on main, and NetBox 4.5 its events.
+                if response.status_code >= status.HTTP_400_BAD_REQUEST:
+                    raise _ErrorResponse(response)
+        except _ErrorResponse as rejected:
+            return rejected.response
+        return response
+
+    def _queues_job(self, request):
+        """Return True when NetBox only queues a background job for this request; the job writes."""
+        # NetBox 4.7 adds background API writes; the job runs the request again without the flag.
+        background_requested = getattr(self, "_background_requested", None)
+        return background_requested is not None and background_requested(request)
+
+    def create(self, request, *args, **kwargs):
+        return self._write(super().create, request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        return self._write(super().update, request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        return self._write(super().destroy, request, *args, **kwargs)
+
+    def bulk_update(self, request, *args, **kwargs):
+        return self._write(super().bulk_update, request, *args, **kwargs)
+
+    def bulk_destroy(self, request, *args, **kwargs):
+        return self._write(super().bulk_destroy, request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        # The type lock comes before the row lock that NetBox takes for If-Match.
+        with serializer.instance.locked():
+            super().perform_update(serializer)
+
+    def get_object_with_snapshot(self):
+        if self.action != "destroy":
+            return super().get_object_with_snapshot()
+        # The read after the locks gives the delete constraints and the change record the current row.
+        [locked] = models.BindingOverride.lock_scopes(
+            [self.get_object()], router.db_for_write(models.BindingOverride)
+        )
+        row = super().get_object_with_snapshot()
+        if row.hardware_type != locked:
+            raise AbortRequest(models.SCOPE_TYPE_CHANGED)
+        return row
+
+    def get_bulk_destroy_queryset(self):
+        # NetBox reads the locked overrides again with the delete constraints.
+        serializer = BulkOperationSerializer(data=self.request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        # Read through the delete constraints: a busy scope must not tell apart an id that the caller cannot delete.
+        selected = list(
+            self.get_queryset().filter(
+                pk__in=[o["id"] for o in serializer.validated_data]
+            )
+        )
+        models.BindingOverride.lock_scopes(
+            selected, router.db_for_write(models.BindingOverride)
+        )
+        return (
+            super().get_bulk_destroy_queryset().filter(pk__in=[o.pk for o in selected])
+        )
 
 
 def _error_response(exc: ArtworkError):
