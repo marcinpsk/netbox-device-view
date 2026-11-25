@@ -233,6 +233,38 @@ class ModulePinTests(ModuleApiTestCase):
             ("artwork", inventory.revisions["acme/psu-1"].pk, []),
         )
 
+    def test_a_damaged_fallback_does_not_hide_the_new_revision_of_another_module(
+        self,
+    ):
+        inventory = self.inventory
+        damaged = inventory.revisions["acme/nm-2x"]
+        InstancePin.objects.create(module=inventory.nm1, revision=self.variant)
+        InstancePin.objects.create(module=inventory.psu, revision=damaged)
+        default_storage.delete(damaged.files.get(path="installed.svg").blob.name)
+        compose = render._Composer.__init__
+
+        def read_then_unpin(composer, *args, **kwargs):
+            # nm1 falls back to the damaged revision, and the PSU moves from it to the artwork of its type.
+            compose(composer, *args, **kwargs)
+            InstancePin.objects.all().delete()
+            for revision in DefinitionRevision.objects.filter(pk=self.variant.pk):
+                revision.delete()
+
+        with (
+            patch.object(render._Composer, "__init__", read_then_unpin),
+            self.assertLogs("netbox_device_view.artwork.render", "WARNING") as logs,
+        ):
+            modules = self.modules()
+        self.assertEqual(len(logs.records), 1)
+        nm1, psu = modules[inventory.nm1.pk], modules[inventory.psu.pk]
+        self.assertEqual(
+            [warning["code"] for warning in nm1["warnings"]], ["damaged_artwork"]
+        )
+        self.assertEqual(
+            (psu["representation"], psu["artwork"]["revision_id"], psu["warnings"]),
+            ("artwork", inventory.revisions["acme/psu-1"].pk, []),
+        )
+
     def test_a_pin_of_another_definition_binds_with_the_overrides_of_that_key(self):
         inventory = self.inventory
         psu = inventory.revisions["acme/psu-1"]

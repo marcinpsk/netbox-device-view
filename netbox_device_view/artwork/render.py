@@ -1017,26 +1017,27 @@ class _Composer:
 
     def current_revision(self, module, revision):
         """Return ``revision``, or the revision that ``module`` has now (None when it has none) when the files of ``revision`` are damaged."""
-        if revision.pk in self.faces:
-            return revision
-        try:
-            self.faces[revision.pk] = _face_data(revision)
-        except DamagedBlob as exc:
-            self.faces[revision.pk] = None
-            # Another activation or a pin delete, then a delete of the revision, can remove its files after the read.
-            sharing = [
-                m
-                for m in {module, *self.installed.values()}
-                if self.revisions.get(m.pk) == revision
-            ]
-            current = active_revisions(sharing, self.selection)
-            for shared in sharing:
-                self.revisions[shared.pk] = current.get(shared.pk)
-            if revision in current.values():
-                logger.warning(
-                    "Artwork of revision %s is damaged: %s", revision.pk, exc
-                )
-        return self.revisions[module.pk]
+        # The revision that replaces a damaged one is read here too, so its damage also refreshes the modules that share it.
+        while revision is not None and revision.pk not in self.faces:
+            try:
+                self.faces[revision.pk] = _face_data(revision)
+            except DamagedBlob as exc:
+                self.faces[revision.pk] = None
+                # Another activation or a pin delete, then a delete of the revision, can remove its files after the read.
+                sharing = [
+                    m
+                    for m in {module, *self.installed.values()}
+                    if self.revisions.get(m.pk) == revision
+                ]
+                current = active_revisions(sharing, self.selection)
+                for shared in sharing:
+                    self.revisions[shared.pk] = current.get(shared.pk)
+                if revision in current.values():
+                    logger.warning(
+                        "Artwork of revision %s is damaged: %s", revision.pk, exc
+                    )
+            revision = self.revisions[module.pk]
+        return revision
 
     def face_data(self, revision) -> dict[str, bytes] | None:
         if revision.pk not in self.faces:
