@@ -482,6 +482,30 @@ class BusyScopeTests(OverrideDeleteTestCase):
         self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
         self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
 
+    def test_the_confirmation_page_of_a_bulk_delete_takes_no_locks(self):
+        # A wait for a lock fails the request, so the test does not hang.
+        self.set_lock_timeout("'5s'")
+        self.addCleanup(self.set_lock_timeout, "DEFAULT")
+
+        def hold():
+            lock_bulk_writes("default")
+            lock_types([self.device_type], "default")
+            list(
+                Device.objects.select_for_update()
+                .filter(pk=self.device.pk)
+                .values_list("pk")
+            )
+
+        with self.held(hold):
+            response = self.browser().post(
+                reverse(BULK_DELETE_URL), {"pk": [self.override.pk]}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(BindingOverride.objects.all()), [self.override, self.hidden]
+        )
+
     def test_a_confirmed_bulk_delete_with_an_invalid_field_takes_the_scope_locks(self):
         client = self.browser()
         result = {}
