@@ -654,8 +654,8 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
     def post(self, request, **kwargs):
         try:
             with models.BindingOverride.writing() as using:
-                lock_bulk_writes(using)
                 if self._deletes_now(request):
+                    lock_bulk_writes(using)
                     self._lock_selection(request, using)
                 return super().post(request, **kwargs)
         except AbortRequest as exc:
@@ -667,13 +667,15 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
             return redirect(self.get_return_url(request))
 
     def _deletes_now(self, request):
-        """Return True when BulkDeleteView.post() deletes in this request, not in a background job."""
+        """Return True when BulkDeleteView.post() can delete in this request, not in a background job."""
         if "_confirm" not in request.POST:
             return False
-        form = BulkDeleteForm(self.queryset.model, request.POST)
-        return form.is_valid() and (
-            is_background_request(request) or not form.cleaned_data["background_job"]
+        # Clean only background_job: NetBox validates its own form after the locks.
+        field = BulkDeleteForm.base_fields["background_job"]
+        background = field.clean(
+            field.widget.value_from_datadict(request.POST, None, "background_job")
         )
+        return is_background_request(request) or not background
 
     def _lock_selection(self, request, using):
         """Lock the scopes of the overrides that BulkDeleteView.post() selects, before it reads them."""

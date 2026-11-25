@@ -12,9 +12,9 @@ import django_rq
 from core.choices import JobStatusChoices
 from core.models import Job, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+from django.conf import settings
 from django.contrib.messages import get_messages
 from django.db import connection, transaction
-from django.conf import settings
 from django.test import Client, RequestFactory, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -27,7 +27,7 @@ from users.models import Token, User
 from utilities.request import copy_safe_request
 
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.artwork.type_lock import lock_types
+from netbox_device_view.artwork.type_lock import lock_bulk_writes, lock_types
 from netbox_device_view.models import (
     SCOPE_BUSY,
     SCOPE_TYPE_CHANGED,
@@ -105,10 +105,6 @@ class OverrideDeleteTestCase(TransactionTestCase):
         )
         return client
 
-
-class DeleteAfterLockTests(OverrideDeleteTestCase):
-    """A writer changes the device or the override while the delete waits for the type lock."""
-
     def wait_until_blocked(self, waiter, holder):
         """Wait until the waiter's backend waits for a lock of the holder's backend."""
         deadline = time.monotonic() + 10
@@ -121,6 +117,10 @@ class DeleteAfterLockTests(OverrideDeleteTestCase):
                 f"the {waiter} did not wait for the {holder}",
             )
             time.sleep(0.05)
+
+
+class DeleteAfterLockTests(OverrideDeleteTestCase):
+    """A writer changes the device or the override while the delete waits for the type lock."""
 
     def delete_while_locked(self, request, change):
         """Send ``request`` while a writer holds the type lock; ``change`` commits with that writer."""
@@ -338,8 +338,8 @@ class BusyScopeTests(OverrideDeleteTestCase):
         self.addCleanup(self.queue.delete, delete_jobs=True)
 
     @contextmanager
-    def busy(self, device):
-        """Hold the row lock of ``device`` in another connection."""
+    def held(self, lock):
+        """Run ``lock`` in a transaction of another connection, and hold that transaction."""
         holding, release = threading.Event(), threading.Event()
 
         def run():
@@ -347,11 +347,8 @@ class BusyScopeTests(OverrideDeleteTestCase):
                 with transaction.atomic():
                     with connection.cursor() as cursor:
                         cursor.execute("SET LOCAL lock_timeout = '20s'")
-                    list(
-                        Device.objects.select_for_update()
-                        .filter(pk=device.pk)
-                        .values_list("pk")
-                    )
+                    self.pids["holder"] = backend_pid()
+                    lock()
                     holding.set()
                     release.wait(30)
             finally:
@@ -360,11 +357,26 @@ class BusyScopeTests(OverrideDeleteTestCase):
         thread = threading.Thread(target=run)
         thread.start()
         try:
-            self.assertTrue(holding.wait(10), "the device row was not locked")
+            self.assertTrue(holding.wait(10), "the other connection took no lock")
             yield
         finally:
             release.set()
             thread.join(30)
+
+    @staticmethod
+    def set_lock_timeout(value):
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET lock_timeout = {value}")
+
+    def busy(self, device):
+        """Hold the row lock of ``device`` in another connection."""
+        return self.held(
+            lambda: list(
+                Device.objects.select_for_update()
+                .filter(pk=device.pk)
+                .values_list("pk")
+            )
+        )
 
     def work(self):
         # NetBox 4.5 leaves the request context of a failed view job in this thread.
@@ -443,4 +455,53 @@ class BusyScopeTests(OverrideDeleteTestCase):
 
         self.assertEqual(job.status, JobStatusChoices.STATUS_FAILED, job.error)
         self.assertIn(str(SCOPE_BUSY), [entry["message"] for entry in job.log_entries])
+        self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
+
+    def test_a_background_bulk_delete_is_queued_while_another_bulk_write_runs(self):
+        # A wait for a lock fails the request, so the test does not hang.
+        self.set_lock_timeout("'5s'")
+        self.addCleanup(self.set_lock_timeout, "DEFAULT")
+
+        def hold():
+            lock_bulk_writes("default")
+            lock_types([self.device_type], "default")
+
+        with self.held(hold):
+            response = self.browser().post(
+                reverse(BULK_DELETE_URL), self.bulk_delete_data(background_job=True)
+            )
+
+        self.assertEqual(response.status_code, 302)
+        job = self.work()
+        self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
+        self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
+
+    def test_a_confirmed_bulk_delete_with_an_invalid_field_takes_the_scope_locks(self):
+        client = self.browser()
+        result = {}
+
+        def run():
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '20s'")
+                self.pids["delete"] = backend_pid()
+                result["response"] = client.post(
+                    reverse(BULK_DELETE_URL),
+                    self.bulk_delete_data(changelog_message="x" * 201),
+                )
+            except Exception as exc:  # noqa: BLE001  (the test checks the outcome)
+                result["error"] = exc
+            finally:
+                connection.close()
+
+        thread = threading.Thread(target=run)
+        self.addCleanup(thread.join, 30)
+        with self.held(lambda: lock_types([self.device_type], "default")):
+            thread.start()
+            self.wait_until_blocked("delete", "holder")
+        thread.join(30)
+
+        self.assertNotIn("error", result)
+        # NetBox shows the form again for the invalid field.
+        self.assertEqual(result["response"].status_code, 200)
         self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
