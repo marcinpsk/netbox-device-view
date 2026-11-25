@@ -53,7 +53,9 @@ def lock_and_read_order(request):
         for i, sql in enumerate(statements)
         if sql.startswith("SELECT")
         and '"netbox_device_view_instancepin"' in sql
-        and '"dcim_device"."status"' in sql
+        and " WHERE " in sql
+        # The constraint filters in a subquery with an alias; a select of the column does not count.
+        and '."status" = %s' in sql.split(" WHERE ", 1)[1]
     )
     return response, device_lock, pin_read
 
