@@ -286,7 +286,7 @@ On activation, the plugin does these steps:
 The activation stops, and no association changes, in these cases:
 
 - The fingerprint, the blockers or your permissions differ from the review. The message is **The affected objects, the associations or your permissions changed after the review. Review the activation again.**
-- Another change of the affected objects runs at the same time, for example a first activation of the same type. The message is **Another change of the affected objects ran at the same time. Review the activation again.**
+- Another change of the affected objects runs at the same time, for example a first activation of the same type. If PostgreSQL aborts the activation transaction because of a deadlock with another writer, the activation stops in the same way. The message is **Another change of the affected objects ran at the same time. Review the activation again.**
 - Another change holds a lock on these objects for more than 10 seconds. The message tells you to try the activation again.
 
 A change of these objects that starts while the activation holds its locks, for example the delete of an association or of a candidate revision, waits until the activation ends.
@@ -419,6 +419,8 @@ An activation in a branch writes the association to the branch schema and its ch
 ## Storage
 
 The plugin keeps the artwork files in NetBox media storage at `artwork/<xx>/<sha256>.<ext>`. Each file is written once. Identical files share one stored file. Each read checks the SHA-256 of the file. An import writes a missing or damaged file again.
+
+The plugin pages and the artwork API embed the artwork. They never load it from the NetBox media path.
 
 A NetBox system job, **Artwork blob cleanup**, runs daily. It removes stored files that no revision uses and that are older than one day.
 
