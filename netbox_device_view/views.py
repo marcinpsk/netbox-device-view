@@ -1,5 +1,6 @@
 import secrets
 
+from core.exceptions import JobFailed
 from core.models import DataSource, ObjectChange
 from core.tables import ObjectChangeTable
 from dcim.models import Device
@@ -30,6 +31,8 @@ from netbox.object_actions import (
 from netbox.views import generic
 from netbox.views.generic import BulkImportView, ObjectChangeLogView
 from utilities.exceptions import AbortRequest
+from utilities.forms import BulkDeleteForm
+from utilities.jobs import is_background_request
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.views import (
     ContentTypePermissionRequiredMixin,
@@ -652,12 +655,25 @@ class BindingOverrideBulkDeleteView(generic.BulkDeleteView):
         try:
             with models.BindingOverride.writing() as using:
                 lock_bulk_writes(using)
-                if "_confirm" in request.POST:
+                if self._deletes_now(request):
                     self._lock_selection(request, using)
                 return super().post(request, **kwargs)
         except AbortRequest as exc:
+            # A background job has no message storage, so BulkDeleteView.post() logs the error.
+            if is_background_request(request):
+                request.job.logger.error(exc.message)
+                raise JobFailed from exc
             messages.error(request, exc.message)
             return redirect(self.get_return_url(request))
+
+    def _deletes_now(self, request):
+        """Return True when BulkDeleteView.post() deletes in this request, not in a background job."""
+        if "_confirm" not in request.POST:
+            return False
+        form = BulkDeleteForm(self.queryset.model, request.POST)
+        return form.is_valid() and (
+            is_background_request(request) or not form.cleaned_data["background_job"]
+        )
 
     def _lock_selection(self, request, using):
         """Lock the scopes of the overrides that BulkDeleteView.post() selects, before it reads them."""

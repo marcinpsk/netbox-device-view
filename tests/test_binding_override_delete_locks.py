@@ -5,18 +5,26 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 
-from core.models import ObjectChange, ObjectType
+import django_rq
+from core.choices import JobStatusChoices
+from core.models import Job, ObjectChange, ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.messages import get_messages
 from django.db import connection, transaction
-from django.test import Client, TransactionTestCase, override_settings
+from django.conf import settings
+from django.test import Client, RequestFactory, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from netbox.context import current_request, events_queue, query_cache
+from netbox.jobs import AsyncViewJob
 from rest_framework.test import APIClient
+from rq import SimpleWorker
 from users.constants import TOKEN_PREFIX
 from users.models import Token, User
+from utilities.request import copy_safe_request
 
 from netbox_device_view.artwork.importing import import_bundle
 from netbox_device_view.artwork.type_lock import lock_types
@@ -26,6 +34,7 @@ from netbox_device_view.models import (
     Association,
     BindingOverride,
 )
+from netbox_device_view.views import BindingOverrideBulkDeleteView
 
 from .artwork_samples import bundle, definition
 from .permissions import grant
@@ -316,6 +325,17 @@ class BusyScopeTests(OverrideDeleteTestCase):
             connector_key="con-eth1",
             bindings=REPLACEMENT,
         )
+        # A private RQ queue, so the burst worker runs only the jobs of this test.
+        queue = f"netbox_device_view-test-{uuid.uuid4().hex}"
+        # AsyncViewJob has no object, so NetBox maps the model None to its queue.
+        self.enterContext(
+            override_settings(
+                RQ_QUEUES={**settings.RQ_QUEUES, queue: settings.RQ_QUEUES["default"]},
+                QUEUE_MAPPINGS={None: queue},
+            )
+        )
+        self.queue = django_rq.get_queue(queue)
+        self.addCleanup(self.queue.delete, delete_jobs=True)
 
     @contextmanager
     def busy(self, device):
@@ -345,6 +365,17 @@ class BusyScopeTests(OverrideDeleteTestCase):
         finally:
             release.set()
             thread.join(30)
+
+    def work(self):
+        # NetBox 4.5 leaves the request context of a failed view job in this thread.
+        for var, value in (
+            (current_request, None),
+            (events_queue, {}),
+            (query_cache, None),
+        ):
+            self.addCleanup(var.set, value)
+        SimpleWorker([self.queue], connection=self.queue.connection).work(burst=True)
+        return Job.objects.get()
 
     def bulk_delete_data(self, **extra):
         return {"pk": [self.override.pk], "_confirm": True, "confirm": True, **extra}
@@ -378,3 +409,38 @@ class BusyScopeTests(OverrideDeleteTestCase):
         self.assertNotIn(str(SCOPE_BUSY), excluded.content.decode())
         self.assertEqual(excluded.status_code, missing.status_code)
         self.assertTrue(BindingOverride.objects.filter(pk=self.hidden.pk).exists())
+
+    def test_a_background_bulk_delete_is_queued_while_a_scope_is_busy(self):
+        with self.busy(self.device):
+            response = self.browser().post(
+                reverse(BULK_DELETE_URL), self.bulk_delete_data(background_job=True)
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(
+            str(SCOPE_BUSY), [str(m) for m in get_messages(response.wsgi_request)]
+        )
+        job = self.work()
+        self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
+        self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
+
+    def test_a_background_bulk_delete_logs_a_busy_scope_in_its_job(self):
+        request = RequestFactory().post(
+            reverse(BULK_DELETE_URL), self.bulk_delete_data(background_job=True)
+        )
+        request.user = self.user
+        request.id = uuid.uuid4()
+        # The request copy and the job are the ones that BulkDeleteView.post() queues.
+        AsyncViewJob.enqueue(
+            name="Bulk delete",
+            user=self.user,
+            view_cls=BindingOverrideBulkDeleteView,
+            request=copy_safe_request(request),
+        )
+
+        with self.busy(self.device):
+            job = self.work()
+
+        self.assertEqual(job.status, JobStatusChoices.STATUS_FAILED, job.error)
+        self.assertIn(str(SCOPE_BUSY), [entry["message"] for entry in job.log_entries])
+        self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
