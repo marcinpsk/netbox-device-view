@@ -9,10 +9,11 @@ import uuid
 from pathlib import Path
 
 from core.models import DataFile, DataSource, ObjectChange, ObjectType
-from dcim.models import DeviceType, Manufacturer
+from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.apps import apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models import ProtectedError
 from django.test import (
     RequestFactory,
     SimpleTestCase,
@@ -26,6 +27,7 @@ from users.constants import TOKEN_PREFIX
 from users.models import Token, User
 
 from netbox_device_view import datasource_import
+from netbox_device_view.artwork import pins
 from netbox_device_view.artwork.branching import CATALOGUE
 from netbox_device_view.artwork.capture import CHANGED_FILE
 from netbox_device_view.artwork.importing import import_bundle
@@ -36,12 +38,14 @@ from netbox_device_view.models import (
     BindingOverride,
     DefinitionRevision,
     DeviceView,
+    InstancePin,
     VisualDefinition,
+    active_revisions,
 )
 
 from .artwork_samples import DEVICE_FILES, FRONT_SVG, bundle, definition
 from .permissions import grant
-from .test_artwork_activation import ACTIVATE_URL
+from .test_artwork_activation import activate_through_review
 from .test_artwork_import import DEVICE_DIR
 from .test_artwork_import import IMPORT_URL as ARTWORK_IMPORT_URL
 from .test_artwork_key_transfer import CHANGELOG_URL as DEFINITION_CHANGELOG_URL
@@ -137,13 +141,14 @@ class CatalogueModelTests(SimpleTestCase):
             for model in apps.get_app_config("netbox_device_view").get_models()
         }
 
-        # A branch can change device types and module types, so their links are branched too.
+        # A branch can change device types, module types, devices and modules, so their links are branched too.
         self.assertEqual(
             labels - CATALOGUE,
             {
                 "netbox_device_view.deviceview",
                 "netbox_device_view.association",
                 "netbox_device_view.bindingoverride",
+                "netbox_device_view.instancepin",
             },
         )
 
@@ -165,28 +170,37 @@ class BranchObjectTextTests(SimpleTestCase):
 
     def test_a_combining_mark_counts_in_the_text_of_a_branch_object(self):
         # The column counts code points, and a combining mark is one.
-        self.assertTextsFit(long_device_type(manufacturer_name="Q\u0301" * 50))
+        self.assertTextsFit(
+            long_device_type(manufacturer_name="Q\u0301" * 50),
+            device_name="D\u0301" * 32,
+        )
 
-    def assertTextsFit(self, device_type):
+    def assertTextsFit(self, device_type, device_name="D" * 64):
         # NetBox Branching copies str() of a branch object to ChangeDiff.object_repr without a cut.
         # An override names its scope by the pk of the scope.
         device_type.pk = 1
         revision = DefinitionRevision(
             definition=VisualDefinition(key="acme/" + "a" * 123), digest="0" * 64
         )
-        for obj in (
-            DeviceView(device_type=device_type),
-            Association(device_type=device_type, revision=revision),
-            BindingOverride(
-                device_type=device_type,
-                connector_key="con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - 4),
+        device = Device(pk=1, name=device_name, device_type=device_type)
+        for obj, start in (
+            (DeviceView(device_type=device_type), device_type.full_name),
+            (
+                Association(device_type=device_type, revision=revision),
+                device_type.full_name,
             ),
+            (
+                BindingOverride(
+                    device_type=device_type,
+                    connector_key="con-" + "a" * (MAX_CONNECTOR_KEY_LENGTH - 4),
+                ),
+                device_type.full_name,
+            ),
+            (InstancePin(device=device, revision=revision), device.name),
         ):
             with self.subTest(type(obj).__name__):
                 self.assertLessEqual(len(str(obj)), MAX_REPR)
-                self.assertTrue(
-                    str(obj).startswith(device_type.full_name[: MAX_REPR - 1])
-                )
+                self.assertTrue(str(obj).startswith(start[: MAX_REPR - 1]))
 
 
 @unittest.skipUnless(BRANCHING, "netbox-branching is not enabled")
@@ -333,10 +347,7 @@ class LongNameActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 302)
         diff = ChangeDiff.objects.using("default").get(
@@ -345,6 +356,90 @@ class LongNameActivationInBranchTests(ArtworkBranchTestCase):
         self.assertTrue(
             diff.object_repr.startswith(self.device_type.full_name[: MAX_REPR - 1])
         )
+
+
+class PinInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        self.device = Device.objects.create(
+            name="sw1",
+            device_type=device_type,
+            role=DeviceRole.objects.create(name="Switch", slug="switch"),
+            site=Site.objects.create(name="Site", slug="site"),
+        )
+        super().setUp()
+
+    def test_a_revision_pinned_only_in_a_branch_cannot_be_deleted_in_main(self):
+        from netbox_branching.utilities import activate_branch
+
+        grant(self.user, InstancePin, "view", "add")
+        grant(self.user, Device, "view")
+        del self.client.cookies["active_branch"]
+        self.upload()
+        [pinned] = DefinitionRevision.objects.all()
+        files = {**DEVICE_FILES, "front.svg": FRONT_SVG.replace("#333", "#222")}
+        [newer] = import_bundle(
+            self.user, "newer.zip", io.BytesIO(bundle(definition(DEVICE_DIR, files)))
+        )
+        with activate_branch(self.branch):
+            Association.objects.create(
+                device_type=self.device.device_type, revision=newer.revision
+            )
+            pins.save(self.user, InstancePin(device=self.device, revision=pinned))
+            self.assertEqual(
+                list(InstancePin.objects.values_list("device", "revision")),
+                [(self.device.pk, pinned.pk)],
+            )
+        # Only the branch has the pin, so the foreign key of main does not protect the revision.
+        self.assertFalse(InstancePin.objects.exists())
+
+        with self.assertRaises(ProtectedError) as protected:
+            pinned.delete()
+        self.assertEqual(protected.exception.protected_objects, {self.branch})
+        self.assertTrue(DefinitionRevision.objects.filter(pk=pinned.pk).exists())
+
+
+class ActiveRevisionInBranchTests(ArtworkBranchTestCase):
+    def setUp(self):
+        # The branch copies main when it is provisioned.
+        device_type = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.create(name="ACME", slug="acme"),
+            model="SW-24",
+            slug="sw-24",
+        )
+        role = DeviceRole.objects.create(name="Switch", slug="switch")
+        site = Site.objects.create(name="Site", slug="site")
+        self.devices = [
+            Device.objects.create(
+                name=name, device_type=device_type, role=role, site=site
+            )
+            for name in ("sw1", "sw2")
+        ]
+        super().setUp()
+
+    def test_a_device_shows_the_pin_and_the_association_of_the_branch(self):
+        from netbox_branching.utilities import activate_branch
+
+        del self.client.cookies["active_branch"]
+        self.upload()
+        [revision] = DefinitionRevision.objects.all()
+        files = {**DEVICE_FILES, "front.svg": FRONT_SVG.replace("#333", "#222")}
+        [pinned] = import_bundle(
+            self.user, "pinned.zip", io.BytesIO(bundle(definition(DEVICE_DIR, files)))
+        )
+        sw1, sw2 = self.devices
+        with activate_branch(self.branch):
+            Association.objects.create(device_type=sw1.device_type, revision=revision)
+            InstancePin.objects.create(device=sw2, revision=pinned.revision)
+            in_branch = active_revisions(self.devices)
+
+        self.assertEqual(in_branch, {sw1.pk: revision, sw2.pk: pinned.revision})
+        self.assertEqual(active_revisions(self.devices), {})
 
 
 class KeyTransferInBranchTests(ArtworkBranchTestCase):
@@ -407,10 +502,8 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        # The review and the activation run in the branch of the cookie.
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Association.objects.exists())
@@ -427,10 +520,7 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         grant(self.user, Association, "view", "add")
         grant(self.user, DeviceType, "view")
         grant(self.user, DefinitionRevision, "delete")
-        activation = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        activation = activate_through_review(self.client, (revision, self.device_type))
         self.assertEqual(activation.status_code, 302)
         del self.client.cookies["active_branch"]
 
@@ -479,10 +569,7 @@ class ActivationInBranchTests(ArtworkBranchTestCase):
         )
         grant(self.user, DeviceType, "view")
 
-        response = self.client.post(
-            reverse(ACTIVATE_URL, args=[revision.pk]),
-            {"device_type": self.device_type.pk},
-        )
+        response = activate_through_review(self.client, (revision, self.device_type))
 
         self.assertEqual(response.status_code, 403)
         with activate_branch(self.branch):

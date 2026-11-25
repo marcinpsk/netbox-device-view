@@ -17,7 +17,7 @@ from ..artwork.render import (
     resolve_schematic,
 )
 from ..layout.parser import LayoutParseError
-from ..members import resolve_members
+from ..members import resolve_members, without_artwork
 from .rendered_layout import UnavailableReason, member_panels
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ _FACTS = ("enabled", "cable_status", "cable_color", "marked_connected", "path_co
 
 def compose_device_artwork(device: Device, user) -> dict:
     """Return the artwork envelope of ``device`` with only the objects that ``user`` can view."""
+    members = resolve_members(device, user)
     return {
         "schema_version": SCHEMA_VERSION,
         "device_id": device.pk,
@@ -42,21 +43,22 @@ def compose_device_artwork(device: Device, user) -> dict:
                 "label": str(member.device),
                 "position": member.device.vc_position,
                 "current": member.device.pk == device.pk,
-                **_representation(member, user),
+                **_representation(member, members, user),
             }
-            for member in resolve_members(device, user)
+            for member in members
         ],
     }
 
 
-def _representation(member, user) -> dict:
-    device, device_view = member.device, member.device_view
+def _representation(member, members, user) -> dict:
+    device = member.device
     try:
-        part = _drawing(member, user)
+        member, part = _drawing(member, members, user)
     except Exception:
         # As for the panels: one member that fails does not fail the others.
         logger.exception("Unexpected error drawing the artwork of device %s", device.pk)
         return _unavailable_member(ARTWORK_ERROR)
+    device_view = member.device_view
     if part is not None:
         if part.representation == DAMAGED:
             return _unavailable_member(DAMAGED_ARTWORK)
@@ -77,15 +79,21 @@ def _representation(member, user) -> dict:
     return {"representation": LAYOUT, "reason": None, "artwork": None, "panels": panels}
 
 
-def _drawing(member, user):
-    """Return the artwork or schematic Part of ``member``, or None when it has neither."""
+def _drawing(member, members, user):
+    """Return ``member`` and its artwork or schematic Part, or None when it has neither.
+
+    A member whose artwork is deleted after the resolution resolves again without it.
+    """
     if member.revision is not None:
-        return resolve_device(
+        part = resolve_device(
             member.device, member.revision, user, view=API, plain=True
         )
+        if part is not None:
+            return member, part
+        member = without_artwork(member, members, user)
     if member.schematic:
-        return resolve_schematic(member.device, user, view=API, plain=True)
-    return None
+        return member, resolve_schematic(member.device, user, view=API, plain=True)
+    return member, None
 
 
 def _drawn(representation, part) -> dict:

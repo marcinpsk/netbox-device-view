@@ -26,9 +26,9 @@ from django.urls import reverse
 from lxml import etree
 from users.models import ObjectPermission, User
 
-from netbox_device_view.artwork import activation
 from netbox_device_view.models import Association, DeviceView, RenderMode
 
+from .activation import activate
 from .module_samples import import_definitions
 from .permissions import grant
 from .test_api_artwork import ZERO_ROWS_YAML, ArtworkApiTestCase
@@ -317,7 +317,7 @@ class BrowserTests(MixedChassisTestCase):
         InterfaceTemplate.objects.create(
             module_type=sfp_type, name="Port {module}", type="10gbase-x-sfpp"
         )
-        activation.activate(admin, revision, sfp_type)
+        activate(admin, (revision, sfp_type))
         ModuleBay.objects.filter(pk=self.slot2.pk).update(position="2")
         self.slot2.refresh_from_db()
         sfp = Module.objects.create(
@@ -547,7 +547,7 @@ class ApiTests(MixedChassisTestCase):
         sfp_type = ModuleType.objects.create(
             manufacturer=self.manufacturer, model="SFP-10G"
         )
-        activation.activate(admin, revision, sfp_type)
+        activate(admin, (revision, sfp_type))
         ModuleBay.objects.filter(pk=self.slot2.pk).update(position="2")
         Module.objects.create(
             device=self.sw5, module_bay=self.slot2, module_type=sfp_type

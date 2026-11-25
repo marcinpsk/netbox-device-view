@@ -24,7 +24,7 @@ from netbox_device_view.models import Association, BindingOverride, DefinitionRe
 from .module_samples import Inventory, import_definitions
 from .permissions import grant
 from .test_api_artwork import API_URL
-from .test_artwork_activation import ACTIVATE_URL
+from .test_artwork_activation import activate_through_review
 from .test_artwork_device_view import TAB_URL, faces, links
 from .test_binding_override_api import LIST as API_LIST
 from .test_binding_override_pages import ADD_URL, form_errors, rows
@@ -64,16 +64,13 @@ class ModuleOverrideTestCase(TestCase):
         self.api.credentials(
             HTTP_AUTHORIZATION=f"Bearer {TOKEN_PREFIX}{token.key}.{token.token}"
         )
-        # The operator activates the chassis and the network module on the activation page.
-        for key, field, hardware_type in (
-            ("acme/ch-4", "device_type", self.inventory.device_type),
-            ("acme/nm-2x", "module_type", self.inventory.nm_type),
-        ):
-            response = self.client.post(
-                reverse(ACTIVATE_URL, args=[self.revisions[key].pk]),
-                {field: hardware_type.pk},
-            )
-            self.assertEqual(response.status_code, 302)
+        # The operator reviews and activates the chassis and the network module together.
+        response = activate_through_review(
+            self.client,
+            (self.revisions["acme/ch-4"], self.inventory.device_type),
+            (self.revisions["acme/nm-2x"], self.inventory.nm_type),
+        )
+        self.assertEqual(response.status_code, 302)
 
     def page_links(self):
         """Return {module: the link of its con-p1 on the tab}."""

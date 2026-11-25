@@ -36,7 +36,7 @@ from .layout import (
     parse as parse_layout,
 )
 from .layout.renderers.svg import PortCell, drawn_keys
-from .members import resolve_members
+from .members import resolve_members, without_artwork
 
 
 def normalize_grid_template_area(value: str) -> str:
@@ -361,14 +361,16 @@ class MemberPanel:
         return f".deviceview.d{self.key}"
 
 
-def _member_panel(obj, member, user, cable_colors):
+def _member_panel(obj, member, members, user, cable_colors):
     device = member.device
     current = device.pk == obj.pk
     if member.revision is not None:
-        return MemberPanel(
-            device, current, part=resolve_device(device, member.revision, user)
-        )
-    if member.schematic:
+        part = resolve_device(device, member.revision, user)
+        if part is not None:
+            return MemberPanel(device, current, part=part)
+        member = without_artwork(member, members, user)
+    # The tab already renders, so a member that shows nothing after a delete is a schematic.
+    if member.schematic or not member.shown:
         return MemberPanel(device, current, part=resolve_schematic(device, user))
     device_view = member.device_view
     try:
@@ -403,7 +405,9 @@ def device_view_context(obj, user, cable_colors=False):
     members = resolve_members(obj, user)
     if not any(member.shown for member in members):
         return None
-    panels = [_member_panel(obj, member, user, cable_colors) for member in members]
+    panels = [
+        _member_panel(obj, member, members, user, cable_colors) for member in members
+    ]
     uses_artwork = any(panel.part for panel in panels)
     return {
         "device_panels": panels,
