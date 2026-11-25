@@ -4,6 +4,10 @@ Bindings resolve in this order: the artwork default, then the type override,
 then the instance override. Each level replaces the list of the level below it.
 """
 
+import functools
+import operator
+from collections import defaultdict
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -60,20 +64,41 @@ def _instance_scope(model):
     )
 
 
-def connector_bindings(revision, part) -> dict[str, list]:
-    """Return {connector key: bindings} of ``revision`` for one device or installed module."""
+def part_overrides(parts) -> list[BindingOverride]:
+    """Return the overrides of the devices and installed modules ``parts`` and of their types, in one query."""
+    ids = defaultdict(set)
+    for part in parts:
+        spec = _instance_scope(type(part))
+        ids[SCOPES[spec.type_field]].add(SCOPES[spec.type_field].id_of(part))
+        ids[spec].add(part.pk)
+    condition = functools.reduce(
+        operator.or_, (spec.among(values) for spec, values in ids.items())
+    )
+    return list(BindingOverride.objects.filter(condition))
+
+
+def connector_bindings(revision, part, overrides) -> dict[str, list]:
+    """Return {connector key: bindings} of ``revision`` for one device or installed module.
+
+    ``overrides`` comes from part_overrides() for parts that include ``part``.
+    """
     spec = _instance_scope(type(part))
-    type_id = getattr(part, f"{spec.type_field}_id")
+    type_spec = SCOPES[spec.type_field]
     result = {
         key: connector["bindings"]
         for key, connector in revision.manifest["connectors"].items()
     }
-    overrides = BindingOverride.objects.filter(
-        Q(**{spec.type_field: type_id}) | Q(**{spec.field: part}),
-        definition=revision.definition_id,
-    )
+    applying = [
+        override
+        for override in overrides
+        if override.definition_id == revision.definition_id
+        and (
+            type_spec.id_of(override) == type_spec.id_of(part)
+            or spec.id_of(override) == part.pk
+        )
+    ]
     # The instance override comes last, so it replaces the type override.
-    for override in sorted(overrides, key=lambda o: SCOPES[o.scope_field].instance):
+    for override in sorted(applying, key=lambda o: SCOPES[o.scope_field].instance):
         # A part that changed its type, or a branch merge, can keep a key that the revision lacks.
         if override.connector_key in result:
             result[override.connector_key] = override.bindings

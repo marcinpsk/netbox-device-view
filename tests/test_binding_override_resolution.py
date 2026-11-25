@@ -6,7 +6,7 @@ from dcim.models import Device, DeviceType, Interface, Module, ModuleBay, Module
 from users.models import User
 
 from netbox_device_view.artwork.importing import import_bundle
-from netbox_device_view.artwork.overrides import connector_bindings
+from netbox_device_view.artwork.overrides import connector_bindings, part_overrides
 from netbox_device_view.models import Association, BindingOverride, VisualDefinition
 
 from .artwork_samples import MODULE_FILES, bundle, definition
@@ -229,7 +229,10 @@ class ModulePartTests(OverrideTestCase):
             for name in ("Bay 1", "Bay 2")
         )
         default = bindings("TenGigabitEthernet1/{module}/1")
-        self.assertEqual(connector_bindings(revision, first), {"con-p1": default})
+        self.assertEqual(
+            connector_bindings(revision, first, part_overrides([first])),
+            {"con-p1": default},
+        )
 
         for scope, name in (
             ({"module_type": module_type}, "Te1/{module}/type"),
@@ -243,10 +246,10 @@ class ModulePartTests(OverrideTestCase):
             )
 
         self.assertEqual(
-            connector_bindings(revision, first),
+            connector_bindings(revision, first, part_overrides([first])),
             {"con-p1": bindings("Te1/{module}/instance")},
         )
         self.assertEqual(
-            connector_bindings(revision, second),
+            connector_bindings(revision, second, part_overrides([second])),
             {"con-p1": bindings("Te1/{module}/type")},
         )

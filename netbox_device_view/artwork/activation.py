@@ -1,20 +1,18 @@
-"""Activate a definition revision for a device type: the one writer of associations."""
+"""Activate a definition revision for a device type or a module type: the one writer of associations."""
 
-from dcim.models import Device
+from dcim.models import Device, Module
 from django.core.exceptions import PermissionDenied
 from django.db import DEFAULT_DB_ALIAS, IntegrityError, router, transaction
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from ..models import Association, BindingOverride
+from ..models import OVERRIDE_RELATIONS, Association, BindingOverride, type_scope
 from .overrides import depending_on
 from .type_lock import lock_types
 
 ADD_PERMISSION = "netbox_device_view.add_association"
 CHANGE_PERMISSION = "netbox_device_view.change_association"
-RACED_MESSAGE = _(
-    "Another activation for this device type ran at the same time. Try again."
-)
+RACED_MESSAGE = _("Another activation for this type ran at the same time. Try again.")
 MISSING_CONNECTORS = _(
     "These binding overrides name a connector that the revision does not have:"
     " {overrides}. Delete them, or select another revision."
@@ -34,37 +32,40 @@ def can_activate(user) -> bool:
     return user.has_perm(ADD_PERMISSION) or user.has_perm(CHANGE_PERMISSION)
 
 
-def activate(user, revision, device_type) -> Association:
-    """Make the revision the active one for the device type; return the association."""
+def activate(user, revision, hardware_type) -> Association:
+    """Make the revision the active one for the device type or module type; return the association."""
     # NetBox Branching routes Association to the branch and its ChangeDiff rows to main.
     try:
         with (
             transaction.atomic(using=DEFAULT_DB_ALIAS),
             transaction.atomic(using=router.db_for_write(Association)),
         ):
-            return _activate(user, revision, device_type)
+            return _activate(user, revision, hardware_type)
     except IntegrityError as exc:
         # Only a concurrent first activation of the type is expected; other errors stay visible.
-        if not Association.objects.filter(device_type=device_type).exists():
+        if not _associations(hardware_type).exists():
             raise
         raise ActivationRejected(RACED_MESSAGE) from exc
 
 
-def _activate(user, revision, device_type) -> Association:
+def _associations(hardware_type):
+    return Association.objects.filter(type_scope(hardware_type).among([hardware_type]))
+
+
+def _activate(user, revision, hardware_type) -> Association:
     # The writers of binding overrides take the same lock.
-    lock_types([device_type], router.db_for_write(Association))
-    association = (
-        Association.objects.select_for_update().filter(device_type=device_type).first()
-    )
+    lock_types([hardware_type], router.db_for_write(Association))
+    association = _associations(hardware_type).select_for_update().first()
     if association is None:
-        association, action = Association(device_type=device_type), "add"
+        association = Association(**{type_scope(hardware_type).field: hardware_type})
+        action = "add"
     else:
         _require(user, "change", association)
         if association.revision_id == revision.pk:
             return association
         association.snapshot()
         action = "change"
-    _check_overrides(user, revision, device_type)
+    _check_overrides(user, revision, hardware_type)
     association.revision = revision
     # A concurrent first activation fails on the unique constraint instead.
     association.full_clean(validate_unique=False)
@@ -81,22 +82,28 @@ def _require(user, action, association):
         raise PermissionDenied
 
 
-def _check_overrides(user, revision, device_type):
+def _check_overrides(user, revision, hardware_type):
     """Refuse a revision without the connector of an override that depends on the type."""
     missing = (
         BindingOverride.objects.filter(
-            depending_on(device_type), definition=revision.definition_id
+            depending_on(hardware_type), definition=revision.definition_id
         )
         .exclude(connector_key__in=list(revision.manifest["connectors"]))
-        .select_related("device_type__manufacturer", "device")
+        .select_related(*OVERRIDE_RELATIONS)
     )
     count = missing.count()
     if not count:
         return
-    # A name needs view permission on the override and on its device.
+    # A name needs view permission on the override and on the device or module that it names.
+    devices = Device.objects.restrict(user, "view")
     visible = list(
         missing.restrict(user, "view").filter(
-            Q(device__isnull=True) | Q(device__in=Device.objects.restrict(user, "view"))
+            Q(device__isnull=True) | Q(device__in=devices),
+            Q(module__isnull=True)
+            | Q(
+                module__in=Module.objects.restrict(user, "view"),
+                module__device__in=devices,
+            ),
         )
     )
     if len(visible) != count:
