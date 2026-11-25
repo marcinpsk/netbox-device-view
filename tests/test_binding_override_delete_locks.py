@@ -18,6 +18,7 @@ from django.db import connection, transaction
 from django.test import Client, RequestFactory, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import urlencode
 from netbox.context import current_request, events_queue, query_cache
 from netbox.jobs import AsyncViewJob
 from rest_framework.test import APIClient
@@ -436,18 +437,21 @@ class BusyScopeTests(OverrideDeleteTestCase):
         self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
         self.assertEqual(list(BindingOverride.objects.all()), [self.hidden])
 
-    def test_a_background_bulk_delete_logs_a_busy_scope_in_its_job(self):
+    def job_request(self):
+        """Return the request copy that BulkDeleteView.post() queues for a background job."""
         request = RequestFactory().post(
             reverse(BULK_DELETE_URL), self.bulk_delete_data(background_job=True)
         )
         request.user = self.user
         request.id = uuid.uuid4()
-        # The request copy and the job are the ones that BulkDeleteView.post() queues.
+        return copy_safe_request(request)
+
+    def test_a_background_bulk_delete_logs_a_busy_scope_in_its_job(self):
         AsyncViewJob.enqueue(
             name="Bulk delete",
             user=self.user,
             view_cls=BindingOverrideBulkDeleteView,
-            request=copy_safe_request(request),
+            request=self.job_request(),
         )
 
         with self.busy(self.device):
@@ -505,3 +509,70 @@ class BusyScopeTests(OverrideDeleteTestCase):
         # NetBox shows the form again for the invalid field.
         self.assertEqual(result["response"].status_code, 200)
         self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
+
+    def test_a_background_bulk_delete_reads_the_overrides_again_after_its_locks(self):
+        request = self.job_request()
+        job = Job.objects.create(
+            name="Bulk delete", user=self.user, job_id=uuid.uuid4()
+        )
+        result = {}
+
+        def run():
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '20s'")
+                self.pids["job"] = backend_pid()
+                # The RQ worker runs the job with this call.
+                AsyncViewJob.handle(
+                    job, view_cls=BindingOverrideBulkDeleteView, request=request
+                )
+            except Exception as exc:  # noqa: BLE001  (the test checks the outcome)
+                result["error"] = exc
+            finally:
+                connection.close()
+
+        thread = threading.Thread(target=run)
+        self.addCleanup(thread.join, 30)
+        with transaction.atomic():
+            lock_types([self.device_type], "default")
+            self.pids["writer"] = backend_pid()
+            thread.start()
+            self.wait_until_blocked("job", "writer")
+            Device.objects.filter(pk=self.device.pk).update(status="offline")
+        thread.join(30)
+
+        self.assertNotIn("error", result)
+        job.refresh_from_db()
+        self.assertEqual(job.status, JobStatusChoices.STATUS_COMPLETED, job.error)
+        self.assertTrue(BindingOverride.objects.filter(pk=self.override.pk).exists())
+
+    def test_a_filtered_bulk_delete_of_all_skips_the_busy_scope_outside_the_filter(
+        self,
+    ):
+        other_device = Device.objects.create(
+            name="sw3",
+            device_type=self.device_type,
+            site=self.site,
+            role=self.role,
+            status="active",
+        )
+        # The user can delete this override, but the filter does not select it.
+        outside = BindingOverride.objects.create(
+            device=other_device,
+            definition=self.revision.definition,
+            connector_key="con-eth1",
+            bindings=REPLACEMENT,
+        )
+        query = urlencode({"device_id": self.device.pk})
+
+        with self.busy(other_device):
+            response = self.browser().post(
+                f"{reverse(BULK_DELETE_URL)}?{query}",
+                self.bulk_delete_data(_all=True),
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(
+            str(SCOPE_BUSY), [str(m) for m in get_messages(response.wsgi_request)]
+        )
+        self.assertEqual(list(BindingOverride.objects.all()), [self.hidden, outside])
